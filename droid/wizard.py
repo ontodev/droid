@@ -19,7 +19,7 @@ def main():
     gh_repo = 'https://github.com/{0}/{1}'.format(gh_user, gh_project)
     req = requests.get(gh_repo)
     if req.status_code != 200:
-        print('ERROR: GitHub repo {0}/{1} does not exist!'.format(
+        print('WARN: GitHub repo {0}/{1} does not exist!'.format(
             gh_user, gh_project))
 
     yml = '''droid:
@@ -33,6 +33,8 @@ project:
 
     with open('droid.yml', 'w+') as f:
         f.write(yml)
+
+    print('Results written to droid.yml')
 
 
 def try_continue():
