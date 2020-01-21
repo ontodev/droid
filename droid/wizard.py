@@ -29,8 +29,7 @@ project:
   name: {0}
   GitHub organization: {1}
   GitHub project: {2}
-  GitHub repository: {3}
-'''.format(p_name, gh_user, gh_project, gh_repo)
+'''.format(p_name, gh_user, gh_project)
 
     with open('droid.yml', 'w+') as f:
         f.write(yml)
