@@ -1,0 +1,4 @@
+_venv
+.DS_Store
+droid.yml
+shell.nix
