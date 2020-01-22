@@ -6,3 +6,4 @@ __pycache__/
 droid.yml
 shell.nix
 .coverage
+droid.egg-info

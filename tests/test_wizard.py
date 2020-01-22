@@ -3,7 +3,7 @@ from droid import wizard
 
 def test_valid_repo():
     gh_user = 'ontodev'
-    gh_project = 'DROID'
+    gh_project = 'droid'
     valid = wizard.validate_repo(gh_user, gh_project)
     assert valid
 
