@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 droid.yml
 shell.nix
+.coverage
