@@ -3,10 +3,10 @@ import os
 import sys
 
 
-def main():
-    '''Get user input to create a config file. Validate fields and write
+def run():
+    """Get user input to create a config file. Validate fields and write
     to droid.yml file.
-    '''
+    """
     if os.path.exists('droid.yml'):
         print('A configuration file already exists!')
         try_continue()
@@ -15,13 +15,34 @@ def main():
     gh_user = input('GitHub organization or username: ')
     gh_project = input('GitHub project name: ')
 
-    # Check that the GitHub repo actually exists
+    valid = validate_repo(gh_user, gh_project)
+    if not valid:
+        print('WARN: GitHub repo {0}/{1} does not exist!'.format(gh_user, gh_project))
+    create_config(p_name, gh_user, gh_project)
+
+
+def validate_repo(gh_user, gh_project):
+    """Check that the GitHub repository for user exists.
+
+    Args:
+        gh_user (str): GitHub user or organization name
+        gh_project (str): GitHub project name
+    """
     gh_repo = 'https://github.com/{0}/{1}'.format(gh_user, gh_project)
     req = requests.get(gh_repo)
     if req.status_code != 200:
-        print('WARN: GitHub repo {0}/{1} does not exist!'.format(
-            gh_user, gh_project))
+        return False
+    return True
 
+
+def create_config(p_name, gh_user, gh_project):
+    """Create a configuration YAML file.
+
+    Args:
+        p_name (str): project name
+        gh_user (str): GitHub user or organization name
+        gh_project (str): GitHub project name
+    """
     yml = '''droid:
   configuration version: 1
 
@@ -38,8 +59,8 @@ project:
 
 
 def try_continue():
-    '''Get user input if process should continue. Repeat until user enters y/n.
-    '''
+    """Get user input if process should continue. Repeat until user enters y/n.
+    """
     while True:
         resp = input('Do you wish to overwrite? [y/n] ')
         if resp.lower() == 'n':
@@ -51,4 +72,4 @@ def try_continue():
 
 
 if __name__ == '__main__':
-    main()
+    run()
