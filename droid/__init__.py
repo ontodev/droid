@@ -1,4 +1,6 @@
-import os, yaml
+import os
+import yaml
+
 
 def create_app(test_config=None):
     # Create droid.yml with wizard if not found

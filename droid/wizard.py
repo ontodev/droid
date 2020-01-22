@@ -3,10 +3,10 @@ import os
 import sys
 
 
-def main():
-    '''Get user input to create a config file. Validate fields and write
+def run():
+    """Get user input to create a config file. Validate fields and write
     to droid.yml file.
-    '''
+    """
     if os.path.exists('droid.yml'):
         print('A configuration file already exists!')
         try_continue()
@@ -38,8 +38,8 @@ project:
 
 
 def try_continue():
-    '''Get user input if process should continue. Repeat until user enters y/n.
-    '''
+    """Get user input if process should continue. Repeat until user enters y/n.
+    """
     while True:
         resp = input('Do you wish to overwrite? [y/n] ')
         if resp.lower() == 'n':
@@ -51,4 +51,4 @@ def try_continue():
 
 
 if __name__ == '__main__':
-    main()
+    run()
