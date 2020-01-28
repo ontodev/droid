@@ -1,5 +1,7 @@
 _venv/
 instance/
+workspace/
+junk/
 *.pyc
 __pycache__/
 .DS_Store
