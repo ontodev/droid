@@ -1,6 +1,7 @@
 _venv/
 instance/
 workspace/
+temp/
 junk/
 *.pyc
 __pycache__/

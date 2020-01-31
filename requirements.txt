@@ -1,5 +1,6 @@
 pyyaml
 flask
+Flask-Markdown
 requests
 pytest
 coverage

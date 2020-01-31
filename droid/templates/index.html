@@ -1,7 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}Home{% endblock %}
+{% block title %}DROID for {{ config.project.name }}{% endblock %}
 
 {% block content %}
 {{ config.project.welcome|markdown }}
+
+<h3>Branches</h3>
+<ul>
+  {% for branch_name in branch_names %}
+  <li><a href="/branches/{{ branch_name }}">{{ branch_name }}</a></li>
+  {% endfor %}
+</ul>
 {% endblock %}
