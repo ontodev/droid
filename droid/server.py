@@ -59,9 +59,17 @@ def create_app(config, test_config=None):
     # Branch page, including actions that run or cancel branch processes
     @app.route('/branches/<branch>')
     def branch(branch):
-      targets = make.read_makefile(branch)
-      console = 'temp/' + branch + '/console.txt'
+      # Check Makefile
+      Makefile = 'workspace/{0}/Makefile'.format(branch)
+      modified = os.path.getmtime(Makefile)
+      if 'Makefile' not in branches[branch]:
+        branches[branch]['Makefile'] = {'modified': 0}
+      if modified > branches[branch]['Makefile']['modified']:
+        branches[branch]['Makefile'] = make.read_makefile(branch)
+        branches[branch]['Makefile']['modified'] = modified
 
+      # Handle actions
+      console = 'temp/' + branch + '/console.txt'
       do = request.args.get('action')
       if do:
         if do == 'cancel':
@@ -71,9 +79,7 @@ def create_app(config, test_config=None):
             time.sleep(1)
           return redirect('/branches/' + branch)
 
-        for target in targets:
-          if target['type'] == 'action' and do == target['target']:
-            print('DO: ' + do)
+        if do in branches[branch]['Makefile']['actions']:
             if 'process' in branches[branch]:
               process = branches[branch]['process']
               if process.poll() is None:
@@ -102,19 +108,14 @@ def create_app(config, test_config=None):
       return render_template(
         'branch.html',
         config=config,
-        branch=branches[branch],
-        targets=targets
+        branch=branches[branch]
       )
 
     # View files
     @app.route('/branches/<branch>/views/<path:path>')
     def view(branch, path):
-      targets = make.read_makefile(branch)
-      for target in targets:
-        if target['type'] == 'view':
-          for p in target['paths']:
-            if path == p:
-              return send_file(safe_join(os.getcwd(), 'workspace', branch, path))
+      if path in branches[branch]['Makefile']['views']:
+          return send_file(safe_join(os.getcwd(), 'workspace', branch, path))
       abort(404)
 
     return app

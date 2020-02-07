@@ -1,6 +1,8 @@
 pyyaml
 flask
+markdown
 Flask-Markdown
+beautifulsoup4
 requests
 pytest
 coverage
