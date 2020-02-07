@@ -33,12 +33,12 @@ def read_makefile(branch):
                 if url.netloc.strip() == '':
                     makefile['targets'].append(link['href'])
                     if link['href'] in makefile['phony']:
+                        makefile['actions'].append(link['href'])
                         link['class'] = 'btn btn-primary btn-sm'
                         link['href'] = '?action=' + link['href']
-                        makefile['actions'].append(link['href'])
                     else:
-                        link['href'] = branch + '/views/' + link['href']
                         makefile['views'].append(link['href'])
+                        link['href'] = branch + '/views/' + link['href']
         makefile['html'] = html
     return makefile
 
