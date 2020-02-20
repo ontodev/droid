@@ -1,12 +1,12 @@
-# DROID is a ROBOT Ontology Development Interface
+# DROID Reveals that Ordinary Individuals are Developers
 
 [![Build Status](https://travis-ci.org/ontodev/droid.svg?branch=master)](https://travis-ci.org/ontodev/droid)
 
-DROID is a web-based interface for ontology development. Given an ontology project that uses ROBOT or ODK and GitHub, DROID presents authorized users with a subset of that lower-level functionality, including common ontology browsing, editing, quality control, and version control tasks.
+DROID is a web-based interface for working with (1) a build system, managed by (2) a version control system. The current version of DROID is designed to work with (1) GNU Make and (2) GitHub. Our goal is to make these systems accessible to a wider community of project contributors, by exposing a curated set of functionality that is customized for each project.
 
-The goal is just to present existing functionality, not to replace it. So DROID reads the files in the GitHub repository, runs tasks from the Makefile, helps users edit existing templates, and pushes changes back to GitHub.
+DROID differs from Continuous Testing/Integration solutions such as Jenkins or Travis CI because DROID allows users to modify a working copy of a branch and run tasks on an ad-hoc basis before committing changes. DROID differs from Web/Cloud IDEs because users are limited to a specified set of files and tasks.
 
-DROID is in early development and is designed to work on Unix (Linux, macOS) systems. It is build on [Flask](https://palletsprojects.com/p/flask/). You need Python 3 and Java installed, and we recommend using `venv`. Clone this repository into a fresh directory, set up `venv`, install requirements with `pip`, and then run `./droid`:
+DROID is in early development and is designed to work on Unix (Linux, macOS) systems. It is build on [Flask](https://palletsprojects.com/p/flask/). You need Python 3 installed, and we recommend using `venv`. Clone this repository into a fresh directory, set up `venv`, install requirements with `pip`, and then run `./droid`:
 
 ```
 virtualenv _venv
