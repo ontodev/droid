@@ -1,4 +1,4 @@
-# DROID Reveals that Ordinary Individuals are Developers
+# DROID Reminds us that Ordinary Individuals can be Developers
 
 [![Build Status](https://travis-ci.org/ontodev/droid.svg?branch=master)](https://travis-ci.org/ontodev/droid)
 
