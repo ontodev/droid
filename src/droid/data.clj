@@ -1,7 +1,8 @@
 (ns droid.data
   (:require [clojure.java.io :as io]
             [environ.core :refer [env]]
-            [droid.log :as log]))
+            [droid.log :as log]
+            [droid.make :as make]))
 
 
 (defn- fail
@@ -76,25 +77,19 @@
          (io/file)
          (.list)
          ;; The contents of the directory for the branch are represented by a hashmap, mapping the
-         ;; keywordized name of each file/sub-directory in the branch to another hashmap with info
-         ;; about it. This info is at a minimum the file/sub-directory's non-keywordized name; in
-         ;; the case of the Makefile we also store its last modified time and the actions associated
-         ;; with it.
-         (map #(hash-map (keyword %)
-                         (merge {:name %}
-                                (when (= % "Makefile")
-                                  {:modified (->> %
-                                                  (str "workspace/" branch-name "/")
-                                                  (io/file)
-                                                  (.lastModified))
-                                   ;; TODO: These actions are hard-coded for now, but later they
-                                   ;; will need to be read from the Makefile:
-                                   :actions ["action1" "action2"]}))))
-         ;; Merge the sequence of maps just generated into a larger map:
+         ;; keywordized name of each file/sub-directory in the branch to further hashmap with
+         ;; info about the file/sub-directory. This info is at a minimum the file/sub-directory's
+         ;; non-keywordized name. Other info may be added later. We skip the Makefile for now. It
+         ;; will be populated separately later on.
+         (map #(when-not (= % "Makefile")
+                 (hash-map (keyword %) (hash-map :name %))))
+         ;; Merge the sequence of hashmaps just generated into a larger hashmap:
          (apply merge)
-         ;; Add the new info to the branch's current map:
+         ;; Merge the newly generated hashmap with the current hashmap for the branch:
          (swap! branch merge))
 
+    ;; Read in the Makefile and update the information relating to it in the branch as necessary:
+    (swap! branch merge (make/get-makefile-info branch-name branch))
     ;; Read the contents of the console file in the branch's temp directory and add those contents
     ;; to the branch:
     (swap! branch assoc :console (-> "temp/" (str branch-name "/console.txt") (slurp)))
