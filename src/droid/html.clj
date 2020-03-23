@@ -30,11 +30,12 @@
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session] :as request}
-   {:keys [status headers title content]
+   {:keys [status headers title heading content]
     :as response
     :or {status 200
          headers default-html-headers
-         title (->> config :project-name (str "DROID for "))}}]
+         title (->> config :project-name (str "DROID for "))
+         heading title}}]
   {:status 200
    :session session
    :headers default-html-headers
@@ -56,7 +57,7 @@
      [:title title]]
     [:body
      [:div {:id "content" :class "container p-3"}
-      [:h1 [:a {:href "/"} title]]
+      [:h1 [:a {:href "/"} heading]]
       content]
 
      ;; Optional JavaScript. jQuery first, then Popper.js, then Bootstrap JS.
@@ -120,7 +121,8 @@
   [request branch-name branch]
   (html-response
    request
-   {:title (->> config :project-name (str "DROID for "))
+   {:title (-> config :project-name (str " -- " branch-name))
+    :heading (->> config :project-name (str "DROID for "))
     :content [:div
               [:p (login-status request)]
               [:div
@@ -129,9 +131,8 @@
                [:h2 (str "Branch: " branch-name)]
 
                [:h3 "Workflow"]
-               [:ol
-                [:li [:a {:href (str "/branches/" branch-name "?action=action1")} "Action one"]]
-                [:li [:a {:href (str "/branches/" branch-name "?action=action2")} "Action two"]]]
+               (or (->> branch :Makefile :html)
+                   [:ul [:li "Not found"]])
 
                [:h3 "Console"]
                (if (->> branch :process (nil?))
@@ -170,7 +171,9 @@
                                      :exit-code (future (sh/exit-code process))))]
         (cond
           (= action "cancel")
-          (kill-process)
+          (when (and (not (nil? last-exit-code))
+                     (not (realized? last-exit-code)))
+            (kill-process))
 
           ;; If the specified action is a recognized one then launch a process corresponding to it:
           (some #(= % action) (->> (get-branch-contents) :Makefile :actions))
@@ -179,7 +182,7 @@
                        (not (realized? last-exit-code)))
               (kill-process))
             (launch-process)
-            (Thread/sleep 2000))
+            (Thread/sleep 1000))
 
           (not (nil? action))
           (log/warn "Unrecognized action:" action))

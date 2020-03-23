@@ -8,6 +8,7 @@
                  [environ "1.1.0"]
                  [hiccup "1.0.5"]
                  [http-kit "2.3.0"]
+                 [markdown-to-hiccup "0.6.2"]
                  [me.raynes/conch "0.8.0"]
                  [ring/ring-defaults "0.3.2"]
                  [ring-oauth2 "0.1.4"]]
