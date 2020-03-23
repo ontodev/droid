@@ -4,7 +4,7 @@
             [droid.config :refer [config]]
             [droid.data :as data]
             [droid.log :as log]
-            [ring.util.response :refer [file-response]]))
+            [ring.util.response :refer [file-response redirect]]))
 
 
 (def default-html-headers
@@ -204,6 +204,8 @@
                                      :start-time (System/currentTimeMillis)
                                      :cancelled false
                                      :exit-code (future (sh/exit-code process))))]
+
+        ;; Perform the requested action:
         (cond
           (= action "cancel")
           (when (and (not (nil? last-exit-code))
@@ -222,4 +224,10 @@
           (not (nil? action))
           (log/warn "Unrecognized action:" action))
 
-        (render-branch request branch-name (get-branch-contents))))))
+        ;; If we performed an action, then we now redirect to the branch page (the main reason for
+        ;; this is to get rid of the '?action=...' part of the URL in the address bar, which is
+        ;; desirable because we don't want to kick off the action again just because the user hit
+        ;; her browser's refresh button):
+        (if-not (nil? action)
+          (redirect (str "/branches/" branch-name))
+          (render-branch request branch-name (get-branch-contents)))))))
