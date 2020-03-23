@@ -117,7 +117,7 @@
                             [tag {:href (str "?action=" href) :class "btn btn-primary btn-sm"} text]
 
                             (some #(= href %) views)
-                            [tag {:href (str branch-name "/views/" href)} text]
+                            [tag {:href (str branch-name "/views/" href) :target "__blank"} text]
 
                             :else
                             [tag {:href href :target "__blank"} text]))]

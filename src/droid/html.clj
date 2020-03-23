@@ -3,7 +3,8 @@
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
             [droid.data :as data]
-            [droid.log :as log]))
+            [droid.log :as log]
+            [ring.util.response :refer [file-response]]))
 
 
 (def default-html-headers
@@ -79,6 +80,40 @@
                    "$('.since').each(function() {" ; replace GMT dates with driendly time period
                    "  $(this).text(moment($(this).text()).fromNow());"
                    "});")]])})
+
+
+(defn render-404
+  [request]
+  (html-response
+   request
+   {:title (->> config :project-name (str "Page Not Found -- "))
+    :content [:div#contents
+              [:p "The requested resource could not be found."]]
+    :status 404}))
+
+
+(defn index
+  "Render the index page"
+  [request]
+  (html-response
+   request
+   {:title (->> config :project-name (str "DROID for "))
+    :content [:div
+              [:p (:project-description config)]
+              [:p (login-status request)]
+              (when (-> request :session :user :authorized)
+                [:div
+                 [:hr {:class "line1"}]
+                 [:div [:h3 "Branches" ]
+                  [:ul
+                   (for [branch (->> data/branches (keys) (sort) (map name))]
+                     [:li [:a {:href (str "/branches/" branch)} branch]])]]])]}))
+
+
+(defn view-file
+  "View a file in the workspace"
+  [{{branch-name :branch-name, path :path, :as params} :params}]
+  (file-response (str "workspace/" branch-name "/" path)))
 
 
 (defn- render-branch-console
@@ -188,21 +223,3 @@
           (log/warn "Unrecognized action:" action))
 
         (render-branch request branch-name (get-branch-contents))))))
-
-
-(defn index
-  "Render the index page"
-  [request]
-  (html-response
-   request
-   {:title (->> config :project-name (str "DROID for "))
-    :content [:div
-              [:p (:project-description config)]
-              [:p (login-status request)]
-              (when (-> request :session :user :authorized)
-                [:div
-                 [:hr {:class "line1"}]
-                 [:div [:h3 "Branches" ]
-                  [:ul
-                   (for [branch (->> data/branches (keys) (sort) (map name))]
-                     [:li [:a {:href (str "/branches/" branch)} branch]])]]])]}))
