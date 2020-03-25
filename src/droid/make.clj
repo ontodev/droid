@@ -7,10 +7,10 @@
 
 
 (defn- get-markdown-and-phonies
-  "Iterate using 'reduce' over the lines in the Makefile, and in the process progressively build up
-  a map called 'makefile'. This map begins as nil, but will eventually contain two entries:
-  ':markdown', which contains the markdown in the 'Workflow' part of the Makefile, and
-  ':phony-targets', which is a set containing all of the .PHONY targets in the Makefile."
+  "Iterate using `reduce` over the lines in the Makefile, and in the process progressively build up
+  a map called `makefile`. This map begins as nil, but will eventually contain two entries:
+  `:markdown`, which contains the markdown in the 'Workflow' part of the Makefile, and
+  `:phony-targets`, which is a set containing all of the .PHONY targets in the Makefile."
   [branch-name]
   (if-not (->> (str "workspace/" branch-name "/Makefile")
                (io/file)
@@ -35,6 +35,7 @@
                        (assoc makefile :phony-targets
                               (into (or (:phony-targets makefile) #{})
                                     (->> (string/split next-line #"\s+")
+                                         ;; Extract only the actual phony target names:
                                          (filter #(and (not (= "" %))
                                                        (not (= ".PHONY:" %)))))))
 
@@ -49,11 +50,10 @@
                        makefile
 
                        ;; If we are here, then we haven't hit the end of the workflow yet. Add any
-                       ;; lines beginning in '#' to the markdown:
+                       ;; lines beginning in '#' or '# ' to the markdown:
                        (string/starts-with? next-line "# ")
                        (assoc makefile :markdown
                               (concat-markdown-lines (:markdown makefile) (subs next-line 2)))
-
                        (string/starts-with? next-line "#")
                        (assoc makefile :markdown
                               (concat-markdown-lines (:markdown makefile) (subs next-line 1)))
@@ -63,7 +63,7 @@
                        :else
                        (assoc makefile :markdown
                               (-> makefile :markdown (str "\n\n")))))
-                   ;; Reduce begins with an nil makefile map:
+                   ;; The call to reduce begins with an uninitialized makefile map:
                    nil)
            ;; Remove any extra newlines from the end of the workflow that was parsed, and finally
            ;; add the branch name to the map that is returned (it will be useful for later
@@ -77,7 +77,7 @@
 
 (defn- process-markdown
   "Given a makefile with: (1) markdown representing its workflow; (2) a list of phony targets;
-  (3) the name of the branch that the makefile is on, output a new makefile record that contains:
+  (3) the name of the branch that the makefile is on: Output a new makefile record that contains:
   (1) The original markdown; (2) the original phony target list; (3) the original branch name;
   (4) a list of all targets; (5) a list of those targets which represent actions; (6) a list of
   those targets which represent views; (7) a html representation (in the form of a hiccup structure)
@@ -88,9 +88,10 @@
       (letfn [(flatten-to-1st-level [mixed-level-seq]
                 ;; Takes a sequence of sequences nested to various levels and returns a list of
                 ;; flattened sequences.
-                ;; Note that this function is adapted from code contributed by bazeblackwood
+                ;; Note that the flatten-to-1st-level function is essentially a copy of code
+                ;; contributed by the user bazeblackwood
                 ;; (https://stackoverflow.com/users/2694851/bazeblackwood) to Stack Overflow
-                ;; (https://stackoverflow.com/a/35300641/8599709).
+                ;; (see: https://stackoverflow.com/a/35300641/8599709).
                 (->> mixed-level-seq
                      (mapcat #(if (every? coll? %)
                                 (flatten-to-1st-level %)
@@ -110,7 +111,7 @@
               (process-makefile-html [{html :html, views :views, actions :actions,
                                        branch-name :branch-name, :as makefile}]
                 ;; Recurses through the html hiccup structure and transforms any links that are
-                ;; found according as they are actions or views.
+                ;; found into either action links or view links:
                 (letfn [(process-link [[tag {href :href} text :as link]]
                           (cond
                             (some #(= href %) actions)
@@ -131,8 +132,9 @@
                        (vec))))]
         (->> html
              (extract-nested-links)
-             ;; For all of the extracted links, add them to the list of targets, and then also place
-             ;; them, as appropriate, into one of the actions or views lists:
+             ;; For all of the extracted links, add those that do not contain an 'authority' part
+             ;; (i.e. a domain name) to the list of targets, and then also place them, as
+             ;; appropriate, into one of the actions or views lists:
              (map (fn [[tag {href :href} text]]
                     (when (nil? (->> href
                                      (java.net.URI.)
@@ -154,7 +156,7 @@
 
 (defn get-makefile-info
   "Given the name of a branch, and the actual branch record, extract the info contained in the
-  Makefile in the workspace directory corresponding to the branch."
+  Makefile that is located in the workspace directory corresponding to the branch."
   [branch-name branch]
   (let [Makefile (:Makefile @branch)
         last-known-mod (when-not (nil? Makefile)
@@ -164,7 +166,7 @@
                              (.lastModified))]
     ;; Do nothing unless the Makefile has been modified since we read it last:
     (when (or (nil? last-known-mod)
-              (> actual-last-mod last-known-mod))
+              (>= actual-last-mod last-known-mod))
       {:Makefile (merge {:name "Makefile"
                          :modified actual-last-mod}
                         (->> branch-name

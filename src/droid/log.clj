@@ -19,7 +19,7 @@
 
 
 (defn- log
-  "Log the message represented by the given words to stderr."
+  "Log the message represented by the given words to stderr, preceeded by the date and time."
   [first-word & other-words]
   (let [now (-> "yyyy-MM-dd HH:mm:ss.SSSZ"
                 (java.text.SimpleDateFormat.)

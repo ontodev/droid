@@ -34,7 +34,7 @@
   (fn [request]
     (handler
      (cond
-       ;; If the user is already authorized, just send the request on through:
+       ;; If the user is already authorized, just send the request back unchanged:
        (-> request :session :user :authorized)
        request
 
@@ -49,11 +49,13 @@
              user (cheshire/parse-string body true)]
          (if error
            (do
-             (println "Failed to get user information from GitHib: " status headers body error)
+             (log/error "Failed to get user information from GitHib: " status headers body error)
              (dissoc request :oauth2/access-tokens))
            (-> request
                (assoc-in [:session :user] user)
                (assoc-in [:session :user :authorized]
+                         ;; If the user is in the list of authorized users, then set the
+                         ;; :authorized field in the session to true, otherwise set it to false:
                          (contains? (-> config
                                         :authorized-github-ids
                                         (get (:op-env config)))
@@ -90,13 +92,16 @@
          :redirect-uri     "/oauth2/github/callback"
          :landing-uri      "/"}})
       (wrap-defaults
-       (-> (if (get (:secure-site config) (:op-env config)) secure-site-defaults site-defaults)
-           (assoc :proxy true)
-           (assoc-in [:security :anti-forgery] false)
-           (assoc-in [:session :cookie-attrs :same-site] :lax)
-           (assoc-in [:session :store] (cookie-store {:key (:cookie-store-key data/secrets)}))))))
+       (let [op-env (:op-env config)
+             secure-site? (-> config
+                              :secure-site
+                              (get op-env))]
+         (-> (if secure-site? secure-site-defaults site-defaults)
+             (assoc :proxy true)
+             (assoc-in [:security :anti-forgery] false)
+             (assoc-in [:session :cookie-attrs :same-site] :lax)
+             (assoc-in [:session :store] (cookie-store {:key (:cookie-store-key data/secrets)})))))))
 
 
 ;; Initialize the web app:
 (def app (create-app))
-
