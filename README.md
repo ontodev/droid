@@ -8,6 +8,15 @@ DROID differs from Continuous Testing/Integration solutions such as Jenkins or T
 
 DROID is in early development and is designed to work on Unix (Linux, macOS) systems.
 
+## GitHub environment variables
+
+For OAuth2 integration to work properly, DROID assumes that the following environment variables have been set:
+- GITHUB_CLIENT_ID
+- GITHUB_CLIENT_SECRET
+
+These should match the client id and secret of your GitHub OAuth2 app.
+
+
 ## Configuration file
 
 DROID assumes that a file called 'config.edn' exists in DROID's root directory with the following contents:
