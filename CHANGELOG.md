@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file. This change
 ## [Unreleased]
 ### Changed
 - Convert DROID codebase from `python` to `clojure`
+- Restructure to host multiple projects
 
 ### Changed
 - Add a new arity to `make-widget-async` to provide a different widget shape.
