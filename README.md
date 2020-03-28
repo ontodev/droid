@@ -22,6 +22,18 @@ These should match the client id and secret of your GitHub OAuth2 app.
 DROID assumes that a file called 'config.edn' exists in DROID's root directory with the following contents:
 
 ```
+{:projects
+ {"project1" {:project-title "PROJECT1"
+              :project-welcome "welcome message" 
+              :project-description "description"
+              :github-coordinates "github-org/repository"}
+ {"project2" {:project-title "PROJECT2"
+              :project-welcome "welcome message"
+              :project-description "description"
+              :github-coordinates "github-org/repository"}
+
+ ... }}
+ 
   {:op-env <server environment>
 
   :server-port {:dev <port>
@@ -36,13 +48,9 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
                 :test <false|true>
                 :prod <false|true>}
 
-  :authorized-github-ids {:dev #{<list of quoted github user ids that are authorized>}
-                         :test #{<list of quoted github user ids that are authorized>}
-                         :prod #{<list of quoted github user ids that are authorized>}}
-
- :project-name <quoted name of the project>
- :project-description <quoted description of the project>}
-
+  :authorized-github-ids {:dev #{"user1" "user2" ...}
+                         :test #{"user1" "user2" ...}
+                         :prod #{"user1" "user2" ...}}}
 ```
 
 where:

@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [environ.core :refer [env]]
             [droid.config :refer [config]]
+            [droid.dir :refer [get-workspace-dir get-temp-dir]]
             [droid.log :as log]
             [droid.make :as make]))
 
@@ -41,26 +42,29 @@
   (io/delete-file topname true))
 
 
-;; A hashmap with information for all of the branches in the workspace:
-(def branches
-  (do
-    (when (->> "workspace"
+(defn- initialize-project-branches
+  "Initialize a hashmap containing the information about the contents and status of a branch."
+  [project]
+  (let [project-workspace-dir (get-workspace-dir project)
+        project-temp-dir (get-temp-dir project)]
+    (when (->> project-workspace-dir
                (io/file)
                (#(or (not (.exists %)) (not (.isDirectory %)))))
-      (fail "workspace/ doesn't exist or isn't a directory."))
+      (fail
+       (str project-workspace-dir " doesn't exist or isn't a directory.")))
 
     ;; Destroy and recreate the temp/ directory:
-    (delete-recursively "temp")
-    (.mkdir (io/file "temp"))
+    (delete-recursively project-temp-dir)
+    (.mkdir (io/file project-temp-dir))
     ;; Each sub-directory of the workspace represents a branch with the same name.
-    (let [branch-dirs (->> "workspace" (io/file) (.list))]
+    (let [branch-dirs (->> project-workspace-dir (io/file) (.list))]
       (->> (for [branch-dir branch-dirs]
-             (when (-> "workspace/" (str branch-dir) (io/file) (.isDirectory))
+             (when (-> project-workspace-dir (str branch-dir) (io/file) (.isDirectory))
                ;; Create a sub-directory with the same name as the branch in the
                ;; temp/ directory:
-               (-> "temp/" (str branch-dir) (io/file) (.mkdir))
+               (-> project-temp-dir (str branch-dir) (io/file) (.mkdir))
                ;; Create an empty console.txt file in the branch's sub-directory in temp/:
-               (-> "temp/" (str branch-dir "/console.txt") (spit nil))
+               (-> project-temp-dir (str branch-dir "/console.txt") (spit nil))
                ;; Create a hashmap entry mapping the branch name to the contents of its
                ;; corresponding workspace directory. These contents are represented by a set
                ;; (initially empty) of hashmaps, each of which represents the attributes of an
@@ -71,17 +75,29 @@
            (apply merge)))))
 
 
+;; A hashmap with information for every branch in the workspace of every managed project. The keys
+;; of this hashmap are the keywordized names of the managed projects.
+(def branches
+  (->> (for [project (->> config :projects (keys))]
+         (-> project
+             (keyword)
+             (hash-map (initialize-project-branches project))))
+       (apply merge)))
+
+
 (defn refresh-branch!
   "Reload the map containing information on the contents of the directory corresponding to the
   given branch in the workspace."
-  [branch-name]
-  (let [branch (->> branch-name (keyword) (get branches))]
+  [project-name branch-name]
+  (let [branch-key (keyword branch-name)
+        branch-workspace-dir (get-workspace-dir project-name branch-name)
+        branch-temp-dir (get-temp-dir project-name branch-name)
+        branch (->> project-name (keyword) (get branches) branch-key)]
     ;; The contents of the directory for the branch are represented by a hashmap, mapping the
     ;; keywordized name of each file/sub-directory in the branch to nested hashmap with
     ;; info about that file/sub-directory. This info is at a minimum the file/sub-directory's
     ;; non-keywordized name. Other info may be added later.
-    (->> branch-name
-         (str "workspace/")
+    (->> branch-workspace-dir
          (io/file)
          (.list)
          ;; We skip the Makefile for now. It will be populated separately later on.
@@ -93,10 +109,10 @@
          (swap! branch merge))
 
     ;; Now read in the Makefile and update the info relating to it in the branch as necessary:
-    (swap! branch merge (make/get-makefile-info branch-name branch))
+    (swap! branch merge (make/get-makefile-info project-name branch-name branch))
     ;; Read the contents of the console file in the branch's temp directory and add those contents
     ;; to the branch:
-    (swap! branch assoc :console (-> "temp/" (str branch-name "/console.txt") (slurp)))
+    (swap! branch assoc :console (-> branch-temp-dir (str "/console.txt") (slurp)))
 
     ;; If there is a process running currently, add info to the branch about how long it has been
     ;; running for:

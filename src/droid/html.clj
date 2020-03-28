@@ -3,6 +3,7 @@
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
             [droid.data :as data]
+            [droid.dir :refer [get-workspace-dir]]
             [droid.log :as log]
             [ring.util.response :refer [file-response redirect]]))
 
@@ -35,7 +36,7 @@
     :as response
     :or {status 200
          headers default-html-headers
-         title (->> config :project-name (str "DROID for "))
+         title "DROID"
          heading title}}]
   {:status status
    :session session
@@ -84,7 +85,7 @@
   [request]
   (html-response
    request
-   {:title (->> config :project-name (str "404 Page Not Found -- "))
+   {:title "404 Page Not Found &mdash; DROID"
     :content [:div#contents
               [:p "The requested resource could not be found."]]
     :status 404}))
@@ -95,30 +96,60 @@
   [request]
   (html-response
    request
-   {:title (->> config :project-name (str "DROID for "))
+   {:title "DROID"
+    :heading "DROID"
     :content [:div
-              [:p (:project-description config)]
+              [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
               [:p (login-status request)]
               (when (-> request :session :user :authorized)
                 [:div
                  [:hr {:class "line1"}]
-                 [:div [:h3 "Branches" ]
+                 [:div [:h3 "Available Projects" ]
                   [:ul
-                   (for [branch (->> data/branches (keys) (sort) (map name))]
-                     [:li [:a {:href (str "/branches/" branch)} branch]])]]])]}))
+                   (for [project (-> config :projects)]
+                     [:li [:a {:href (->> project (key) (str "/"))}
+                           (->> project (val) :project-title)]])]]])]}))
+
+
+(defn render-project
+  "Render the home page for a project"
+  [{{project-name :project-name, :as params} :params,
+    :as request}]
+  (let [project (-> config :projects (get project-name))]
+    (if (nil? project)
+      (render-404 request)
+      (html-response
+       request
+       {:title (->> project :project-title (str "DROID for "))
+        :content [:div
+                  [:p (->> project :project-description)]
+                  [:p (login-status request)]
+                  (when (-> request :session :user :authorized)
+                    [:div
+                     [:hr {:class "line1"}]
+                     [:div [:h3 "Branches" ]
+                      [:ul
+                       (for [branch (->> project-name
+                                         (keyword)
+                                         (get data/branches)
+                                         (keys)
+                                         (sort)
+                                         (map name))]
+                         [:li [:a {:href (str project-name "/branches/" branch)} branch]])]]])]}))))
 
 
 (defn view-file
   "View a file in the workspace"
-  [{{branch-name :branch-name, path :path, :as params} :params}]
-  (file-response (str "workspace/" branch-name "/" path)))
+  [{{project-name :project-name, branch-name :branch-name, path :path, :as params} :params}]
+  (file-response (-> (get-workspace-dir project-name branch-name)
+                     (str path))))
 
 
 (defn act-on-branch!
   "Possibly perform an action a branch before rendering the page for the branch. Note that this
   function locks the branch during the given action; no two calls to act-on-branch! will be able
   to run simultaneously."
-  [{{branch-name :branch-name, action :action, :as params} :params,
+  [{{project-name :project-name, branch-name :branch-name, action :action, :as params} :params,
     :as request}]
   (letfn [(render-branch-console [branch branch-name]
             ;; Render the part of the branch corresponding to the console:
@@ -144,7 +175,9 @@
                   (str "Processes still running after "
                        (-> branch :run-time (/ 1000) (float) (Math/ceil) (int)) " seconds.")
                   [:span {:class "col-sm-2"} [:a {:class "btn btn-success btn-sm"
-                                                  :href (str "/branches/" branch-name)} "Refresh"]]
+                                                  :href (str "/" project-name "/branches/"
+                                                             branch-name)}
+                                              "Refresh"]]
                   [:span {:class "col-sm-2"} [:a {:class "btn btn-danger btn-sm"
                                                   :href "?action=cancel"} "Cancel"]]]
 
@@ -158,14 +191,16 @@
             ;; Render the page for a branch:
             (html-response
              request
-             {:title (-> config :project-name (str " -- " branch-name))
-              :heading (->> config :project-name (str "DROID for "))
+             {:title (-> config :projects (get project-name) :project-title
+                         (str " -- " branch-name))
+              :heading (str "DROID for "
+                            (-> config :projects (get project-name) :project-title))
               :content [:div
                         [:p (login-status request)]
                         [:div
                          [:hr {:class "line1"}]
 
-                         [:h2 (str "Branch: " branch-name)]
+                         [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
 
                          [:h3 "Workflow"]
                          (or (->> branch :Makefile :html)
@@ -175,12 +210,13 @@
                          (if (->> branch :process (nil?))
                            [:p "Press a button above to execute an action."]
                            (render-branch-console branch branch-name))]]}))]
-    (let [branch (->> branch-name (keyword) (get data/branches))]
+    (let [branch-key (keyword branch-name)
+          branch (->> project-name (keyword) (get data/branches) branch-key)]
       ;; Lock the branch. Note that the call to `locking` below does *not* globally lock the given
       ;; branch, but only locks it in the context of act-on-branch!, so there should not be any
       ;; other public function defined above to manipulate the given branch.
       (locking branch
-        (let [get-branch-contents #(data/refresh-branch! branch-name)
+        (let [get-branch-contents #(data/refresh-branch! project-name branch-name)
               last-exit-code (->> (get-branch-contents) :exit-code)
               kill-process #(let [p (->> (get-branch-contents) :process)]
                               (when-not (nil? p)
@@ -194,7 +230,8 @@
                                                       "exec make " action
                                                       " > ../../temp/" branch-name "/console.txt"
                                                       " 2>&1")
-                                                     :dir (str "workspace/" branch-name))]
+                                                     :dir (get-workspace-dir project-name
+                                                                             branch-name))]
                                 ;; After spawning the process, add a pointer to it to the branch as
                                 ;; well as its meta-information:
                                 (swap! branch assoc
@@ -230,5 +267,5 @@
           ;; desirable because we don't want to kick off the action again just because the user hits
           ;; her browser's refresh button):
           (if-not (nil? action)
-            (redirect (str "/branches/" branch-name))
+            (redirect (str "/" project-name "/branches/" branch-name))
             (render-branch request branch-name (get-branch-contents))))))))

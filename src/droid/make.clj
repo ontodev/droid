@@ -3,6 +3,7 @@
             [clojure.string :as string]
             [markdown-to-hiccup.core :as m2h]
             [me.raynes.conch.low-level :as sh]
+            [droid.dir :refer [get-workspace-dir]]
             [droid.log :as log]))
 
 
@@ -11,8 +12,9 @@
   a map called `makefile`. This map begins as nil, but will eventually contain two entries:
   `:markdown`, which contains the markdown in the 'Workflow' part of the Makefile, and
   `:phony-targets`, which is a set containing all of the .PHONY targets in the Makefile."
-  [branch-name]
-  (if-not (->> (str "workspace/" branch-name "/Makefile")
+  [project-name branch-name]
+  (if-not (->> "/Makefile"
+               (str (get-workspace-dir project-name branch-name))
                (io/file)
                (.exists))
     ;; If there is no Makefile in the workspace for the branch, then log a warning and return nil:
@@ -24,7 +26,8 @@
                 (string/blank? line1) line2
                 (string/blank? line2) line1
                 :else (str line1 "\n" line2)))]
-      (->> (str "workspace/" branch-name "/Makefile")
+      (->> "/Makefile"
+           (str (get-workspace-dir project-name branch-name))
            (slurp)
            (string/split-lines)
            (reduce (fn [makefile next-line]
@@ -157,11 +160,12 @@
 (defn get-makefile-info
   "Given the name of a branch, and the actual branch record, extract the info contained in the
   Makefile that is located in the workspace directory corresponding to the branch."
-  [branch-name branch]
+  [project-name branch-name branch]
   (let [Makefile (:Makefile @branch)
         last-known-mod (when-not (nil? Makefile)
                          (:modified Makefile))
-        actual-last-mod (->> (str "workspace/" branch-name "/Makefile")
+        actual-last-mod (->> "/Makefile"
+                             (str (get-workspace-dir project-name branch-name))
                              (io/file)
                              (.lastModified))]
     ;; Do nothing unless the Makefile has been modified since we read it last:
@@ -170,5 +174,5 @@
       {:Makefile (merge {:name "Makefile"
                          :modified actual-last-mod}
                         (->> branch-name
-                             (get-markdown-and-phonies)
+                             (get-markdown-and-phonies project-name)
                              (process-markdown)))})))

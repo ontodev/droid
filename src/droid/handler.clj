@@ -68,8 +68,9 @@
 
 (defroutes app-routes
   (GET "/" [] html/index)
-  (GET "/branches/:branch-name/views/:path{.+}" [] html/view-file)
-  (GET "/branches/:branch-name" [] html/act-on-branch!)
+  (GET "/:project-name" [] html/render-project)
+  (GET "/:project-name/branches/:branch-name/views/:path{.+}" [] html/view-file)
+  (GET "/:project-name/branches/:branch-name" [] html/act-on-branch!)
   ;; all other, return 404
   (route/not-found html/render-404))
 
