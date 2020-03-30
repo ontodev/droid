@@ -139,10 +139,21 @@
 
 
 (defn view-file
-  "View a file in the workspace"
-  [{{project-name :project-name, branch-name :branch-name, path :path, :as params} :params}]
-  (file-response (-> (get-workspace-dir project-name branch-name)
-                     (str path))))
+  "View a file in the workspace if it is in the list of allowed views for the branch."
+  [{{project-name :project-name, branch-name :branch-name, path :path, :as params} :params,
+    :as request}]
+  ;; Make sure that the requested path is in the list of views indicated in the branch:
+  (let [allowed-views (-> (->> project-name
+                               (keyword)
+                               (get data/branches))
+                          (get (keyword branch-name))
+                          (deref)
+                          (:Makefile)
+                          (:views))]
+    (if (some #(= path %) allowed-views)
+      (file-response (-> (get-workspace-dir project-name branch-name)
+                         (str path)))
+      (render-404 request))))
 
 
 (defn act-on-branch!
