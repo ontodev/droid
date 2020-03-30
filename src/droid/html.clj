@@ -143,11 +143,7 @@
   [{{project-name :project-name, branch-name :branch-name, path :path, :as params} :params,
     :as request}]
   ;; Make sure that the requested path is in the list of views indicated in the branch:
-  (let [allowed-views (-> (->> project-name
-                               (keyword)
-                               (get data/branches))
-                          (get (keyword branch-name))
-                          (deref)
+  (let [allowed-views (-> (data/refresh-branch! project-name branch-name)
                           (:Makefile)
                           (:views))]
     (if (some #(= path %) allowed-views)
