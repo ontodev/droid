@@ -158,17 +158,20 @@
 
 
 (defn get-makefile-info
-  "Given the name of a branch, and the actual branch record, extract the info contained in the
-  Makefile that is located in the workspace directory corresponding to the branch."
-  [project-name branch-name branch]
-  (let [Makefile (:Makefile @branch)
+  "Given a hashmap representing a branch, if the info regarding the Makefile in the branch is older
+  than the Makefile actually residing on disk, then return an updated version of the Makefile record
+  back to the caller."
+  [branch]
+  (let [project-name (:project-name branch)
+        branch-name (:branch-name branch)
+        Makefile (:Makefile branch)
         last-known-mod (when-not (nil? Makefile)
                          (:modified Makefile))
         actual-last-mod (->> "/Makefile"
                              (str (get-workspace-dir project-name branch-name))
                              (io/file)
                              (.lastModified))]
-    ;; Do nothing unless the Makefile has been modified since we read it last:
+    ;; Return nothing unless the Makefile has been modified since we read it last:
     (when (or (nil? last-known-mod)
               (>= actual-last-mod last-known-mod))
       {:Makefile (merge {:name "Makefile"

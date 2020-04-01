@@ -129,36 +129,47 @@
                      [:hr {:class "line1"}]
                      [:div [:h3 "Branches" ]
                       [:ul
-                       (for [branch (->> project-name
-                                         (keyword)
-                                         (get data/branches)
-                                         (keys)
-                                         (sort)
-                                         (map name))]
-                         [:li [:a {:href (str project-name "/branches/" branch)} branch]])]]])]}))))
+                       (for [branch-name (->> project-name
+                                              (keyword)
+                                              (get data/branches)
+                                              (keys)
+                                              (sort)
+                                              (map name))]
+                         [:li [:a {:href (str project-name "/branches/" branch-name)}
+                               branch-name]])]]])]}))))
 
 
-(defn view-file
-  "View a file in the workspace if it is in the list of allowed views for the branch."
+(defn view-file!
+  "View a file in the workspace if it is in the list of allowed views for the branch. Note that
+  this function will call the branch's agent to potentially modify the branch."
   [{{project-name :project-name, branch-name :branch-name, path :path, :as params} :params,
     :as request}]
   ;; Make sure that the requested path is in the list of views indicated in the branch:
-  (let [allowed-views (-> (data/refresh-branch! project-name branch-name)
-                          (:Makefile)
-                          (:views))]
+  (let [branch-key (keyword branch-name)
+        branch-agent (->> project-name (keyword) (get data/branches) branch-key)
+        allowed-views (do
+                        ;; Kick off a job to refresh the branch information, wait for it to
+                        ;; complete, and then finally retrieve the views from the branch's Makefile:
+                        (send-off branch-agent data/refresh-branch)
+                        (await branch-agent)
+                        (-> @branch-agent
+                            :Makefile
+                            :views))]
     (if (some #(= path %) allowed-views)
-      (file-response (-> (get-workspace-dir project-name branch-name)
-                         (str path)))
+      (-> (get-workspace-dir project-name branch-name)
+          (str path)
+          (file-response)
+          ;; Views must not be cached by the client browser:
+          (assoc :headers {"Cache-Control" "no-store"}))
       (render-404 request))))
 
 
-(defn act-on-branch!
-  "Possibly perform an action a branch before rendering the page for the branch. Note that this
-  function locks the branch during the given action; no two calls to act-on-branch! will be able
-  to run simultaneously."
+(defn hit-branch!
+  "Render a branch, possibly performing an action on it in the process. Note that this function will
+  call the branch's agent to potentially modify the branch."
   [{{project-name :project-name, branch-name :branch-name, action :action, :as params} :params,
     :as request}]
-  (letfn [(render-branch-console [branch branch-name]
+  (letfn [(render-branch-console [branch]
             ;; Render the part of the branch corresponding to the console:
             [:div
              (let [readable-start (->> branch :start-time (java.time.Instant/ofEpochMilli) (str))]
@@ -183,7 +194,7 @@
                        (-> branch :run-time (/ 1000) (float) (Math/ceil) (int)) " seconds.")
                   [:span {:class "col-sm-2"} [:a {:class "btn btn-success btn-sm"
                                                   :href (str "/" project-name "/branches/"
-                                                             branch-name)}
+                                                             (:branch-name branch))}
                                               "Refresh"]]
                   [:span {:class "col-sm-2"} [:a {:class "btn btn-danger btn-sm"
                                                   :href "?action=cancel"} "Cancel"]]]
@@ -194,85 +205,94 @@
                  :else
                  [:p {:class "alert alert-danger"} (str "ERROR: Exit code " @exit-code)]))])
 
-          (render-branch [request branch-name branch]
+          (render-branch-outer-page [branch]
             ;; Render the page for a branch:
-            (html-response
-             request
-             {:title (-> config :projects (get project-name) :project-title
-                         (str " -- " branch-name))
-              :heading (str "DROID for "
-                            (-> config :projects (get project-name) :project-title))
-              :content [:div
-                        [:p (login-status request)]
-                        [:div
-                         [:hr {:class "line1"}]
+            (let [branch-name (:branch-name branch)]
+              (html-response
+               request
+               {:title (-> config :projects (get project-name) :project-title
+                           (str " -- " branch-name))
+                :heading (str "DROID for "
+                              (-> config :projects (get project-name) :project-title))
+                :content [:div
+                          [:p (login-status request)]
+                          [:div
+                           [:hr {:class "line1"}]
 
-                         [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
+                           [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
 
-                         [:h3 "Workflow"]
-                         (or (->> branch :Makefile :html)
-                             [:ul [:li "Not found"]])
+                           [:h3 "Workflow"]
+                           (or (->> branch :Makefile :html)
+                               [:ul [:li "Not found"]])
 
-                         [:h3 "Console"]
-                         (if (->> branch :process (nil?))
-                           [:p "Press a button above to execute an action."]
-                           (render-branch-console branch branch-name))]]}))]
-    (let [branch-key (keyword branch-name)
-          branch (->> project-name (keyword) (get data/branches) branch-key)]
-      ;; Lock the branch. Note that the call to `locking` below does *not* globally lock the given
-      ;; branch, but only locks it in the context of act-on-branch!, so there should not be any
-      ;; other public function defined above to manipulate the given branch.
-      (locking branch
-        (let [get-branch-contents #(data/refresh-branch! project-name branch-name)
-              last-exit-code (->> (get-branch-contents) :exit-code)
-              kill-process #(let [p (->> (get-branch-contents) :process)]
-                              (when-not (nil? p)
-                                (sh/destroy p)
-                                (swap! branch assoc :cancelled true)))
-              launch-process #(let [process (sh/proc "bash" "-c"
-                                                     ;; `exec` is needed here to prevent the make
-                                                     ;; process from detaching from the parent (that
-                                                     ;; will make it difficult to destroy later).
-                                                     (str
-                                                      "exec make " action
-                                                      " > ../../temp/" branch-name "/console.txt"
-                                                      " 2>&1")
-                                                     :dir (get-workspace-dir project-name
-                                                                             branch-name))]
-                                ;; After spawning the process, add a pointer to it to the branch as
-                                ;; well as its meta-information:
-                                (swap! branch assoc
-                                       :action action
-                                       :command (str "make " action)
-                                       :process process
-                                       :start-time (System/currentTimeMillis)
-                                       :cancelled false
-                                       :exit-code (future (sh/exit-code process))))]
+                           [:h3 "Console"]
+                           (if (->> branch :process (nil?))
+                             [:p "Press a button above to execute an action."]
+                             (render-branch-console branch))]]})))
 
-          ;; Perform the requested action:
-          (cond
-            (= action "cancel")
-            (when (and (not (nil? last-exit-code))
-                       (not (realized? last-exit-code)))
-              (kill-process))
+          (kill-process [branch]
+            (let [p (->> (data/refresh-branch branch) :process)]
+              (when-not (nil? p)
+                (sh/destroy p)
+                (assoc branch :cancelled true))))
 
-            ;; If the specified action is recognized then launch a corresponding process, killing
-            ;; any other running process first:
-            (some #(= % action) (->> (get-branch-contents) :Makefile :actions))
-            (do
-              (when (and (not (nil? last-exit-code))
+          (launch-process [branch]
+            (let [process (sh/proc "bash" "-c"
+                                   ;; `exec` is needed here to prevent the make process from
+                                   ;; detaching from the parent (that ;; will make it difficult
+                                   ;; to destroy later).
+                                   (str
+                                    "exec make " action
+                                    " > ../../temp/" branch-name "/console.txt"
+                                    " 2>&1")
+                                   :dir (get-workspace-dir project-name branch-name))]
+              ;; After spawning the process, add a pointer to it to the branch as
+              ;; well as its meta-information:
+              (Thread/sleep 1000)
+              (assoc branch
+                     :action action
+                     :command (str "make " action)
+                     :process process
+                     :start-time (System/currentTimeMillis)
+                     :cancelled false
+                     :exit-code (future (sh/exit-code process)))))
+
+          (act-on-branch [branch]
+            (let [refreshed-contents (data/refresh-branch branch)
+                  last-exit-code (->> refreshed-contents :exit-code)]
+              ;; Perform the requested action:
+              (cond
+                (= action "cancel")
+                (if (and (not (nil? last-exit-code))
                          (not (realized? last-exit-code)))
-                (kill-process))
-              (launch-process)
-              (Thread/sleep 1000))
+                  (kill-process branch)
+                  refreshed-contents)
 
-            (not (nil? action))
-            (log/warn "Unrecognized action:" action))
+                ;; If the specified action is recognized then launch a corresponding process, killing
+                ;; any other running process first:
+                (some #(= % action) (->> (data/refresh-branch branch) :Makefile :actions))
+                (do
+                  (if (and (not (nil? last-exit-code))
+                           (not (realized? last-exit-code)))
+                    (->> branch (kill-process) (launch-process))
+                    (->> branch (launch-process))))
 
-          ;; If we performed an action, then we now redirect to the branch page (the main reason for
-          ;; this is to get rid of the '?action=...' part of the URL in the address bar, which is
-          ;; desirable because we don't want to kick off the action again just because the user hits
-          ;; her browser's refresh button):
-          (if-not (nil? action)
-            (redirect (str "/" project-name "/branches/" branch-name))
-            (render-branch request branch-name (get-branch-contents))))))))
+                :else
+                (do
+                  (when (not (nil? action))
+                    (log/warn "Unrecognized action:" action))
+                  refreshed-contents))))]
+    (let [branch-key (keyword branch-name)
+          branch-agent (->> project-name (keyword) (get data/branches) branch-key)]
+
+      ;; Perform any needed actions on the branch and wait for it to be done:
+      (send-off branch-agent act-on-branch)
+      (await branch-agent)
+
+      ;; If we performed an action, then we now redirect to the branch page (the main reason for
+      ;; this is to get rid of the '?action=...' part of the URL in the address bar, which is
+      ;; desirable because we don't want to kick off the action again just because the user hits
+      ;; her browser's refresh button):
+      (if-not (nil? action)
+        (redirect (str "/" project-name "/branches/" branch-name))
+        (render-branch-outer-page @branch-agent)))))
