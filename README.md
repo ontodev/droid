@@ -26,36 +26,25 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
  {"project1" {:project-title "PROJECT1"
               :project-welcome "welcome message" 
               :project-description "description"
-              :github-coordinates "github-org/repository"}
- {"project2" {:project-title "PROJECT2"
+              :github-coordinates "github-org/repository-1"}
+  "project2" {:project-title "PROJECT2"
               :project-welcome "welcome message"
               :project-description "description"
-              :github-coordinates "github-org/repository"}
-
- ... }}
- 
-  {:op-env <server environment>
-
-  :server-port {:dev <port>
-                :test <port>
-                :prod <port>}
- 
-  :log-level {:dev <debug mode>
-              :test <debug mode>
-              :prod <debug mode>}
-
-  :secure-site {:dev <false|true>
-                :test <false|true>
-                :prod <false|true>}
-
-  :authorized-github-ids {:dev #{"user1" "user2" ...}
-                         :test #{"user1" "user2" ...}
-                         :prod #{"user1" "user2" ...}}}
+              :github-coordinates "github-org/repository-2"}}
+ :op-env :dev
+ :server-port {:dev 8000 :test 8001 :prod 8002}
+ :log-level {:dev :info :test :info :prod :warn}
+ :secure-site {:dev true :test true :prod true}
+ :authorized-github-ids
+ {:dev #{"user1" "user2"}
+  :test #{"user1" "user2"}
+  :prod #{"user1" "user2"}}}
 ```
 
 where:
-- `<server environment>` should be one of `:dev`, `:test`, `:prod`
-- `<debug mode>` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`
-- `<port>` is the port that the server will listen on.
 
-The way that `:op-env` works is that, if `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
+- `:op-env` should be one of `:dev`, `:test`, `:prod`
+- `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`
+- `:server-port` is the port that the server will listen on.
+
+If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
