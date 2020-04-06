@@ -1,6 +1,4 @@
-(ns droid.dir
-  )
-
+(ns droid.dir)
 
 (defn get-workspace-dir
   "Given a project and optionally a branch name, generate the appropriate workspace path"
@@ -8,7 +6,6 @@
    (str "projects/" project-name "/workspace/"))
   ([project-name branch-name]
    (str "projects/" project-name "/workspace/" branch-name "/")))
-
 
 (defn get-temp-dir
   "Given a project and optionally a branch name, generate the appropriate temp path"

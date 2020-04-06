@@ -2,14 +2,13 @@
   (:require [org.httpkit.server :refer [run-server]]
             [droid.config :refer [config]]
             [droid.handler :as handler]
-            [droid.log :as log]))
-
+            [droid.log :as log])
+  (:gen-class))
 
 (defn- wrap-app
   "Wrapper that simply returns the webapp defined in the droid.handler module"
   []
   #'handler/app)
-
 
 (defn -main []
   (let [op-env (:op-env config)

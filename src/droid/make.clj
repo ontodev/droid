@@ -6,7 +6,6 @@
             [droid.dir :refer [get-workspace-dir]]
             [droid.log :as log]))
 
-
 (defn- get-markdown-and-phonies
   "Iterate using `reduce` over the lines in the Makefile, and in the process progressively build up
   a map called `makefile`. This map begins as nil, but will eventually contain two entries:
@@ -75,8 +74,7 @@
                   :markdown
                   (string/trim-newline)
                   (assoc % :markdown)
-                  (merge {:branch-name branch-name}))))))) 
-
+                  (merge {:branch-name branch-name})))))))
 
 (defn- process-markdown
   "Given a makefile with: (1) markdown representing its workflow; (2) a list of phony targets;
@@ -85,7 +83,7 @@
   (4) a list of all targets; (5) a list of those targets which represent actions; (6) a list of
   those targets which represent views; (7) a html representation (in the form of a hiccup structure)
   of the markdown."
-  [{markdown :markdown, phony-targets :phony-targets, branch-name :branch-name :as makefile}]
+  [{:keys [markdown phony-targets branch-name] :as makefile}]
   (when markdown
     (let [html (->> markdown (m2h/md->hiccup) (m2h/component))]
       (letfn [(flatten-to-1st-level [mixed-level-seq]
@@ -111,8 +109,7 @@
                      (flatten-to-1st-level)
                      (into #{})))
 
-              (process-makefile-html [{html :html, views :views, actions :actions,
-                                       branch-name :branch-name, :as makefile}]
+              (process-makefile-html [{:keys [html views actions branch-name] :as makefile}]
                 ;; Recurses through the html hiccup structure and transforms any links that are
                 ;; found into either action links or view links:
                 (letfn [(process-link [[tag {href :href} text :as link]]
@@ -144,10 +141,10 @@
                                      (bean)
                                      :authority))
                       (merge
-                       {:targets [href]}
+                       {:targets #{href}}
                        (if (some #(= href %) phony-targets)
-                         {:actions [href]}
-                         {:views [href]})))))
+                         {:actions #{href}}
+                         {:views #{href}})))))
              (apply merge-with into)
              ;; Add the original html to the makefile record, and then send everything through
              ;; process-makefile-html, which will transform the view and action links accordingly:
@@ -156,16 +153,12 @@
                     (process-makefile-html)
                     (assoc % :html))))))))
 
-
 (defn get-makefile-info
   "Given a hashmap representing a branch, if the info regarding the Makefile in the branch is older
   than the Makefile actually residing on disk, then return an updated version of the Makefile record
   back to the caller."
-  [branch]
-  (let [project-name (:project-name branch)
-        branch-name (:branch-name branch)
-        Makefile (:Makefile branch)
-        last-known-mod (when-not (nil? Makefile)
+  [{:keys [project-name branch-name Makefile] :as branch}]
+  (let [last-known-mod (when-not (nil? Makefile)
                          (:modified Makefile))
         actual-last-mod (->> "/Makefile"
                              (str (get-workspace-dir project-name branch-name))

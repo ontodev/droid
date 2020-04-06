@@ -12,7 +12,6 @@
             [droid.log :as log]
             [droid.html :as html]))
 
-
 (defn- wrap-authorized
   "If the request is for the index page, then send it through unchanged. If it is for any other page
   then only send it through if it is authorized, otherwise redirect it to the index page."
@@ -26,7 +25,6 @@
 
           :else
           (redirect "/"))))
-
 
 (defn- wrap-user
   "Add user and GitHub OAuth2 information to the request."
@@ -65,7 +63,6 @@
        :else
        request))))
 
-
 (defroutes app-routes
   (GET "/" [] html/index)
   (GET "/:project-name" [] html/render-project)
@@ -73,7 +70,6 @@
   (GET "/:project-name/branches/:branch-name" [] html/hit-branch!)
   ;; all other, return 404
   (route/not-found html/render-404))
-
 
 (defn- create-app
   "Initialize a web server"
@@ -105,4 +101,6 @@
 
 
 ;; Initialize the web app:
+
+
 (def app (create-app))

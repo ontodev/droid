@@ -1,9 +1,7 @@
 (ns droid.log
   (:require [droid.config :refer [config]]))
 
-
 (def log-levels {:debug 0 :info 1 :warn 2 :warning 2 :error 3 :fatal 4})
-
 
 (defn- screened-out?
   "Given a keword representing the log-level, check to see whether the application configuration
@@ -17,7 +15,6 @@
         given-level (log-level log-levels)]
     (< given-level config-level)))
 
-
 (defn- log
   "Log the message represented by the given words to stderr, preceeded by the date and time."
   [first-word & other-words]
@@ -30,36 +27,30 @@
     (binding [*out* *err*]
       (println now "-" message))))
 
-
 (defn debug
   [first-word & other-words]
   (when (not (screened-out? :debug))
     (apply log "DEBUG" first-word other-words)))
-
 
 (defn info
   [first-word & other-words]
   (when (not (screened-out? :info))
     (apply log "INFO" first-word other-words)))
 
-
 (defn warn
   [first-word & other-words]
   (when (not (screened-out? :warn))
     (apply log "WARN" first-word other-words)))
-
 
 (defn warning
   [first-word & other-words]
   (when (not (screened-out? :warning))
     (apply log "WARN" first-word other-words)))
 
-
 (defn error
   [first-word & other-words]
   (when (not (screened-out? :error))
     (apply log "ERROR" first-word other-words)))
-
 
 (defn fatal
   [first-word & other-words]
