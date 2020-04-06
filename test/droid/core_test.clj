@@ -16,7 +16,7 @@
         (is (= (:phony-targets makefile) #{"clean" "update"}))
         (is (= (:views makefile) #{"build/update.txt"}))
         (is (= (:markdown makefile)
-               "1. Review the [Knocean Practises Document](https://github.com/knocean/practises)\n2. Run [Clean](clean) to clean the contents of the build/ directory.\n2. Run [Update](update) to update the contents of the build/ directory.\n3. View the results:\n    - [Updated Build](build/update.txt)"))
+               "1. Review the [Knocean Practises Document](https://github.com/knocean/practises)\n2. Run [Clean](clean) to clean the contents of the build/ directory.\n3. Run [Update](update) to update the contents of the build/ directory.\n4. View the results:\n    - [Updated Build](build/update.txt)"))
         (is (= (:html makefile)
                [:div {}
                 [:ol {}

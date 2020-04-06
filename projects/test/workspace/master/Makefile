@@ -4,8 +4,8 @@
 #
 # 1. Review the [Knocean Practises Document](https://github.com/knocean/practises)
 # 2. Run [Clean](clean) to clean the contents of the build/ directory.
-# 2. Run [Update](update) to update the contents of the build/ directory.
-# 3. View the results:
+# 3. Run [Update](update) to update the contents of the build/ directory.
+# 4. View the results:
 #     - [Updated Build](build/update.txt)
 
 .PHONY: update clean
