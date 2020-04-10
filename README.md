@@ -16,7 +16,6 @@ For OAuth2 integration to work properly, DROID assumes that the following enviro
 
 These should match the client id and secret of your GitHub OAuth2 app.
 
-
 ## Configuration file
 
 DROID assumes that a file called 'config.edn' exists in DROID's root directory with the following contents:
@@ -48,3 +47,27 @@ where:
 - `:server-port` is the port that the server will listen on.
 
 If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
+
+## `projects/` directory
+
+DROID assumes that there exists a directory called `projects/` within its root directory. Within `projects/` there should be a subdirectory corresponding to each project defined in `config.edn` (see above). Within each individual project directory there should be a `workspace/` directory. Within each project's `workspace/` directory there should be a subdirectory corresponding to each branch managed by the project. Finally, each branch directory should contain, at a minimum, a Makefile. For example:
+
+```
+projects/
+├── project1/
+│   └── workspace/
+│       ├── branch1/
+│       │   └── Makefile
+│       │   └── ...
+│       └── branch2/
+│           └── Makefile
+│           └── ...
+└── project2/
+    └── workspace/
+        ├── branch1/
+        │   └── Makefile
+            └── ...
+        └── branch2/
+            └── Makefile
+            └── ...
+```

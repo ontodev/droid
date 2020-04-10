@@ -2,11 +2,7 @@
 
 (def default-config
   "The default configuration that will be used if the configuration file cannot be found."
-  {:projects
-   {"test" {:project-title "TEST"
-            :project-welcome "Welcome message for Test Project"
-            :project-description "Description of Test Project"
-            :github-coordinates ""}}
+  {:projects {}
 
    ;; Application settings (should be one of :dev, :test, :prod)
    :op-env :dev

@@ -1,14 +1,20 @@
 (ns droid.core-test
   (:require [clojure.test :refer [is deftest testing]]
             [droid.core :refer :all]
-            [droid.data :refer [branches refresh-branch]]))
+            [droid.data :refer [branches refresh-branch]]
+            [droid.dir :refer [get-workspace-dir get-temp-dir]]))
 
 (deftest test-parse-makefile
-  (let [branch-agent (->> branches :test :master)]
-    (send-off branch-agent refresh-branch)
-    (await branch-agent)
-    (testing "Makefile parsing test"
-      (let [makefile (->> @branch-agent :Makefile)]
+  (with-redefs [branches {:test {:master (agent {:project-name "test", :branch-name "master"})}}
+                get-workspace-dir (fn [myarg1 myarg2] "test/workspace/master/")
+                get-temp-dir (fn [myarg1 myarg2] "test/temp/master/")]
+    (let [makefile (->> branches
+                        :test
+                        :master
+                        (deref)
+                        (refresh-branch)
+                        :Makefile)]
+      (testing "Makefile parsing test"
         (is (= (:branch-name makefile) "master"))
         (is (= (:name makefile) "Makefile"))
         (is (= (:targets makefile) #{"clean" "update" "build/update.txt"}))
