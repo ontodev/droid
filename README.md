@@ -6,13 +6,68 @@ DROID is a web-based interface for working with (1) a build system, managed by (
 
 DROID differs from Continuous Testing/Integration solutions such as Jenkins or Travis CI because DROID allows users to modify a working copy of a branch and run tasks on an ad-hoc basis before committing changes. DROID differs from Web/Cloud IDEs because users are limited to a specified set of files and tasks.
 
-DROID is in early development and is designed to work on Unix (Linux, macOS) systems. It is build on [Flask](https://palletsprojects.com/p/flask/). You need Python 3 installed, and we recommend using `venv`. Clone this repository into a fresh directory, set up `venv`, install requirements with `pip`, and then run `./droid`:
+DROID is in early development and is designed to work on Unix (Linux, macOS) systems.
+
+## GitHub environment variables
+
+For OAuth2 integration to work properly, DROID assumes that the following environment variables have been set:
+- GITHUB_CLIENT_ID
+- GITHUB_CLIENT_SECRET
+
+These should match the client id and secret of your GitHub OAuth2 app.
+
+## Configuration file
+
+DROID assumes that a file called 'config.edn' exists in DROID's root directory with the following contents:
 
 ```
-virtualenv _venv
-source _venv/bin/activate
-pip install -r requirements.txt
-export FLASK_APP=droid
-export FLASK_ENV=development
-flask run
+{:projects
+ {"project1" {:project-title "PROJECT1"
+              :project-welcome "welcome message" 
+              :project-description "description"
+              :github-coordinates "github-org/repository-1"}
+  "project2" {:project-title "PROJECT2"
+              :project-welcome "welcome message"
+              :project-description "description"
+              :github-coordinates "github-org/repository-2"}}
+ :op-env :dev
+ :server-port {:dev 8000 :test 8001 :prod 8002}
+ :log-level {:dev :info :test :info :prod :warn}
+ :secure-site {:dev true :test true :prod true}
+ :authorized-github-ids
+ {:dev #{"user1" "user2"}
+  :test #{"user1" "user2"}
+  :prod #{"user1" "user2"}}}
+```
+
+where:
+
+- `:op-env` should be one of `:dev`, `:test`, `:prod`
+- `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`
+- `:server-port` is the port that the server will listen on.
+
+If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
+
+## `projects/` directory
+
+DROID assumes that there exists a directory called `projects/` within its root directory. Within `projects/` there should be a subdirectory corresponding to each project defined in `config.edn` (see above). Within each individual project directory there should be a `workspace/` directory. Within each project's `workspace/` directory there should be a subdirectory corresponding to each branch managed by the project. Finally, each branch directory should contain, at a minimum, a Makefile. For example:
+
+```
+projects/
+├── project1/
+│   └── workspace/
+│       ├── branch1/
+│       │   └── Makefile
+│       │   └── ...
+│       └── branch2/
+│           └── Makefile
+│           └── ...
+└── project2/
+    └── workspace/
+        ├── branch1/
+        │   └── Makefile
+        │   └── ...
+        └── branch2/
+            └── Makefile
+            └── ...
 ```
