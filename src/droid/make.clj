@@ -80,9 +80,9 @@
   "Given a makefile with: (1) markdown representing its workflow; (2) a list of phony targets;
   (3) the name of the branch that the makefile is on: Output a new makefile record that contains:
   (1) The original markdown; (2) the original phony target list; (3) the original branch name;
-  (4) a list of all targets; (5) a list of those targets which represent actions; (6) a list of
-  those targets which represent views; (7) a html representation (in the form of a hiccup structure)
-  of the markdown."
+  (4) a list of all targets; (5) a list of those targets which represent general actions; (6) a list
+  of those targets which represent views; (7) a html representation (in the form of a hiccup
+  structure) of the markdown."
   [{:keys [markdown phony-targets branch-name] :as makefile}]
   (when markdown
     (let [html (->> markdown (m2h/md->hiccup) (m2h/component))]
@@ -109,24 +109,25 @@
                      (flatten-to-1st-level)
                      (into #{})))
 
-              (process-makefile-html [{:keys [html views actions branch-name] :as makefile}]
+              (process-makefile-html [{:keys [html views general-actions branch-name] :as makefile}]
                 ;; Recurses through the html hiccup structure and transforms any links that are
                 ;; found into either action links or view links:
                 (letfn [(process-link [[tag {href :href} text :as link]]
                           (cond
-                            (some #(= href %) actions)
+                            (some #(= href %) general-actions)
                             [tag {:href (str "?action=" href) :class "btn btn-primary btn-sm"} text]
 
                             (some #(= href %) views)
-                            [tag {:href (str branch-name "/views/" href) :target "__blank"} text]
+                            [tag {:href (str branch-name "/views/" href)} text]
 
                             :else
-                            [tag {:href href :target "__blank"} text]))]
+                            [tag {:href href} text]))]
                   (->> (for [elem html]
                          (if (= (type elem) clojure.lang.PersistentVector)
                            (if (= (first elem) :a)
                              (process-link elem)
-                             (vec (process-makefile-html {:html elem, :views views, :actions actions
+                             (vec (process-makefile-html {:html elem, :views views,
+                                                          :general-actions general-actions,
                                                           :branch-name branch-name})))
                            elem))
                        (vec))))]
@@ -134,7 +135,7 @@
              (extract-nested-links)
              ;; For all of the extracted links, add those that do not contain an 'authority' part
              ;; (i.e. a domain name) to the list of targets, and then also place them, as
-             ;; appropriate, into one of the actions or views lists:
+             ;; appropriate, into one of the general-actions or views lists:
              (map (fn [[tag {href :href} text]]
                     (when (nil? (->> href
                                      (java.net.URI.)
@@ -143,7 +144,7 @@
                       (merge
                        {:targets #{href}}
                        (if (some #(= href %) phony-targets)
-                         {:actions #{href}}
+                         {:general-actions #{href}}
                          {:views #{href}})))))
              (apply merge-with into)
              ;; Add the original html to the makefile record, and then send everything through

@@ -1,10 +1,13 @@
 (ns droid.html
-  (:require [hiccup.page :refer [html5]]
+  (:require [clojure.java.io :as io]
+            [hiccup.page :refer [html5]]
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
             [droid.data :as data]
+            [droid.make :as make]
             [droid.dir :refer [get-workspace-dir]]
             [droid.log :as log]
+            [ring.util.codec :as codec]
             [ring.util.response :refer [file-response redirect]]))
 
 (def default-html-headers
@@ -76,6 +79,13 @@
                    "  $(this).text(moment($(this).text()).fromNow());"
                    "});")]])})
 
+(defn- kill-process [branch]
+  "Kill the running process associated with the given branch and return the branch to the caller."
+  (let [p (->> (data/refresh-branch branch) :process)]
+    (when-not (nil? p)
+      (sh/destroy p)
+      (assoc branch :cancelled? true))))
+
 (defn render-404
   "Render the 404 - not found page"
   [request]
@@ -134,28 +144,155 @@
                                branch-name]])]]])]}))))
 
 (defn view-file!
-  "View a file in the workspace if it is in the list of allowed views for the branch. Note that
-  this function will call the branch's agent to potentially modify the branch."
-  [{{:keys [project-name branch-name path]} :params
-    :as request}]
-  ;; Make sure that the requested path is in the list of views indicated in the branch:
+  "View a file in the workspace if it is in the list of allowed views for the branch. If the file is
+  out of date, then ask whether the current version should be served or whether it should be
+  rebuilt."
+  [{{:keys [project-name branch-name view-path force-old force-kill force-update status-msg]}
+    :params, :as request}]
   (let [branch-key (keyword branch-name)
-        branch-agent (->> project-name (keyword) (get data/branches) branch-key)
-        allowed-views (do
-                        ;; Kick off a job to refresh the branch information, wait for it to
-                        ;; complete, and then finally retrieve the views from the branch's Makefile:
-                        (send-off branch-agent data/refresh-branch)
-                        (await branch-agent)
-                        (-> @branch-agent
-                            :Makefile
-                            :views))]
-    (if (some #(= path %) allowed-views)
-      (-> (get-workspace-dir project-name branch-name)
-          (str path)
-          (file-response)
-          ;; Views must not be cached by the client browser:
-          (assoc :headers {"Cache-Control" "no-store"}))
-      (render-404 request))))
+        project-key (keyword project-name)
+        branch-agent (->> data/branches project-key branch-key)
+        ;; Kick off a job to refresh the branch information, wait for it to complete, and then
+        ;; finally retrieve the views from the branch's Makefile. Only a request to retrieve
+        ;; one of these allowed views will be honoured:
+        allowed-views (do (send-off branch-agent data/refresh-branch)
+                          (await branch-agent)
+                          (-> @branch-agent :Makefile :views))
+        ;; Function to check whether the path corresponding to the view is in the filesystem:
+        view-exists? #(-> (get-workspace-dir project-name branch-name)
+                          (str "/" view-path)
+                          (io/file)
+                          (.exists))
+        ;; Function that runs `make -q` (in the foreground) in the shell to see if the view is up
+        ;; to date:
+        up-to-date? #(let [process (sh/proc "make" "-q" view-path
+                                            :dir (get-workspace-dir project-name branch-name))
+                           exit-code (future (sh/exit-code process))]
+                       (or (= @exit-code 0) false))
+        ;; Function that runs `make` (in the background) to rebuild the view, with output directed
+        ;; to the branch's console.txt file.
+        update-view #(let [process (sh/proc "bash" "-c"
+                                            (str "exec make " view-path
+                                                 " > ../../temp/" branch-name "/console.txt "
+                                                 " 2>&1")
+                                            :dir (get-workspace-dir project-name branch-name))
+                           exit-code (future (sh/exit-code process))]
+                       (assoc (data/refresh-branch %)
+                              :action view-path
+                              :command (str "make " view-path)
+                              :process process
+                              :start-time (System/currentTimeMillis)
+                              :cancelled? false
+                              :exit-code (future (sh/exit-code process))))
+        ;; Function to serve the view from the filesystem:
+        deliver-view #(-> (get-workspace-dir project-name branch-name)
+                          (str view-path)
+                          (file-response)
+                          ;; Views must not be cached by the client browser:
+                          (assoc :headers {"Cache-Control" "no-store"}))
+        ;; Function to ask the user whether she would like to update the view, or see the the
+        ;; current version of the view instead (if it exists):
+        prompt-to-update #(html-response
+                           request
+                           {:content
+                            [:div
+                             [:div {:class "alert alert-info"}
+                              [:span {:class "font-weight-bold"}
+                               [:span {:class "text-monospace"} view-path]
+                               " is not up to date."]]
+                             [:h5 "What now?"]
+                             [:div
+                              [:span [:a {:class "btn btn-secondary btn-sm"
+                                          :href (str "/" project-name "/branches/" branch-name)}
+                                      "Go back to " branch-name]]
+                              [:span {:class "col-sm-1"}]
+                              [:span [:a {:class "btn btn-danger btn-sm" :href "?force-update=1"}
+                                      "Rebuild the view"]]
+                              [:span {:class "col-sm-1"}]
+                              (when (view-exists?)
+                                [:span [:a {:class "btn btn-warning btn-sm" :href "?force-old=1"}
+                                        "View the current version"]])]
+                             ;; If the parameters include a status message to display, do so here:
+                             (when-not (nil? status-msg)
+                               [:div [:div [:br]]
+                                [:div {:class "alert alert-secondary"} status-msg]])]})
+        ;; Only one user process per branch should run. If there is one already running, ask the
+        ;; user whether he would like to kill it:
+        prompt-to-kill #(let [{:keys [start-time run-time command console]} @branch-agent
+                              readable-start (->> start-time
+                                                  (java.time.Instant/ofEpochMilli)
+                                                  (str))]
+                          (html-response
+                           request
+                           {:content
+                            [:div
+                             [:div {:class "alert alert-info"}
+                              [:span {:class "font-weight-bold"}
+                               [:span {:class "text-monospace"} view-path] " is not up to date."]
+                              [:br]
+                              "To update it you must first kill the currently running process, "
+                              "which has been running since "
+                              [:span {:class "date"} readable-start] " ("
+                              [:span {:class "since"} readable-start] "). "]
+                             [:h5 "What now?"]
+                             [:div
+                              [:span [:a {:class "btn btn-secondary btn-sm"
+                                          :href (str "/" project-name "/branches/" branch-name)}
+                                      "Go back to " branch-name]]
+                              [:span {:class "col-sm-1"}]
+                              [:span [:a {:class "btn btn-danger btn-sm"
+                                          :href (str "/" project-name "/branches/" branch-name
+                                                     "/views/" view-path "?force-kill=1")}
+                                      "Kill the process"]]
+                              [:span {:class "col-sm-1"}]
+                              (when (view-exists?)
+                                [:span [:a {:class "btn btn-warning btn-sm" :href "?force-old=1"}
+                                        "View the current version"]])]
+                             [:hr {:class "line1"}]
+                             [:div
+                              [:h3 "Console"]
+                              [:pre [:code {:class "shell"} (str "$ " command)]]
+                              [:pre [:code {:class "shell"} console]]]]}))]
+    (cond
+      ;; If the view-path isn't in the set of allowed views, then render a 404:
+      (not (some #(= view-path %) allowed-views))
+      (render-404 request)
+
+      ;; Render the current version of the view if either the 'force-old' parameter is present, or
+      ;; if the current version of the view is already up-to-date:
+      (or (not (nil? force-old))
+          (up-to-date?))
+      (deliver-view)
+
+      ;; If the 'force-kill' parameter has been passed, then immediately kill any process that is
+      ;; currently running, and reload the page, including a status message to indicate the kill:
+      (not (nil? force-kill))
+      (do (send-off branch-agent kill-process)
+          (await branch-agent)
+          (redirect (->> "The process has been terminated."
+                         (codec/url-encode)
+                         (str "/" project-name "/branches/" branch-name "/views/" view-path
+                              "?status-msg="))))
+
+      ;; If there is a process running, ask the user to confirm whether she'd like to kill it:
+      (and (->> @branch-agent :process (nil?) (not))
+           (->> @branch-agent :exit-code (realized?) (not)))
+      (prompt-to-kill)
+
+      ;; If the 'force-update' parameter is present, immediately (re)build the view in the
+      ;; background and then redirect to the branch's page where the user can view the build
+      ;; process's output in the console:
+      (not (nil? force-update))
+      (do
+        (send-off branch-agent update-view)
+        ;; Here we are not awaiting the process to finish, but waiting for the branch to be updated,
+        ;; including adding to it a reference to the currently running build process:
+        (await branch-agent)
+        (redirect (str "/" project-name "/branches/" branch-name)))
+
+      ;; Otherwise ask the user to confirm that he'd really like to update the file:
+      :else
+      (prompt-to-update))))
 
 (defn hit-branch!
   "Render a branch, possibly performing an action on it in the process. Note that this function will
@@ -223,12 +360,6 @@
                            [:p "Press a button above to execute an action."]
                            (render-branch-console branch))]]}))
 
-          (kill-process [branch]
-            (let [p (->> (data/refresh-branch branch) :process)]
-              (when-not (nil? p)
-                (sh/destroy p)
-                (assoc branch :cancelled? true))))
-
           (launch-process [branch]
             (let [process (sh/proc "bash" "-c"
                                    ;; `exec` is needed here to prevent the make process from
@@ -263,7 +394,7 @@
 
                 ;; If the specified action is recognized then launch a corresponding process, killing
                 ;; any other running process first:
-                (some #(= % action) (->> (data/refresh-branch branch) :Makefile :actions))
+                (some #(= % action) (->> (data/refresh-branch branch) :Makefile :general-actions))
                 (do
                   (if (and (not (nil? last-exit-code))
                            (not (realized? last-exit-code)))
@@ -276,8 +407,8 @@
                     (log/warn "Unrecognized action:" action))
                   refreshed-contents))))]
     (let [branch-key (keyword branch-name)
-          branch-agent (->> project-name (keyword) (get data/branches) branch-key)]
-
+          project-key (keyword project-name)
+          branch-agent (->> data/branches project-key branch-key)]
       ;; Perform any needed actions on the branch and wait for it to be done:
       (send-off branch-agent act-on-branch)
       (await branch-agent)
