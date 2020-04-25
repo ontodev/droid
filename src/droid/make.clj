@@ -68,13 +68,14 @@
                    ;; The call to reduce begins with an uninitialized makefile map:
                    nil)
            ;; Remove any extra newlines from the end of the workflow that was parsed, and finally
-           ;; add the branch name to the map that is returned (it will be useful for later
-           ;; processing):
+           ;; add the branch and project names to the map that is returned (this is a bit redundant,
+           ;; since these are also available at the branch's top level, but having them here will
+           ;; prove convenient later):
            (#(->> %
                   :markdown
                   (string/trim-newline)
                   (assoc % :markdown)
-                  (merge {:branch-name branch-name})))))))
+                  (merge {:branch-name branch-name, :project-name project-name})))))))
 
 (defn- process-markdown
   "Given a makefile with: (1) markdown representing its workflow; (2) a list of phony targets;
@@ -83,7 +84,7 @@
   (4) a list of all targets; (5) a list of those targets which represent general actions; (6) a list
   of those targets which represent views; (7) a html representation (in the form of a hiccup
   structure) of the markdown."
-  [{:keys [markdown phony-targets branch-name] :as makefile}]
+  [{:keys [markdown phony-targets project-name branch-name] :as makefile}]
   (when markdown
     (let [html (->> markdown (m2h/md->hiccup) (m2h/component))]
       (letfn [(flatten-to-1st-level [mixed-level-seq]
@@ -115,10 +116,13 @@
                 (letfn [(process-link [[tag {href :href} text :as link]]
                           (cond
                             (some #(= href %) general-actions)
-                            [tag {:href (str "?action=" href) :class "btn btn-primary btn-sm"} text]
+                            [tag {:href (str "/" project-name "/branches/" branch-name
+                                             "?new-action=" href)
+                                  :class "btn btn-primary btn-sm"} text]
 
                             (some #(= href %) views)
-                            [tag {:href (str branch-name "/views/" href)} text]
+                            [tag {:href (str "/" project-name "/branches/" branch-name
+                                             "/views/" href)} text]
 
                             :else
                             [tag {:href href} text]))]
