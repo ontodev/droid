@@ -53,13 +53,7 @@
              (dissoc request :oauth2/access-tokens))
            (-> request
                (assoc-in [:session :user] user)
-               (assoc-in [:session :user :authorized]
-                         ;; If the user is in the list of authorized users, then set the
-                         ;; :authorized field in the session to true, otherwise set it to false:
-                         (contains? (-> config
-                                        :authorized-github-ids
-                                        (get (:op-env config)))
-                                    (:login user))))))
+               (assoc-in [:session :user :authorized] true))))
 
        ;; If the user isn't authorized and there isn't a github token, do nothing:
        :else

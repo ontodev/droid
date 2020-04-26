@@ -7,26 +7,25 @@
             [droid.make :as make]
             [droid.dir :refer [get-workspace-dir]]
             [droid.log :as log]
-            [ring.util.codec :as codec]
             [ring.util.response :refer [file-response redirect]]))
 
 (def default-html-headers
   {"Content-Type" "text/html"})
+
+(defn- read-only?
+  "Returns true if the given user has read-only access to the site."
+  [{{{:keys [login]} :user} :session}]
+  (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config)))))
 
 (defn- login-status
   "Render the user's login status."
   [request]
   (let [user (-> request :session :user)
         user-link [:a {:target "__blank" :href (:html_url user)} (:name user)]]
-    (cond
-      (:authorized user)
-      [:div "Logged in as " user-link]
-
-      (-> user (nil?) (not))
-      [:div "You are logged in as " user-link
-       " but you are not authorized to access this site."]
-
-      :else
+    (if (:authorized user)
+      [:div "Logged in as " user-link
+       (when (read-only? request)
+         [:span " (read-only access)"])]
       [:div [:a {:href "/oauth2/github"} "Please log in with GitHub"]])))
 
 (defn- html-response
@@ -77,7 +76,16 @@
                    "});"
                    "$('.since').each(function() {" ; replace GMT dates with friendly time period
                    "  $(this).text(moment($(this).text()).fromNow());"
-                   "});")]])})
+                   "});")]
+
+     ;; If the user has read-only access, run the following jQuery script to disable any action
+     ;; buttons on the page:
+     (when (read-only? request)
+       [:script
+        "$('.action-btn').each(function() {"
+        "  $(this).addClass('disabled');"
+        "  $(this).removeAttr('href');"
+        "});"])])})
 
 (defn- kill-process [branch]
   "Kill the running process associated with the given branch and return the branch to the caller."
@@ -117,8 +125,7 @@
 
 (defn render-project
   "Render the home page for a project"
-  [{:keys [session]
-    {:keys [project-name]} :params
+  [{{:keys [project-name]} :params,
     :as request}]
   (let [project (-> config :projects (get project-name))]
     (if (nil? project)
@@ -129,19 +136,18 @@
         :content [:div
                   [:p (->> project :project-description)]
                   [:p (login-status request)]
-                  (when (-> session :user :authorized)
-                    [:div
-                     [:hr {:class "line1"}]
-                     [:div [:h3 "Branches"]
-                      [:ul
-                       (for [branch-name (->> project-name
-                                              (keyword)
-                                              (get data/branches)
-                                              (keys)
-                                              (sort)
-                                              (map name))]
-                         [:li [:a {:href (str "/" project-name "/branches/" branch-name)}
-                               branch-name]])]]])]}))))
+                  [:div
+                   [:hr {:class "line1"}]
+                   [:div [:h3 "Branches"]
+                    [:ul
+                     (for [branch-name (->> project-name
+                                            (keyword)
+                                            (get data/branches)
+                                            (keys)
+                                            (sort)
+                                            (map name))]
+                       [:li [:a {:href (str "/" project-name "/branches/" branch-name)}
+                             branch-name]])]]]]}))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
@@ -292,7 +298,7 @@
   page corresponding to a branch."
   [{:keys [branch-name project-name Makefile process] :as branch}
    {:keys [params]
-    {:keys [new-action view-path confirm-kill confirm-update]} :params
+    {:keys [new-action view-path missing-view confirm-kill confirm-update]} :params
     :as request}]
   (html-response
    request
@@ -308,8 +314,22 @@
                [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
 
                [:h3 "Workflow"]
+               ;; If the missing-view parameter is present, then the user with read-only access is
+               ;; trying to look at a view that doesn't exist:
+               (when-not (nil? missing-view)
+                 [:div {:class "alert alert-warning"}
+                  [:div
+                   [:span
+                    [:span {:class "text-monospace font-weight-bold"} missing-view]
+                    [:span " does not exist in branch "]
+                    [:span {:class "text-monospace font-weight-bold"} branch-name]
+                    [:span ". Ask someone with write access to this project to build it for you."]]]
+                  [:div {:class "pt-2"}
+                   [:a {:class "btn btn-sm btn-primary"
+                        :href (str "/" project-name "/branches/" branch-name)} "Dismiss"]]])
+               ;; Render the Workflow HTML from the Makefile:
                (or (:html Makefile)
-                   [:ul [:li "Not found"]])
+                   [:ul [:li "No workflow found"]])
 
                [:h3 "Console"]
                (if (nil? process)
@@ -320,8 +340,8 @@
   "View a file in the workspace if it is in the list of allowed views for the branch. If the file is
   out of date, then ask whether the current version should be served or whether it should be
   rebuilt."
-  [{:keys [params] {:keys [project-name branch-name view-path confirm-update force-old force-update
-                           confirm-kill force-kill status-msg]} :params,
+  [{{:keys [project-name branch-name view-path confirm-update force-old force-update
+            confirm-kill force-kill missing-view]} :params,
     :as request}]
   (letfn [(up-to-date? []
             ;; Run `make -q` (in the foreground) in the shell to see if the view is up to date:
@@ -374,6 +394,20 @@
         ;; If the view-path isn't in the set of allowed views, then render a 404:
         (not (some #(= view-path %) allowed-views))
         (render-404 request)
+
+        ;; If the 'missing-view' parameter is present, then render the page for the branch. It will
+        ;; be handled during rendering and a notification area will be displayed on the page
+        ;; informing the user (who has read-only access) that the view does not exist:
+        (not (nil? missing-view))
+        (render-branch-page @branch-agent request)
+
+        ;; If the user has read-only access, then if the view exists deliver it whether or not it is
+        ;; up to date. If the view does not exist, then redirect back to the page with the
+        ;; missing-view parameter set.
+        (read-only? request)
+        (if (view-exists? @branch-agent view-path)
+          (deliver-view)
+          (redirect (-> this-url (str "?missing-view=") (str view-path))))
 
         ;; Render the current version of the view if either the 'force-old' parameter is present, or
         ;; if the current version of the view is already up-to-date:
@@ -477,6 +511,17 @@
       ;; always redirect back to the branch page, which results in another call to this function,
       ;; which always calls await when it starts (see above).
       (cond
+        ;; This first condition should not normally be reached, since the action buttons should all
+        ;; be greyed out for read-only users. But this could nonetheless happen if the user tries
+        ;; to manually enter the action url into the browser's address bar, so we guard against that
+        ;; here:
+        (and (not (nil? new-action))
+             (read-only? request))
+        (do
+          (log/warn "User" (-> request :session :user :login) "with read-only access attempted to"
+                    "start action" new-action "and was prevented from doing so.")
+          (render-branch-page @branch-agent request))
+
         ;; If this is a cancel action, kill the existing process and redirect to the branch page:
         (= new-action "cancel-DROID-process")
         (do

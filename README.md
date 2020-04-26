@@ -34,7 +34,7 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
  :server-port {:dev 8000 :test 8001 :prod 8002}
  :log-level {:dev :info :test :info :prod :warn}
  :secure-site {:dev true :test true :prod true}
- :authorized-github-ids
+ :site-admin-github-ids
  {:dev #{"user1" "user2"}
   :test #{"user1" "user2"}
   :prod #{"user1" "user2"}}}
