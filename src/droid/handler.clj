@@ -20,11 +20,11 @@
   (fn [request]
     (handler
      (cond
-       ;; If the user is already authorized, just send the request back unchanged:
-       (-> request :session :user :authorized)
+       ;; If the user is already authenticated, just send the request back unchanged:
+       (-> request :session :user :authenticated)
        request
 
-       ;; If the user isn't authorized, but there's a GitHub token, fetch the user information from
+       ;; If the user isn't authenticated, but there's a GitHub token, fetch the user information from
        ;; GitHub:
        (-> request :oauth2/access-tokens :github)
        (let [token (-> request :oauth2/access-tokens :github :token)
@@ -39,9 +39,9 @@
              (dissoc request :oauth2/access-tokens))
            (-> request
                (assoc-in [:session :user] user)
-               (assoc-in [:session :user :authorized] true))))
+               (assoc-in [:session :user :authenticated] true))))
 
-       ;; If the user isn't authorized and there isn't a github token, do nothing:
+       ;; If the user isn't authenticated and there isn't a github token, do nothing:
        :else
        request))))
 

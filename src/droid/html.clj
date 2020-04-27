@@ -20,13 +20,14 @@
 
 (defn- login-status
   "Render the user's login status."
-  [request]
-  (let [user (-> request :session :user)
-        user-link [:a {:target "__blank" :href (:html_url user)} (:name user)]]
-    (if (:authorized user)
-      [:div "Logged in as " user-link (when (read-only? request)
-                                        [:span " (read-only access)"])]
-      [:div [:a {:href "/oauth2/github"} "Click here to log in with GitHub"]])))
+  [{{:keys [user]} :session, :as request}]
+  [:nav {:class "ml-n3 mr-n3 mb-n3 navbar navbar-light"}
+   (if (:authenticated user)
+     [:a {:target "__blank" :class "float-left" :href (:html_url user)}
+      [:small (->> user :name (str "Authenticated as ")) (when (read-only? request)
+                                                           " (read-only access)")]]
+     [:a {:class "float-left" :href "/oauth2/github"}
+      [:small "Authenticate via GitHub"]])])
 
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
@@ -56,6 +57,8 @@
      [:title title]]
     [:body
      [:div {:id "content" :class "container p-3"}
+      (login-status request)
+      [:hr {:class "line1"}]
       [:h1 [:a {:href "/"} heading]]
       content]
      ;; Optional JavaScript. jQuery first, then Popper.js, then Bootstrap JS.
@@ -113,9 +116,7 @@
     :heading "DROID"
     :content [:div
               [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
-              [:p (login-status request)]
               [:div
-               [:hr {:class "line1"}]
                [:div [:h3 "Available Projects"]
                 [:ul
                  (for [project (-> config :projects)]
@@ -134,9 +135,7 @@
        {:title (->> project :project-title (str "DROID for "))
         :content [:div
                   [:p (->> project :project-description)]
-                  [:p (login-status request)]
                   [:div
-                   [:hr {:class "line1"}]
                    [:div [:h3 "Branches"]
                     [:ul
                      (for [branch-name (->> project-name
@@ -307,10 +306,7 @@
                   (-> config :projects (get project-name) :project-title))
     :content [:div
               [:p (-> config :projects (get project-name) :project-description)]
-              [:p (login-status request)]
               [:div
-               [:hr {:class "line1"}]
-
                [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
 
                [:h3 "Workflow"]
