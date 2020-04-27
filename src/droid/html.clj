@@ -15,7 +15,8 @@
 (defn- read-only?
   "Returns true if the given user has read-only access to the site."
   [{{{:keys [login]} :user} :session}]
-  (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config)))))
+  (or (nil? login)
+      (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config))))))
 
 (defn- login-status
   "Render the user's login status."
@@ -23,10 +24,9 @@
   (let [user (-> request :session :user)
         user-link [:a {:target "__blank" :href (:html_url user)} (:name user)]]
     (if (:authorized user)
-      [:div "Logged in as " user-link
-       (when (read-only? request)
-         [:span " (read-only access)"])]
-      [:div [:a {:href "/oauth2/github"} "Please log in with GitHub"]])))
+      [:div "Logged in as " user-link (when (read-only? request)
+                                        [:span " (read-only access)"])]
+      [:div [:a {:href "/oauth2/github"} "Click here to log in with GitHub"]])))
 
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
@@ -114,14 +114,13 @@
     :content [:div
               [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
               [:p (login-status request)]
-              (when (-> request :session :user :authorized)
-                [:div
-                 [:hr {:class "line1"}]
-                 [:div [:h3 "Available Projects"]
-                  [:ul
-                   (for [project (-> config :projects)]
-                     [:li [:a {:href (->> project (key) (str "/"))}
-                           (->> project (val) :project-title)]])]]])]}))
+              [:div
+               [:hr {:class "line1"}]
+               [:div [:h3 "Available Projects"]
+                [:ul
+                 (for [project (-> config :projects)]
+                   [:li [:a {:href (->> project (key) (str "/"))}
+                         (->> project (val) :project-title)]])]]]]}))
 
 (defn render-project
   "Render the home page for a project"
@@ -307,6 +306,7 @@
     :heading (str "DROID for "
                   (-> config :projects (get project-name) :project-title))
     :content [:div
+              [:p (-> config :projects (get project-name) :project-description)]
               [:p (login-status request)]
               [:div
                [:hr {:class "line1"}]

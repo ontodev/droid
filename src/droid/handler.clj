@@ -14,20 +14,6 @@
             [droid.log :as log]
             [droid.html :as html]))
 
-(defn- wrap-authorized
-  "If the request is for the index page, then send it through unchanged. If it is for any other page
-  then only send it through if it is authorized, otherwise redirect it to the index page."
-  [handler]
-  (fn [request]
-    (cond (= "/" (:uri request))
-          (handler request)
-
-          (-> request :session :user :authorized)
-          (handler request)
-
-          :else
-          (redirect "/"))))
-
 (defn- wrap-user
   "Add user and GitHub OAuth2 information to the request."
   [handler]
@@ -71,7 +57,6 @@
   "Initialize a web server"
   []
   (-> app-routes
-      wrap-authorized
       wrap-user
       (wrap-oauth2
        {:github

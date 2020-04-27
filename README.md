@@ -71,3 +71,5 @@ projects/
             └── Makefile
             └── ...
 ```
+
+The `project1/`, `project2/`, etc. directories should be writable by `DROID`.
