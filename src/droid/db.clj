@@ -1,7 +1,5 @@
 (ns droid.db
   (:require [clojure.java.jdbc :as jdbc]
-            ;;[java-jdbc.ddl :as ddl]
-            ;;[java-jdbc.sql :as sql]
             [jdbc-ring-session.core :refer [jdbc-store]]))
 
 (def db-path

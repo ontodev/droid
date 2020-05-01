@@ -118,7 +118,10 @@
                             (some #(= href %) general-actions)
                             [tag {:href (str "/" project-name "/branches/" branch-name
                                              "?new-action=" href)
-                                  :class "btn btn-primary btn-sm"} text]
+                                  ;; The 'action-btn' class is a custom one to identify action
+                                  ;; buttons which we will later want to conditionally restrict
+                                  ;; access to.
+                                  :class "btn btn-primary btn-sm action-btn"} text]
 
                             (some #(= href %) views)
                             [tag {:href (str "/" project-name "/branches/" branch-name

@@ -14,19 +14,14 @@
             [droid.log :as log]
             [droid.html :as html]))
 
-(defn- wrap-authorized
-  "If the request is for the index page, then send it through unchanged. If it is for any other page
-  then only send it through if it is authorized, otherwise redirect it to the index page."
+(defn- wrap-authenticated
+  "If the request is to logout, then reset the session and redirect to the index page. Otherwise,
+  just handle the request."
   [handler]
   (fn [request]
-    (cond (= "/" (:uri request))
-          (handler request)
-
-          (-> request :session :user :authorized)
-          (handler request)
-
-          :else
-          (redirect "/"))))
+    (if (= "/logout" (:uri request))
+      (assoc (redirect "/?just-logged-out=1") :session {})
+      (handler request))))
 
 (defn- wrap-user
   "Add user and GitHub OAuth2 information to the request."
@@ -34,11 +29,11 @@
   (fn [request]
     (handler
      (cond
-       ;; If the user is already authorized, just send the request back unchanged:
-       (-> request :session :user :authorized)
+       ;; If the user is already authenticated, just send the request back unchanged:
+       (-> request :session :user :authenticated)
        request
 
-       ;; If the user isn't authorized, but there's a GitHub token, fetch the user information from
+       ;; If the user isn't authenticated, but there's a GitHub token, fetch the user information from
        ;; GitHub:
        (-> request :oauth2/access-tokens :github)
        (let [token (-> request :oauth2/access-tokens :github :token)
@@ -53,15 +48,9 @@
              (dissoc request :oauth2/access-tokens))
            (-> request
                (assoc-in [:session :user] user)
-               (assoc-in [:session :user :authorized]
-                         ;; If the user is in the list of authorized users, then set the
-                         ;; :authorized field in the session to true, otherwise set it to false:
-                         (contains? (-> config
-                                        :authorized-github-ids
-                                        (get (:op-env config)))
-                                    (:login user))))))
+               (assoc-in [:session :user :authenticated] true))))
 
-       ;; If the user isn't authorized and there isn't a github token, do nothing:
+       ;; If the user isn't authenticated and there isn't a github token, do nothing:
        :else
        request))))
 
@@ -77,7 +66,7 @@
   "Initialize a web server"
   []
   (-> app-routes
-      wrap-authorized
+      wrap-authenticated
       wrap-user
       (wrap-oauth2
        {:github

@@ -22,7 +22,7 @@
                  :prod true}
 
    ;; List of userids that are allowed to use the application:
-   :authorized-github-ids {:dev #{""}
+   :site-admin-github-ids {:dev #{""}
                            :test #{""}
                            :prod #{""}}})
 
