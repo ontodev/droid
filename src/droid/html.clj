@@ -21,7 +21,7 @@
 (defn- login-status
   "Render the user's login status."
   [{{:keys [user]} :session, :as request}]
-  [:nav {:class "ml-n3 mr-n3 mb-n3 navbar navbar-light"}
+  [:nav {:class "p-0 navbar navbar-light bg-transparent"}
    (if (:authenticated user)
      [:a {:target "__blank" :class "float-left" :href (:html_url user)}
       [:small (->> user :name (str "Authenticated as ")) (when (read-only? request)
