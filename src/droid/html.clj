@@ -29,7 +29,7 @@
         (when (read-only? request)
           " (read-only access)")]
        [:small {:class "ml-auto"} [:a {:href "/logout"} "Logout"]]]
-      ;; Otherwise the navbar will only have a logout button:
+      ;; Otherwise the navbar will only have a login link:
       [:nav navbar-attrs
        [:small [:a {:href "/oauth2/github"} "Login via GitHub"]]])))
 
