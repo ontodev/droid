@@ -21,13 +21,17 @@
 (defn- login-status
   "Render the user's login status."
   [{{:keys [user]} :session, :as request}]
-  [:nav {:class "p-0 navbar navbar-light bg-transparent"}
-   (if (:authenticated user)
-     [:a {:target "__blank" :class "float-left" :href (:html_url user)}
-      [:small (->> user :name (str "Authenticated as ")) (when (read-only? request)
-                                                           " (read-only access)")]]
-     [:a {:class "float-left" :href "/oauth2/github"}
-      [:small "Authenticate via GitHub"]])])
+  (let [navbar-attrs {:class "p-0 navbar navbar-light bg-transparent"}]
+    (if (:authenticated user)
+      ;; If the user has been authenticated, render a navbar with login info and a logout link:
+      [:nav navbar-attrs
+       [:small "Logged in as " [:a {:target "__blank" :href (:html_url user)} (:name user)]
+        (when (read-only? request)
+          " (read-only access)")]
+       [:small {:class "ml-auto"} [:a {:href "/logout"} "Logout"]]]
+      ;; Otherwise the navbar will only have a logout button:
+      [:nav navbar-attrs
+       [:small [:a {:href "/oauth2/github"} "Login via GitHub"]]])))
 
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
@@ -109,7 +113,8 @@
 
 (defn index
   "Render the index page"
-  [request]
+  [{{:keys [just-logged-out]} :params,
+    :as request}]
   (html-response
    request
    {:title "DROID"
@@ -117,6 +122,12 @@
     :content [:div
               [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
               [:div
+               (when-not (nil? just-logged-out)
+                 [:div {:class "alert alert-info"}
+                  "You have been logged out. If this is a shared computer you may also want to "
+                  [:a {:href "https://github.com/logout"} "sign out of GitHub"]
+                  [:div {:class "pt-2"}
+                   [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
                [:div [:h3 "Available Projects"]
                 [:ul
                  (for [project (-> config :projects)]

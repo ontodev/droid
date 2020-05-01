@@ -14,6 +14,15 @@
             [droid.log :as log]
             [droid.html :as html]))
 
+(defn- wrap-authenticated
+  "If the request is to logout, then reset the session and redirect to the index page. Otherwise,
+  just handle the request."
+  [handler]
+  (fn [request]
+    (if (= "/logout" (:uri request))
+      (assoc (redirect "/?just-logged-out=1") :session {})
+      (handler request))))
+
 (defn- wrap-user
   "Add user and GitHub OAuth2 information to the request."
   [handler]
@@ -57,6 +66,7 @@
   "Initialize a web server"
   []
   (-> app-routes
+      wrap-authenticated
       wrap-user
       (wrap-oauth2
        {:github
