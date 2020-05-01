@@ -3,12 +3,14 @@
             [compojure.route :as route]
             [ring.middleware.defaults :refer [secure-site-defaults site-defaults wrap-defaults]]
             [ring.middleware.oauth2 :refer [wrap-oauth2]]
+            [ring.middleware.session :refer [wrap-session]]
             [ring.middleware.session.cookie :refer [cookie-store]]
             [ring.util.response :refer [redirect]]
             [org.httpkit.client :as http]
             [cheshire.core :as cheshire]
             [droid.config :refer [config]]
             [droid.data :as data]
+            [droid.db :as db]
             [droid.log :as log]
             [droid.html :as html]))
 
@@ -66,7 +68,7 @@
 (defroutes app-routes
   (GET "/" [] html/index)
   (GET "/:project-name" [] html/render-project)
-  (GET "/:project-name/branches/:branch-name/views/:path{.+}" [] html/view-file!)
+  (GET "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file!)
   (GET "/:project-name/branches/:branch-name" [] html/hit-branch!)
   ;; all other, return 404
   (route/not-found html/render-404))
@@ -88,6 +90,8 @@
          :launch-uri       "/oauth2/github"
          :redirect-uri     "/oauth2/github/callback"
          :landing-uri      "/"}})
+      (wrap-session
+       {:store db/store})
       (wrap-defaults
        (let [op-env (:op-env config)
              secure-site? (-> config
@@ -99,8 +103,6 @@
              (assoc-in [:session :cookie-attrs :same-site] :lax)
              (assoc-in [:session :store] (cookie-store {:key (:cookie-store-key data/secrets)})))))))
 
-
-;; Initialize the web app:
-
-
-(def app (create-app))
+(def app
+  "The web app"
+  (create-app))

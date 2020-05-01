@@ -18,7 +18,7 @@
         (is (= (:branch-name makefile) "master"))
         (is (= (:name makefile) "Makefile"))
         (is (= (:targets makefile) #{"clean" "update" "build/update.txt"}))
-        (is (= (:actions makefile) #{"clean" "update"}))
+        (is (= (:general-actions makefile) #{"clean" "update"}))
         (is (= (:phony-targets makefile) #{"clean" "update"}))
         (is (= (:views makefile) #{"build/update.txt"}))
         (is (= (:markdown makefile)
@@ -27,8 +27,8 @@
                [:div {}
                 [:ol {}
                  [:li {}
-                  "Review the " [:a {:href "https://github.com/knocean/practises",
-                                     :target "__blank"} "Knocean Practises Document"]]
+                  "Review the " [:a {:href "https://github.com/knocean/practises"}
+                                 "Knocean Practises Document"]]
                  [:li {}
                   "Run " [:a {:href "?action=clean", :class "btn btn-primary btn-sm"}
                           "Clean"] " to clean the contents of the build/ directory."]
@@ -39,5 +39,5 @@
                   "View the results:"
                   [:ul {}
                    [:li {}
-                    [:a {:href "master/views/build/update.txt", :target "__blank"}
+                    [:a {:href "master/views/build/update.txt"}
                      "Updated Build"]]]]]]))))))
