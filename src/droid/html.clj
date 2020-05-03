@@ -15,19 +15,29 @@
 
 (defn- read-only?
   "Returns true if the given user has read-only access to the site."
-  [{{{:keys [login]} :user} :session}]
+  [{{:keys [project-name]} :params
+    {{:keys [login project-permissions]} :user} :session}]
+  ;; Access will be read-only in the following cases:
+  ;; - The user is logged out
+  ;; - The user does not have permission on the requested project, and is not a site admin.
   (or (nil? login)
-      (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config))))))
+      (and (->> project-name (keyword) (get project-permissions) (nil?))
+           (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config)))))))
 
 (defn- login-status
   "Render the user's login status."
-  [{{:keys [user]} :session, :as request}]
+  [{{:keys [project-name]} :params,
+    {:keys [user]} :session,
+    :as request}]
   (let [navbar-attrs {:class "p-0 navbar navbar-light bg-transparent"}]
     (if (:authenticated user)
       ;; If the user has been authenticated, render a navbar with login info and a logout link:
       [:nav navbar-attrs
-       [:small "Logged in as " [:a {:target "__blank" :href (:html_url user)} (:name user)]
-        (when (read-only? request)
+       [:small "Logged in as " [:a {:target "__blank" :href (:html_url user)} (or (:name user)
+                                                                                  (:login user))]
+        ;; If the user is viewing a project page and has read-only access, indicate this:
+        (when (and (not (nil? project-name))
+                   (read-only? request))
           " (read-only access)")]
        [:small {:class "ml-auto"} [:a {:href "/logout"} "Logout"]]]
       ;; Otherwise the navbar will only have a login link:
