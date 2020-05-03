@@ -1,6 +1,6 @@
 (ns droid.github-api
   (:require [clojure.string :as str]
-            [tentacles.repos :as repos]
+            [tentacles.core :refer [api-call]]
             [droid.config :refer [config]]
             [droid.log :as log]))
 
@@ -12,31 +12,23 @@
        :projects
        (map (fn [project]
               ;; Corresponding to each managed project is a mapping from a keywordized project
-              ;; name to a hash-map containing the user's GitHub permissions on that project,
-              ;; or nil if the user is not authorized on that project.
-              ;; For example: {:project-1 {:admin true, :push true, :pull true}
-              ;;               :project-2 nil
-              ;;               :project-3 {:admin true, :push true, :pull true}
-              ;;               ... }
+              ;; name to the user's GitHub permissions on that project, which can be one of:
+              ;; "admin", "write", or "read". We set it to nil if the user is not authorized on a
+              ;; project. For example: {:project-1 "admin"
+              ;;                        :project-2 nil
+              ;;                        :project-3 "read"
+              ;;                        ... }
               (hash-map (-> project (key) (keyword))
                         (-> project
                             (val)
                             (get :github-coordinates)
                             (str/split #"/")
-                            (#(hash-map :org (first %) :repo (second %)))
-                            (#(repos/collaborators (:org %) (:repo %) {:oauth-token token}))
-                            ;; Pass the result through if it is a sequence, otherwise log a warning
-                            ;; and pass down an empty sequence instead:
-                            (#(if (seq? %)
-                                %
-                                (do (log/warn "Unable to retrieve permissions for" login
-                                              "on project" (key project) "with reason:"
-                                              (-> % :body :message)
-                                              (str "(see: " (-> % :body :documentation_url) ")"))
-                                    '())))
-                            (#(filter (fn [collab]
-                                        (= login (:login collab)))
-                                      %))
-                            (first)
-                            :permissions))))
+                            (#(api-call :get "repos/%s/%s/collaborators/%s/permission"
+                                        [(first %) (second %) login] {:oauth-token token}))
+                            (#(or (:permission %)
+                                  (do (log/warn "Unable to retrieve permissions for" login
+                                                "on project" (key project) "with reason:"
+                                                (-> % :body :message)
+                                                (str "(see: " (-> % :body :documentation_url) ")")))
+                                  nil))))))
        (apply merge)))
