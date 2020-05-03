@@ -25,6 +25,15 @@
                             (str/split #"/")
                             (#(hash-map :org (first %) :repo (second %)))
                             (#(repos/collaborators (:org %) (:repo %) {:oauth-token token}))
+                            ;; Pass the result through if it is a sequence, otherwise log a warning
+                            ;; and pass down an empty sequence instead:
+                            (#(if (seq? %)
+                                %
+                                (do (log/warn "Unable to retrieve permissions for" login
+                                              "on project" (key project) "with reason:"
+                                              (-> % :body :message)
+                                              (str "(see: " (-> % :body :documentation_url) ")"))
+                                    '())))
                             (#(filter (fn [collab]
                                         (= login (:login collab)))
                                       %))
