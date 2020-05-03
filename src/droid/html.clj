@@ -271,6 +271,22 @@
          [:span [:a {:class "btn btn-warning btn-sm" :href (str view-url "?force-old=1")}
                  "View the stale version"]]])]]))
 
+(defn- notify-missing-view
+  "Given some branch data, and the path for a view that is missing, render an alert box informing
+  the user that it is not there."
+  [{:keys [branch-name project-name] :as branch}
+   view-path]
+  [:div {:class "alert alert-warning"}
+   [:div
+    [:span
+     [:span {:class "text-monospace font-weight-bold"} view-path]
+     [:span " does not exist in branch "]
+     [:span {:class "text-monospace font-weight-bold"} branch-name]
+     [:span ". Ask someone with write access to this project to build it for you."]]]
+   [:div {:class "pt-2"}
+    [:a {:class "btn btn-sm btn-primary"
+         :href (str "/" project-name "/branches/" branch-name)} "Dismiss"]]])
+
 (defn- render-console
   "Given some branch data, and a number of parameters related to an action or a view, render
   the console on the branch page."
@@ -334,17 +350,13 @@
                [:h3 "Workflow"]
                ;; If the missing-view parameter is present, then the user with read-only access is
                ;; trying to look at a view that doesn't exist:
-               (when-not (nil? missing-view)
-                 [:div {:class "alert alert-warning"}
-                  [:div
-                   [:span
-                    [:span {:class "text-monospace font-weight-bold"} missing-view]
-                    [:span " does not exist in branch "]
-                    [:span {:class "text-monospace font-weight-bold"} branch-name]
-                    [:span ". Ask someone with write access to this project to build it for you."]]]
-                  [:div {:class "pt-2"}
-                   [:a {:class "btn btn-sm btn-primary"
-                        :href (str "/" project-name "/branches/" branch-name)} "Dismiss"]]])
+               (cond
+                 (not (nil? missing-view))
+                 (notify-missing-view branch view-path)
+
+                 (not (nil? confirm-update))
+                 (prompt-to-update-view branch view-path))
+
                ;; Render the Workflow HTML from the Makefile:
                (or (:html Makefile)
                    [:ul [:li "No workflow found"]])
