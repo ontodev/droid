@@ -14,7 +14,8 @@
                  [me.raynes/conch "0.8.0"]
                  [com.h2database/h2 "1.4.200"]
                  [ring/ring-defaults "0.3.2"]
-                 [ring-oauth2 "0.1.4"]]
+                 [ring-oauth2 "0.1.4"]
+                 [tentacles "0.5.1"]]
   :main ^:skip-aot droid.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}})

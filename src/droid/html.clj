@@ -4,6 +4,7 @@
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
             [droid.data :as data]
+            [droid.github-api :as gh-api]
             [droid.make :as make]
             [droid.dir :refer [get-workspace-dir]]
             [droid.log :as log]

@@ -11,6 +11,7 @@
             [droid.config :refer [config]]
             [droid.data :as data]
             [droid.db :as db]
+            [droid.github-api :as gh-api]
             [droid.log :as log]
             [droid.html :as html]))
 
@@ -33,8 +34,8 @@
        (-> request :session :user :authenticated)
        request
 
-       ;; If the user isn't authenticated, but there's a GitHub token, fetch the user information from
-       ;; GitHub:
+       ;; If the user isn't authenticated, but there's a GitHub token, fetch the user information
+       ;; from GitHub:
        (-> request :oauth2/access-tokens :github)
        (let [token (-> request :oauth2/access-tokens :github :token)
              {:keys [status headers body error] :as resp} @(http/get "https://api.github.com/user"
@@ -44,11 +45,14 @@
              user (cheshire/parse-string body true)]
          (if error
            (do
-             (log/error "Failed to get user information from GitHib: " status headers body error)
+             (log/error "Failed to get user information from GitHub: " status headers body error)
              (dissoc request :oauth2/access-tokens))
            (-> request
                (assoc-in [:session :user] user)
-               (assoc-in [:session :user :authenticated] true))))
+               (assoc-in [:session :user :authenticated] true)
+               ;; A list specifying the user's permissions for each project managed by the instance:
+               (assoc-in [:session :user :project-permissions]
+                         (-> user :login (gh-api/project-permissions token))))))
 
        ;; If the user isn't authenticated and there isn't a github token, do nothing:
        :else
