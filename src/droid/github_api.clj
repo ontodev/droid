@@ -29,6 +29,6 @@
                                   (do (log/warn "Unable to retrieve permissions for" login
                                                 "on project" (key project) "with reason:"
                                                 (-> % :body :message)
-                                                (str "(see: " (-> % :body :documentation_url) ")")))
-                                  nil))))))
+                                                (str "(see: " (-> % :body :documentation_url) ")"))
+                                      nil)))))))
        (apply merge)))
