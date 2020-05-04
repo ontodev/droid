@@ -105,12 +105,14 @@
         "  $(this).removeAttr('href');"
         "});"])])})
 
-(defn- kill-process [branch]
+(defn- kill-process [{:keys [process action branch-name project-name] :as branch}
+                     {:keys [login] :as user}]
   "Kill the running process associated with the given branch and return the branch to the caller."
-  (let [p (:process branch)]
-    (when-not (nil? p)
-      (sh/destroy p)
-      (assoc branch :cancelled? true))))
+  (when-not (nil? process)
+    (log/info "Cancelling action" action "on branch" branch-name "of project" project-name
+              "on behalf of user" login)
+    (sh/destroy process)
+    (assoc branch :cancelled? true)))
 
 (defn render-404
   "Render the 404 - not found page"
@@ -383,6 +385,8 @@
           (update-view [branch]
             ;; Run `make` (in the background) to rebuild the view, with output
             ;; directed to the branch's console.txt file.
+            (log/info "Rebuilding view" view-path "from branch" branch-name "of project"
+                      project-name "for user" (-> request :session :user :login))
             (let [process (sh/proc "bash" "-c"
                                    (str "exec make " view-path
                                         " > ../../temp/" branch-name "/console.txt "
@@ -455,7 +459,7 @@
           ;; and redirect the user back to the view again:
           (not (nil? force-kill))
           (do
-            (send-off branch-agent kill-process)
+            (send-off branch-agent kill-process (-> request :session :user))
             (send-off branch-agent update-view)
             (redirect this-url))
 
@@ -502,6 +506,8 @@
   [{{:keys [project-name branch-name new-action confirm-kill force-kill]} :params
     :as request}]
   (letfn [(launch-process [branch]
+            (log/info "Starting action" new-action "on branch" branch-name "of project"
+                      project-name "for user" (-> request :session :user :login))
             (let [process (sh/proc "bash" "-c"
                                    ;; `exec` is needed here to prevent the make process from
                                    ;; detaching from the parent (since that would make it difficult
@@ -555,7 +561,7 @@
         ;; If this is a cancel action, kill the existing process and redirect to the branch page:
         (= new-action "cancel-DROID-process")
         (do
-          (send-off branch-agent kill-process)
+          (send-off branch-agent kill-process (-> request :session :user))
           (redirect this-url))
 
         ;; If there is no action to be performed, or the action is unrecognised, then just render
@@ -576,7 +582,7 @@
           ;; relaunch the new one:
           (not (nil? force-kill))
           (do
-            (send-off branch-agent kill-process)
+            (send-off branch-agent kill-process (-> request :session :user))
             (send-off branch-agent launch-process)
             (redirect this-url))
 

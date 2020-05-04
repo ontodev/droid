@@ -21,7 +21,9 @@
   [handler]
   (fn [request]
     (if (= "/logout" (:uri request))
-      (assoc (redirect "/?just-logged-out=1") :session {})
+      (do
+        (log/info "Logging out" (-> request :session :user :login))
+        (assoc (redirect "/?just-logged-out=1") :session {}))
       (handler request))))
 
 (defn- wrap-user
@@ -41,18 +43,19 @@
              {:keys [status headers body error] :as resp} @(http/get "https://api.github.com/user"
                                                                      {:headers
                                                                       {"Authorization"
-                                                                       (str "token " token)}})
-             user (cheshire/parse-string body true)]
+                                                                       (str "token " token)}})]
          (if error
            (do
              (log/error "Failed to get user information from GitHub: " status headers body error)
              (dissoc request :oauth2/access-tokens))
-           (-> request
-               (assoc-in [:session :user] user)
-               (assoc-in [:session :user :authenticated] true)
-               ;; A list specifying the user's permissions for each project managed by the instance:
-               (assoc-in [:session :user :project-permissions]
-                         (-> user :login (gh-api/project-permissions token))))))
+           (let [user (cheshire/parse-string body true)
+                 project-permissions (-> user :login (gh-api/project-permissions token))]
+             (log/info "Logging in" (:login user) "with permissions" project-permissions)
+             (-> request
+                 (assoc-in [:session :user] user)
+                 (assoc-in [:session :user :authenticated] true)
+                 ;; Add the user's permissions for each project managed by the instance:
+                 (assoc-in [:session :user :project-permissions] project-permissions)))))
 
        ;; If the user isn't authenticated and there isn't a github token, do nothing:
        :else
