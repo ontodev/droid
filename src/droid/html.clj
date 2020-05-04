@@ -19,10 +19,13 @@
     {{:keys [login project-permissions]} :user} :session}]
   ;; Access will be read-only in the following cases:
   ;; - The user is logged out
-  ;; - The user does not have permission on the requested project, and is not a site admin.
-  (or (nil? login)
-      (and (->> project-name (keyword) (get project-permissions) (nil?))
-           (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config)))))))
+  ;; - The user does not have write or admin permission on the requested project,
+  ;;   and is not a site admin.
+  (let [this-project-permissions (->> project-name (keyword) (get project-permissions))]
+    (or (nil? login)
+        (and (not= this-project-permissions "write")
+             (not= this-project-permissions "admin")
+             (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config))))))))
 
 (defn- login-status
   "Render the user's login status."
@@ -300,10 +303,6 @@
                    (not (nil? confirm-kill)))
               (prompt-to-kill-for-view branch view-path)
 
-              (and (not (nil? view-path))
-                   (not (nil? confirm-update)))
-              (prompt-to-update-view branch view-path)
-
               (and (not (nil? new-action))
                    (not (nil? confirm-kill)))
               (prompt-to-kill-for-action branch new-action)
@@ -498,7 +497,7 @@
         ;; Otherwise redirect back to this page, setting the confirm-update flag to ask the user if
         ;; she would really like to rebuild the file:
         :else
-        (redirect (str this-url "?confirm-update=1#console"))))))
+        (redirect (str this-url "?confirm-update=1"))))))
 
 (defn hit-branch!
   "Render a branch, possibly performing an action on it in the process. Note that this function will
