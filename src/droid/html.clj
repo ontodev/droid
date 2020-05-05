@@ -4,6 +4,7 @@
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
             [droid.data :as data]
+            [droid.github-api :as gh-api]
             [droid.make :as make]
             [droid.dir :refer [get-workspace-dir]]
             [droid.log :as log]
@@ -14,19 +15,32 @@
 
 (defn- read-only?
   "Returns true if the given user has read-only access to the site."
-  [{{{:keys [login]} :user} :session}]
-  (or (nil? login)
-      (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config))))))
+  [{{:keys [project-name]} :params
+    {{:keys [login project-permissions]} :user} :session}]
+  ;; Access will be read-only in the following cases:
+  ;; - The user is logged out
+  ;; - The user does not have write or admin permission on the requested project,
+  ;;   and is not a site admin.
+  (let [this-project-permissions (->> project-name (keyword) (get project-permissions))]
+    (or (nil? login)
+        (and (not= this-project-permissions "write")
+             (not= this-project-permissions "admin")
+             (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config))))))))
 
 (defn- login-status
   "Render the user's login status."
-  [{{:keys [user]} :session, :as request}]
+  [{{:keys [project-name]} :params,
+    {:keys [user]} :session,
+    :as request}]
   (let [navbar-attrs {:class "p-0 navbar navbar-light bg-transparent"}]
     (if (:authenticated user)
       ;; If the user has been authenticated, render a navbar with login info and a logout link:
       [:nav navbar-attrs
-       [:small "Logged in as " [:a {:target "__blank" :href (:html_url user)} (:name user)]
-        (when (read-only? request)
+       [:small "Logged in as " [:a {:target "__blank" :href (:html_url user)} (or (:name user)
+                                                                                  (:login user))]
+        ;; If the user is viewing a project page and has read-only access, indicate this:
+        (when (and (not (nil? project-name))
+                   (read-only? request))
           " (read-only access)")]
        [:small {:class "ml-auto"} [:a {:href "/logout"} "Logout"]]]
       ;; Otherwise the navbar will only have a login link:
@@ -94,12 +108,14 @@
         "  $(this).removeAttr('href');"
         "});"])])})
 
-(defn- kill-process [branch]
+(defn- kill-process [{:keys [process action branch-name project-name] :as branch}
+                     {:keys [login] :as user}]
   "Kill the running process associated with the given branch and return the branch to the caller."
-  (let [p (:process branch)]
-    (when-not (nil? p)
-      (sh/destroy p)
-      (assoc branch :cancelled? true))))
+  (when-not (nil? process)
+    (log/info "Cancelling action" action "on branch" branch-name "of project" project-name
+              "on behalf of user" login)
+    (sh/destroy process)
+    (assoc branch :cancelled? true)))
 
 (defn render-404
   "Render the 404 - not found page"
@@ -260,6 +276,22 @@
          [:span [:a {:class "btn btn-warning btn-sm" :href (str view-url "?force-old=1")}
                  "View the stale version"]]])]]))
 
+(defn- notify-missing-view
+  "Given some branch data, and the path for a view that is missing, render an alert box informing
+  the user that it is not there."
+  [{:keys [branch-name project-name] :as branch}
+   view-path]
+  [:div {:class "alert alert-warning"}
+   [:div
+    [:span
+     [:span {:class "text-monospace font-weight-bold"} view-path]
+     [:span " does not exist in branch "]
+     [:span {:class "text-monospace font-weight-bold"} branch-name]
+     [:span ". Ask someone with write access to this project to build it for you."]]]
+   [:div {:class "pt-2"}
+    [:a {:class "btn btn-sm btn-primary"
+         :href (str "/" project-name "/branches/" branch-name)} "Dismiss"]]])
+
 (defn- render-console
   "Given some branch data, and a number of parameters related to an action or a view, render
   the console on the branch page."
@@ -270,10 +302,6 @@
               (and (not (nil? view-path))
                    (not (nil? confirm-kill)))
               (prompt-to-kill-for-view branch view-path)
-
-              (and (not (nil? view-path))
-                   (not (nil? confirm-update)))
-              (prompt-to-update-view branch view-path)
 
               (and (not (nil? new-action))
                    (not (nil? confirm-kill)))
@@ -323,17 +351,13 @@
                [:h3 "Workflow"]
                ;; If the missing-view parameter is present, then the user with read-only access is
                ;; trying to look at a view that doesn't exist:
-               (when-not (nil? missing-view)
-                 [:div {:class "alert alert-warning"}
-                  [:div
-                   [:span
-                    [:span {:class "text-monospace font-weight-bold"} missing-view]
-                    [:span " does not exist in branch "]
-                    [:span {:class "text-monospace font-weight-bold"} branch-name]
-                    [:span ". Ask someone with write access to this project to build it for you."]]]
-                  [:div {:class "pt-2"}
-                   [:a {:class "btn btn-sm btn-primary"
-                        :href (str "/" project-name "/branches/" branch-name)} "Dismiss"]]])
+               (cond
+                 (not (nil? missing-view))
+                 (notify-missing-view branch view-path)
+
+                 (not (nil? confirm-update))
+                 (prompt-to-update-view branch view-path))
+
                ;; Render the Workflow HTML from the Makefile:
                (or (:html Makefile)
                    [:ul [:li "No workflow found"]])
@@ -360,6 +384,8 @@
           (update-view [branch]
             ;; Run `make` (in the background) to rebuild the view, with output
             ;; directed to the branch's console.txt file.
+            (log/info "Rebuilding view" view-path "from branch" branch-name "of project"
+                      project-name "for user" (-> request :session :user :login))
             (let [process (sh/proc "bash" "-c"
                                    (str "exec make " view-path
                                         " > ../../temp/" branch-name "/console.txt "
@@ -432,7 +458,7 @@
           ;; and redirect the user back to the view again:
           (not (nil? force-kill))
           (do
-            (send-off branch-agent kill-process)
+            (send-off branch-agent kill-process (-> request :session :user))
             (send-off branch-agent update-view)
             (redirect this-url))
 
@@ -471,7 +497,7 @@
         ;; Otherwise redirect back to this page, setting the confirm-update flag to ask the user if
         ;; she would really like to rebuild the file:
         :else
-        (redirect (str this-url "?confirm-update=1#console"))))))
+        (redirect (str this-url "?confirm-update=1"))))))
 
 (defn hit-branch!
   "Render a branch, possibly performing an action on it in the process. Note that this function will
@@ -479,6 +505,8 @@
   [{{:keys [project-name branch-name new-action confirm-kill force-kill]} :params
     :as request}]
   (letfn [(launch-process [branch]
+            (log/info "Starting action" new-action "on branch" branch-name "of project"
+                      project-name "for user" (-> request :session :user :login))
             (let [process (sh/proc "bash" "-c"
                                    ;; `exec` is needed here to prevent the make process from
                                    ;; detaching from the parent (since that would make it difficult
@@ -532,7 +560,7 @@
         ;; If this is a cancel action, kill the existing process and redirect to the branch page:
         (= new-action "cancel-DROID-process")
         (do
-          (send-off branch-agent kill-process)
+          (send-off branch-agent kill-process (-> request :session :user))
           (redirect this-url))
 
         ;; If there is no action to be performed, or the action is unrecognised, then just render
@@ -553,7 +581,7 @@
           ;; relaunch the new one:
           (not (nil? force-kill))
           (do
-            (send-off branch-agent kill-process)
+            (send-off branch-agent kill-process (-> request :session :user))
             (send-off branch-agent launch-process)
             (redirect this-url))
 

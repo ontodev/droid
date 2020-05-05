@@ -11,6 +11,7 @@
             [droid.config :refer [config]]
             [droid.data :as data]
             [droid.db :as db]
+            [droid.github-api :as gh-api]
             [droid.log :as log]
             [droid.html :as html]))
 
@@ -20,7 +21,9 @@
   [handler]
   (fn [request]
     (if (= "/logout" (:uri request))
-      (assoc (redirect "/?just-logged-out=1") :session {})
+      (do
+        (log/info "Logging out" (-> request :session :user :login))
+        (assoc (redirect "/?just-logged-out=1") :session {}))
       (handler request))))
 
 (defn- wrap-user
@@ -33,22 +36,26 @@
        (-> request :session :user :authenticated)
        request
 
-       ;; If the user isn't authenticated, but there's a GitHub token, fetch the user information from
-       ;; GitHub:
+       ;; If the user isn't authenticated, but there's a GitHub token, fetch the user information
+       ;; from GitHub:
        (-> request :oauth2/access-tokens :github)
        (let [token (-> request :oauth2/access-tokens :github :token)
              {:keys [status headers body error] :as resp} @(http/get "https://api.github.com/user"
                                                                      {:headers
                                                                       {"Authorization"
-                                                                       (str "token " token)}})
-             user (cheshire/parse-string body true)]
+                                                                       (str "token " token)}})]
          (if error
            (do
-             (log/error "Failed to get user information from GitHib: " status headers body error)
+             (log/error "Failed to get user information from GitHub: " status headers body error)
              (dissoc request :oauth2/access-tokens))
-           (-> request
-               (assoc-in [:session :user] user)
-               (assoc-in [:session :user :authenticated] true))))
+           (let [user (cheshire/parse-string body true)
+                 project-permissions (-> user :login (gh-api/project-permissions token))]
+             (log/info "Logging in" (:login user) "with permissions" project-permissions)
+             (-> request
+                 (assoc-in [:session :user] user)
+                 (assoc-in [:session :user :authenticated] true)
+                 ;; Add the user's permissions for each project managed by the instance:
+                 (assoc-in [:session :user :project-permissions] project-permissions)))))
 
        ;; If the user isn't authenticated and there isn't a github token, do nothing:
        :else
