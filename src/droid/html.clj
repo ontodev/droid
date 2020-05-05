@@ -23,9 +23,10 @@
   [{{:keys [user]} :session, :as request}]
   [:nav {:class "ml-n3 mr-n3 mb-n3 navbar navbar-light"}
    (if (:authenticated user)
-     [:a {:target "__blank" :class "float-left" :href (:html_url user)}
-      [:small (->> user :name (str "Authenticated as ")) (when (read-only? request)
-                                                           " (read-only access)")]]
+     [:small {:class "float-left"}
+       "Authenticated as "
+       [:a {:target "__blank" :href (:html_url user)} (->> user :name)]
+       (when (read-only? request) " (read-only access)")]
      [:a {:class "float-left" :href "/oauth2/github"}
       [:small "Authenticate via GitHub"]])])
 
