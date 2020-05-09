@@ -117,6 +117,35 @@
     (sh/destroy process)
     (assoc branch :cancelled? true)))
 
+(defn- branch-status-summary
+  "Given the name of a project and branch, output a summary string of the branch's commit status
+  as compared with its remote."
+  [project-name branch-name]
+  (let [branch-agent (-> data/branches
+                         (get (keyword project-name))
+                         (get (keyword branch-name)))]
+    (send-off branch-agent data/refresh-branch)
+    (await branch-agent)
+    (if-not (-> @branch-agent :git-status :remote)
+      "no remote branch"
+      (str (-> @branch-agent :git-status :ahead) " ahead, "
+           (-> @branch-agent :git-status :behind) " behind '"
+           (-> @branch-agent :git-status :remote) "'"))))
+
+(defn- render-project-branches
+  "Given the name of a project, render a list of its branches, with links."
+  [project-name]
+  [:ul
+   (for [branch-name (->> project-name
+                          (keyword)
+                          (get data/branches)
+                          (keys)
+                          (sort)
+                          (map name))]
+     [:li
+      [:a {:href (str "/" project-name "/branches/" branch-name)}
+       branch-name] (str " (" (branch-status-summary project-name branch-name)  ")")])])
+
 (defn render-404
   "Render the 404 - not found page"
   [request]
@@ -145,10 +174,14 @@
                   [:div {:class "pt-2"}
                    [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
                [:div [:h3 "Available Projects"]
-                [:ul
+                [:ul {:class "list-unstyled"}
                  (for [project (-> config :projects)]
-                   [:li [:a {:href (->> project (key) (str "/"))}
-                         (->> project (val) :project-title)]])]]]]}))
+                   [:li
+                    [:details
+                     [:summary
+                      [:a {:href (->> project (key) (str "/"))}
+                       (->> project (val) :project-title)]]
+                     (-> project (key) (render-project-branches))]])]]]]}))
 
 (defn render-project
   "Render the home page for a project"
@@ -164,15 +197,7 @@
                   [:p (->> project :project-description)]
                   [:div
                    [:div [:h3 "Branches"]
-                    [:ul
-                     (for [branch-name (->> project-name
-                                            (keyword)
-                                            (get data/branches)
-                                            (keys)
-                                            (sort)
-                                            (map name))]
-                       [:li [:a {:href (str "/" project-name "/branches/" branch-name)}
-                             branch-name]])]]]]}))))
+                    (render-project-branches project-name)]]]}))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
@@ -347,6 +372,7 @@
               [:p (-> config :projects (get project-name) :project-description)]
               [:div
                [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
+               [:p {:class "mt-n2"} (str " (" (branch-status-summary project-name branch-name)  ")")]
 
                [:h3 "Workflow"]
                ;; If the missing-view parameter is present, then the user with read-only access is
