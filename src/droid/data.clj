@@ -101,17 +101,23 @@
   contents and return it."
   [{:keys [branch-name project-name] :as branch}]
   (letfn [(parse-git-status [text]
+            ;; Parses the porcelain git status short output and extracts the branch tracking info
+            ;; and info about uncommitted files.
             (let [[branch-status & file-statuses] (string/split-lines text)
-                  branch-re "(((\\S+)\\.{3}(\\S+)|(\\S+)))"
+                  local-remote-re "(((\\S+)\\.{3}(\\S+)|(\\S+)))"
                   ahead-behind-re "( \\[(ahead (\\d+))?(, )?(behind (\\d+))?\\])?"
-                  pattern (re-pattern (str "## " branch-re ahead-behind-re))
-                  [_ _ _ local remote local-alt _ _ ahead _ _ behind] (re-find pattern
+                  tracking-pattern (re-pattern (str "## " local-remote-re ahead-behind-re))
+                  [_ _ _ local remote local-alt _ _ ahead _ _ behind] (re-find tracking-pattern
                                                                                branch-status)]
               {:raw-text text
                :local (or local local-alt)
                :remote remote
                :ahead (if (nil? ahead) 0 (Integer/parseInt ahead))
-               :behind (if (nil? behind) 0 (Integer/parseInt behind))}))]
+               :behind (if (nil? behind) 0 (Integer/parseInt behind))
+               ;; Simple yes or no to the question of whether there are files to commit:
+               :uncommitted? (-> #(not (string/starts-with? % "??"))
+                                 (some file-statuses)
+                                 (boolean))}))]
     (let [branch-workspace-dir (get-workspace-dir project-name branch-name)
           branch-temp-dir (get-temp-dir project-name branch-name)
           git-status (let [process (sh/proc "git" "status" "--short" "--branch" "--porcelain"
