@@ -130,7 +130,9 @@
       "no remote branch"
       (str (-> @branch-agent :git-status :ahead) " ahead, "
            (-> @branch-agent :git-status :behind) " behind '"
-           (-> @branch-agent :git-status :remote) "'"))))
+           (-> @branch-agent :git-status :remote) "'"
+           (when (-> @branch-agent :git-status :uncommitted?)
+             ", with uncommitted changes")))))
 
 (defn- render-project-branches
   "Given the name of a project, render a list of its branches, with links."
@@ -371,8 +373,9 @@
     :content [:div
               [:p (-> config :projects (get project-name) :project-description)]
               [:div
-               [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
-               [:p {:class "mt-n2"} (str " (" (branch-status-summary project-name branch-name)  ")")]
+               [:h2 [:a {:href (str "/" project-name), :data-toggle "tooltip",
+                         :title (str " (" (branch-status-summary project-name branch-name)  ")")}
+                     (str "Branch: " branch-name)]]
 
                [:h3 "Workflow"]
                ;; If the missing-view parameter is present, then the user with read-only access is
