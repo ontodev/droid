@@ -121,7 +121,7 @@
   "Given the name of a project and branch, output a summary string of the branch's commit status
   as compared with its remote."
   [project-name branch-name]
-  (let [branch-agent (-> data/branches
+  (let [branch-agent (-> @data/branches
                          (get (keyword project-name))
                          (get (keyword branch-name)))]
     (send-off branch-agent data/refresh-branch)
@@ -140,7 +140,7 @@
   [:ul
    (for [branch-name (->> project-name
                           (keyword)
-                          (get data/branches)
+                          (get @data/branches)
                           (keys)
                           (sort)
                           (map name))]
@@ -160,46 +160,98 @@
 
 (defn index
   "Render the index page"
-  [{{:keys [just-logged-out]} :params,
+  [{{:keys [just-logged-out refresh reset really-reset]} :params,
+    {{:keys [login]} :user} :session,
     :as request}]
-  (html-response
-   request
-   {:title "DROID"
-    :heading "DROID"
-    :content [:div
-              [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
-              [:div
-               (when-not (nil? just-logged-out)
-                 [:div {:class "alert alert-info"}
-                  "You have been logged out. If this is a shared computer you may also want to "
-                  [:a {:href "https://github.com/logout"} "sign out of GitHub"]
-                  [:div {:class "pt-2"}
-                   [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
-               [:div [:h3 "Available Projects"]
-                [:ul {:class "list-unstyled"}
-                 (for [project (-> config :projects)]
-                   [:li
-                    [:details
-                     [:summary
-                      [:a {:href (->> project (key) (str "/"))}
-                       (->> project (val) :project-title)]]
-                     (-> project (key) (render-project-branches))]])]]]]}))
+  (letfn [(site-admin? []
+            (some #(= login %) (-> config :site-admin-github-ids (get (:op-env config)))))]
+    (cond
+      ;; If the refresh parameter is present, then refresh all of the managed branches and redirect
+      ;; back to this page:
+      (not (nil? refresh))
+      (do
+        (send-off data/branches data/refresh-branches)
+        (await data/branches)
+        (redirect "/"))
+
+      ;; If the user is a site-admin and has confirmed a reset action, do it now and redirect back
+      ;; to this page:
+      (and (site-admin?) (not (nil? really-reset)))
+      (do
+        (log/info "Resetting managed branches on behalf of" login)
+        (send-off data/branches data/refresh-branches true)
+        (redirect "/"))
+
+      ;; Otherwise just render the page:
+      :else
+      (html-response
+       request
+       {:title "DROID"
+        :heading "DROID"
+        :content [:div
+                  [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
+                  [:div
+                   (when-not (nil? just-logged-out)
+                     [:div {:class "alert alert-info"}
+                      "You have been logged out. If this is a shared computer you may also want to "
+                      [:a {:href "https://github.com/logout"} "sign out of GitHub"]
+                      [:div {:class "pt-2"}
+                       [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
+                   (when (and (site-admin?) (not (nil? reset)))
+                     [:div {:class "alert alert-danger"}
+                      "Are you sure you want to reset the temporary branch data? This will, "
+                      "among other things, clear the contents of the console in every branch. "
+                      "You should not do this if there are any DROID processes in progress."
+                      [:div {:class "pt-2"}
+                       [:a {:class "btn btn-sm btn-primary" :href "/"} "Cancel"]
+                       [:span "&nbsp;"]
+                       [:a {:class "btn btn-sm btn-danger" :href "/?really-reset=1"} "Reset"]]])
+                   [:div
+                    [:h3 "Available Projects"]
+                    [:div {:class "pb-3"}
+                     [:a {:class "btn btn-sm btn-primary" :href "/?refresh=1"
+                          :data-toggle "tooltip" :title "Refresh branch list"} "Refresh"]
+                     (when (and (site-admin?) (nil? reset))
+                       [:span
+                        [:span "&nbsp;"]
+                        [:a {:class "btn btn-sm btn-danger" :href "/?reset=1"
+                             :data-toggle "tooltip" :title "Reset temporary branch data"}
+                         "Reset"]])]
+                    [:ul {:class "list-unstyled"}
+                     (for [project (-> config :projects)]
+                       [:li
+                        [:details {:data-toggle "tooltip" :title "Show branches"}
+                         [:summary
+                          [:a {:href (->> project (key) (str "/"))}
+                           (->> project (val) :project-title)]]
+                         (-> project (key) (render-project-branches))]])]]]]}))))
 
 (defn render-project
   "Render the home page for a project"
-  [{{:keys [project-name]} :params,
+  [{{:keys [project-name refresh]} :params,
     :as request}]
-  (let [project (-> config :projects (get project-name))]
-    (if (nil? project)
-      (render-404 request)
-      (html-response
-       request
-       {:title (->> project :project-title (str "DROID for "))
-        :content [:div
-                  [:p (->> project :project-description)]
-                  [:div
-                   [:div [:h3 "Branches"]
-                    (render-project-branches project-name)]]]}))))
+  (let [this-url (str "/" project-name)]
+    ;; If the refresh parameter is present, then refresh all managed branches and redirect back
+    ;; to this page; otherwise just render the page.
+    (if-not (nil? refresh)
+      (do
+        (send-off data/branches data/refresh-branches)
+        (await data/branches)
+        (redirect this-url))
+      (let [project (-> config :projects (get project-name))]
+        (if (nil? project)
+          (render-404 request)
+          (html-response
+           request
+           {:title (->> project :project-title (str "DROID for "))
+            :content [:div
+                      [:p (->> project :project-description)]
+                      [:div
+                       [:div [:h3 "Branches"]
+                        [:div {:class "pb-2"}
+                         [:a {:class "btn btn-sm btn-primary" :href (str this-url "?refresh=1")
+                              :data-toggle "tooltip" :title "Refresh branch list"} "Refresh"]]
+                        (render-project-branches project-name)]]]}))))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
@@ -322,7 +374,7 @@
 (defn- render-console
   "Given some branch data, and a number of parameters related to an action or a view, render
   the console on the branch page."
-  [{:keys [action start-time command console] :as branch}
+  [{:keys [action start-time command exit-code console] :as branch}
    {:keys [new-action view-path confirm-update confirm-kill] :as params}]
   (letfn [(render-status-bar []
             (cond
@@ -339,23 +391,30 @@
 
     ;; Render the part of the branch corresponding to the console:
     [:div {:id "console"}
-     (let [readable-start (->> start-time (java.time.Instant/ofEpochMilli) (str))]
-       [:p {:class "alert alert-info"} (str "Action " action " started at ")
-        [:span {:class "date"} readable-start] " ("
-        [:span {:class "since"} readable-start] ")"])
+     (if (nil? exit-code)
+       ;; If no process is running or has been run, then ask the user to kick one off:
+       [:p "Press a button above to execute an action."]
+       ;; Otherwise render the info for the action, the status bar, and the literal command
+       ;; corresponding to it:
+       (let [readable-start (->> start-time (java.time.Instant/ofEpochMilli) (str))]
+         [:div
+          [:p {:class "alert alert-info"} (str "Action " action " started at ")
+           [:span {:class "date"} readable-start] " ("
+           [:span {:class "since"} readable-start] ")"]
 
-     ;; The status bar
-     (render-status-bar)
+          (render-status-bar)
+          [:pre [:code {:class "shell"} (str "$ " command)]]]))
 
-     ;; The command and console output:
-     [:pre [:code {:class "shell"} (str "$ " command)]]
+     ;; Render the contents of the console itself:
      [:pre [:code {:class "shell"} console]]
 
-     ;; If there are more than 35 lines in the console, render the status bar again:
-     (when (<= 35 (->> console
-                       (filter #(= \newline  %))
-                       (count)))
-       (render-status-bar))]))
+     ;; If an action is running and the console has a large number of lines in it, render the status
+     ;; bar again:
+     (when-not (nil? exit-code)
+       (when (<= 35 (->> console
+                         (filter #(= \newline  %))
+                         (count)))
+         (render-status-bar)))]))
 
 (defn- render-branch-page
   "Given some branch data, and a number of parameters related to an action or a view, construct the
@@ -392,9 +451,7 @@
                    [:ul [:li "No workflow found"]])
 
                [:h3 "Console"]
-               (if (nil? process)
-                 [:p "Press a button above to execute an action."]
-                 (render-console branch params))]]}))
+               (render-console branch params)]]}))
 
 (defn view-file!
   "View a file in the workspace if it is in the list of allowed views for the branch. If the file is
@@ -439,7 +496,7 @@
 
     (let [branch-key (keyword branch-name)
           project-key (keyword project-name)
-          branch-agent (->> data/branches project-key branch-key)
+          branch-agent (->> @data/branches project-key branch-key)
           branch-url (str "/" project-name "/branches/" branch-name)
           this-url (str branch-url "/views/" view-path)
           ;; Kick off a job to refresh the branch information, wait for it to complete, and then
@@ -558,7 +615,7 @@
 
     (let [branch-key (keyword branch-name)
           project-key (keyword project-name)
-          branch-agent (->> data/branches project-key branch-key)
+          branch-agent (->> @data/branches project-key branch-key)
           last-exit-code (:exit-code @branch-agent)
           this-url (str "/" project-name "/branches/" branch-name)]
 
