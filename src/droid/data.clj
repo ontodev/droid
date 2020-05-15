@@ -260,6 +260,24 @@
       (#(hash-map (keyword project-name) %))
       (#(merge all-branches %))))
 
+(defn checkout-remote-branch-to-local
+  "Checkout a remote GitHub branch into the local workspace."
+  [all-local-branches project-name branch-name]
+  (log/info "Checking out remote branch" branch-name "into workspace for project" project-name)
+  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+        process (sh/proc "git" "clone" "--single-branch" "--branch" branch-name
+                         (str "git@github.com:" org "/" repo) branch-name
+                         :dir (get-workspace-dir project-name))
+        exit-code (future (sh/exit-code process))]
+    (if-not (= @exit-code 0)
+      (do
+        ;; If there is a problem, log an error and return the local branches unchanged
+        (log/error "While attempting to checkout branch" branch-name "of project" project-name
+                   "the following error was encountered:" (sh/stream-to-string process :err))
+        all-local-branches)
+      ;; Otherwise refresh the project; it should pick up the new branch:
+      (refresh-local-branches all-local-branches [project-name]))))
+
 (def local-branches
   "An agent to handle access to the hashmap that contains info on all of the branches managed by the
   server instance."

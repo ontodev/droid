@@ -160,8 +160,7 @@
                              (get (keyword project-name)))]
        (when (not-any? #(= (:name remote-branch) %) local-branch-names)
          [:li
-          ;; TODO: Handle this somewhere:
-          [:a {:href (str "?checkout=" project-name "/" (:name remote-branch))
+          [:a {:href (str "?to-checkout=" (:name remote-branch))
                :data-toggle "tooltip" :title "Checkout a local copy of this branch"
                :class "badge badge-info"} "Checkout"]
           [:span "&nbsp;"] (:name remote-branch)]))]))
@@ -241,6 +240,12 @@
       (not (nil? to-really-delete))
       (do
         (send-off data/local-branches data/delete-local-branch project-name to-really-delete)
+        (await data/local-branches)
+        (redirect this-url))
+
+      (not (nil? to-checkout))
+      (do
+        (send-off data/local-branches data/checkout-remote-branch-to-local project-name to-checkout)
         (await data/local-branches)
         (redirect this-url))
 

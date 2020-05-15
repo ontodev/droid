@@ -1,5 +1,5 @@
 (ns droid.github-api
-  (:require [clojure.string :as str]
+  (:require [clojure.string :as string]
             [tentacles.core :refer [api-call]]
             [tentacles.repos :refer [branches]]
             [droid.config :refer [config]]
@@ -23,7 +23,7 @@
                         (-> project
                             (val)
                             (get :github-coordinates)
-                            (str/split #"/")
+                            (string/split #"/")
                             (#(api-call :get "repos/%s/%s/collaborators/%s/permission"
                                         [(first %) (second %) login] {:oauth-token token}))
                             (#(or (:permission %)
@@ -41,7 +41,7 @@
                        :projects
                        (get project-name)
                        :github-coordinates
-                       (str/split #"/"))
+                       (string/split #"/"))
         remote-branches (do
                           (-> "Querying GitHub repo "
                               (str org "/" repo)
