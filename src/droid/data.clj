@@ -247,6 +247,19 @@
   (log/info "Reinitializing local branches ...")
   (refresh-local-branches {} (-> config :projects (keys))))
 
+(defn delete-local-branch
+  "Deletes the given branch of the given project from the given managed server branches,
+  and deletes the workspace and temporary directories for the branch in the filesystem."
+  [all-branches project-name branch-name]
+  (log/info "Deleting branch" branch-name "from" project-name)
+  (-> project-name (get-workspace-dir) (str "/" branch-name) (delete-recursively))
+  (-> project-name (get-temp-dir) (str "/" branch-name) (delete-recursively))
+  (-> all-branches
+      (get (keyword project-name))
+      (dissoc (keyword branch-name))
+      (#(hash-map (keyword project-name) %))
+      (#(merge all-branches %))))
+
 (def local-branches
   "An agent to handle access to the hashmap that contains info on all of the branches managed by the
   server instance."

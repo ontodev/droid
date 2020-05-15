@@ -149,8 +149,7 @@
                :data-toggle "tooltip" :title "Create a new branch"} "Create new"]]
      (for [local-branch-name local-branch-names]
        [:li
-        ;; TODO: Handle this somewhere:
-        [:a {:href (str "?delete=" project-name "/" local-branch-name)
+        [:a {:href (str "?to-delete=" local-branch-name)
              :data-toggle "tooltip" :title "Delete this branch"
              :class "badge badge-danger"} "Delete"]
         [:span "&nbsp;"]
@@ -235,24 +234,22 @@
 
 (defn render-project
   "Render the home page for a project"
-  [{{:keys [project-name refresh-local refresh-remote]} :params,
+  [{{:keys [project-name refresh to-delete to-really-delete to-checkout create-new]} :params,
     :as request}]
   (let [this-url (str "/" project-name)]
     (cond
-      ;; If the refresh-local parameter is present, then refresh all managed branches and redirect
-      ;; back to this page:
-      (not (nil? refresh-local))
+      (not (nil? to-really-delete))
       (do
-        (send-off data/local-branches data/refresh-local-branches [project-name])
+        (send-off data/local-branches data/delete-local-branch project-name to-really-delete)
         (await data/local-branches)
         (redirect this-url))
 
-      ;; If the refresh-remote parameter is present, then refresh all remotely available branches
-      ;; and redirect back to this page:
-      (not (nil? refresh-remote))
+      (not (nil? refresh))
       (do
+        (send-off data/local-branches data/refresh-local-branches [project-name])
         (send-off data/remote-branches
                   data/refresh-remote-branches-for-project project-name request)
+        (await data/local-branches)
         (await data/remote-branches)
         (redirect this-url))
 
@@ -268,18 +265,22 @@
                       [:p (->> project :project-description)]
                       [:div
                        [:div [:h3 "Branches"]
+                        (when (not (nil? to-delete))
+                          [:div {:class "alert alert-danger"}
+                           "Are you sure you want to delete the branch "
+                           [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
+                           [:div {:class "pt-2"}
+                            [:a {:class "btn btn-sm btn-primary" :href this-url} "No, cancel"]
+                            [:span "&nbsp;"]
+                            [:a {:class "btn btn-sm btn-danger"
+                                 :href (str this-url "?to-really-delete=" to-delete)}
+                             "Yes, continue"]]])
                         [:div {:class "pb-2"}
                          [:a {:class "btn btn-sm btn-primary"
-                              :href (str this-url "?refresh-local=1")
+                              :href (str this-url "?refresh=1")
                               :data-toggle "tooltip"
-                              :title "Refresh the list of available local branches"}
-                          "Refresh local branch list"]
-                         [:span "&nbsp;"]
-                         [:a {:class "btn btn-sm btn-primary"
-                              :href (str this-url "?refresh-remote=1")
-                              :data-toggle "tooltip"
-                              :title "Refresh the list of available remote branches"}
-                          "Refresh remote branch list (for dev only)"]]
+                              :title "Refresh the list of available local and remote branches"}
+                          "Refresh"]]
                         (render-project-branches project-name)]]]}))))))
 
 (defn- render-status-bar-for-action
