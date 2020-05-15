@@ -46,7 +46,8 @@
                           (-> "Querying GitHub repo "
                               (str org "/" repo)
                               (str " for list of remote branches of project " project-name)
-                              (#(str % (when login (str " on behalf of " login))))
+                              (#(str % (when (and login token)
+                                         (str ", authenticating with " login "'s credentials"))))
                               (log/info))
                           (branches org repo options))]
 
