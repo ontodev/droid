@@ -49,7 +49,7 @@
              (log/error "Failed to get user information from GitHub: " status headers body error)
              (dissoc request :oauth2/access-tokens))
            (let [user (cheshire/parse-string body true)
-                 project-permissions (-> user :login (gh-api/project-permissions token))]
+                 project-permissions (-> user :login (gh-api/get-project-permissions token))]
              (log/info "Logging in" (:login user) "with permissions" project-permissions)
              (-> request
                  (assoc-in [:session :user] user)

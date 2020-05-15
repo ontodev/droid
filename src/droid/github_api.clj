@@ -1,10 +1,11 @@
 (ns droid.github-api
   (:require [clojure.string :as str]
             [tentacles.core :refer [api-call]]
+            [tentacles.repos :refer [branches]]
             [droid.config :refer [config]]
             [droid.log :as log]))
 
-(defn project-permissions
+(defn get-project-permissions
   "Given a GitHub login and an OAuth2 token, returns a hash-map specifying the user's permissions
   for every project managed by the server instance."
   [login token]
@@ -26,9 +27,33 @@
                             (#(api-call :get "repos/%s/%s/collaborators/%s/permission"
                                         [(first %) (second %) login] {:oauth-token token}))
                             (#(or (:permission %)
-                                  (do (log/warn "Unable to retrieve permissions for" login
-                                                "on project" (key project) "with reason:"
-                                                (-> % :body :message)
-                                                (str "(see: " (-> % :body :documentation_url) ")"))
+                                  (do (log/error "Unable to retrieve permissions for" login
+                                                 "on project" (key project) "with reason:"
+                                                 (-> % :body :message)
+                                                 (str "(see: " (-> % :body :documentation_url) ")"))
                                       nil)))))))
        (apply merge)))
+
+(defn get-remote-branches
+  "Call the GitHub API to get the list of remote branches for the given project, using "
+  [project-name {:keys [login token] :as options}]
+  (let [[org repo] (-> config
+                       :projects
+                       (get project-name)
+                       :github-coordinates
+                       (str/split #"/"))
+        remote-branches (do
+                          (-> "Querying GitHub repo "
+                              (str org "/" repo)
+                              (str " for list of remote branches of project " project-name)
+                              (#(str % (when login (str " on behalf of " login))))
+                              (log/info))
+                          (branches org repo options))]
+
+    (if (= (type remote-branches) clojure.lang.PersistentHashMap)
+      (do (log/error
+           "Request to retrieve remote branches of project" project-name
+           "failed with reason:" (-> remote-branches :body :message)
+           (str "(see: " (-> remote-branches :body :documentation_url) ")"))
+          [])
+      (vec remote-branches))))
