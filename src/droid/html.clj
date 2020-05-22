@@ -343,7 +343,7 @@
         (do
           ;; If the list of remote branches is empty (which will be true if the server has
           ;; restarted recently) then refresh it:
-          (when (and (empty? @data/remote-branches)
+          (when (and (->> project-name (keyword) (get @data/remote-branches) (empty?))
                      (not (read-only? request)))
             (send-off data/remote-branches
                       data/refresh-remote-branches-for-project project-name request)
