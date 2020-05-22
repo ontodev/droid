@@ -246,7 +246,7 @@
 
 (defn render-project
   "Render the home page for a project"
-  [{{:keys [project-name to-delete to-really-delete to-checkout
+  [{{:keys [project-name refresh to-delete to-really-delete to-checkout
             create invalid-name-error to-create branch-from]} :params,
     :as request}]
   (let [this-url (str "/" project-name)
@@ -329,15 +329,25 @@
                     "initiated by" (-> request :session :user :login))
           (create-branch project-name to-create))
 
-        ;; Otherwise refresh the project's branches and render the page
-        :else
+        ;; Refresh local and remote branches:
+        (not (nil? refresh))
         (do
-          ;; First refresh the local and remote branches:
           (send-off data/local-branches data/refresh-local-branches [project-name])
           (send-off data/remote-branches
                     data/refresh-remote-branches-for-project project-name request)
           (await data/local-branches data/remote-branches)
-          ;; render the response:
+          (redirect this-url))
+
+        ;; Otherwise just render the page
+        :else
+        (do
+          ;; If the list of remote branches is empty (which will be true if the server has
+          ;; restarted recently) then refresh it:
+          (when (and (empty? @data/remote-branches)
+                     (not (read-only? request)))
+            (send-off data/remote-branches
+                      data/refresh-remote-branches-for-project project-name request)
+            (await data/remote-branches))
           (html-response
            request
            {:title (->> project :project-title (str "DROID for "))
@@ -405,6 +415,12 @@
 
                       ;; The main content of the project page is here:
                       [:h3 "Branches"]
+                      [:div {:class "pb-2"}
+                       [:a {:class "btn btn-sm btn-primary"
+                            :href (str this-url "?refresh=1")
+                            :data-toggle "tooltip"
+                            :title "Refresh the list of available local and remote branches"}
+                        "Refresh"]]
                       (->> request (read-only?) (render-project-branches project-name))]}))))))
 
 (defn- render-status-bar-for-action
