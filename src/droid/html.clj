@@ -8,6 +8,7 @@
             [droid.make :as make]
             [droid.dir :refer [get-workspace-dir]]
             [droid.log :as log]
+            [ring.util.codec :as codec]
             [ring.util.response :refer [file-response redirect]]))
 
 (def default-html-headers
@@ -142,25 +143,25 @@
                                 (get @data/local-branches)
                                 (keys)
                                 (sort)
-                                (map name))]
+                                (map name))
+        project-url (str "/" project-name)]
     [:ul
-     ;; TODO: Handle this somewhere
-     [:li [:a {:href "?create=1" :class "badge badge-success"
-               :data-toggle "tooltip" :title "Create a new branch"} "Create new"]]
+     [:li [:a {:href (str project-url "?create=1") :class "badge badge-success"
+               :data-toggle "tooltip" :title "Create a new local branch"} "Create new"]]
      (for [local-branch-name local-branch-names]
        [:li
-        [:a {:href (str "?to-delete=" local-branch-name)
+        [:a {:href (str project-url "?to-delete=" local-branch-name)
              :data-toggle "tooltip" :title "Delete this branch"
              :class "badge badge-danger"} "Delete"]
         [:span "&nbsp;"]
-        [:a {:href (str "/" project-name "/branches/" local-branch-name)}
+        [:a {:href (str project-url "/branches/" local-branch-name)}
          local-branch-name] (str " (" (branch-status-summary project-name local-branch-name)  ")")])
 
      (for [remote-branch (-> @data/remote-branches
                              (get (keyword project-name)))]
        (when (not-any? #(= (:name remote-branch) %) local-branch-names)
          [:li
-          [:a {:href (str "?to-checkout=" (:name remote-branch))
+          [:a {:href (str project-url "?to-checkout=" (:name remote-branch))
                :data-toggle "tooltip" :title "Checkout a local copy of this branch"
                :class "badge badge-info"} "Checkout"]
           [:span "&nbsp;"] (:name remote-branch)]))]))
@@ -233,44 +234,103 @@
 
 (defn render-project
   "Render the home page for a project"
-  [{{:keys [project-name refresh to-delete to-really-delete to-checkout create-new]} :params,
+  [{{:keys [project-name refresh to-delete to-really-delete to-checkout
+            create invalid-name-error to-create branch-from]} :params,
     :as request}]
   (let [this-url (str "/" project-name)]
-    (cond
-      (not (nil? to-really-delete))
-      (do
-        (send-off data/local-branches data/delete-local-branch project-name to-really-delete)
-        (await data/local-branches)
-        (redirect this-url))
+    (letfn [(refname-valid? [refname]
+              ;; Uses git's command line interface to determine whether the given refname is legal.
+              (let [process (sh/proc "git" "check-ref-format" "--allow-onelevel" refname)
+                    exit-code (future (sh/exit-code process))]
+                (or (= @exit-code 0) false)))
 
-      (not (nil? to-checkout))
-      (do
-        (send-off data/local-branches data/checkout-remote-branch-to-local project-name to-checkout)
-        (await data/local-branches)
-        (redirect this-url))
+            (create-branch [project-name branch-name]
+              ;; Creates a new branch with the given name in the given project's workspace
 
-      (not (nil? refresh))
-      (do
-        (send-off data/local-branches data/refresh-local-branches [project-name])
-        (send-off data/remote-branches
-                  data/refresh-remote-branches-for-project project-name request)
-        (await data/local-branches)
-        (await data/remote-branches)
-        (redirect this-url))
+              ;; Begin by refreshing local and remote branches since we must reference them below:
+              (send-off data/local-branches data/refresh-local-branches [project-name])
+              (send-off data/remote-branches
+                        data/refresh-remote-branches-for-project project-name request)
+              (await data/local-branches data/remote-branches)
 
-      ;; Otherwise just render the page.
-      :else
-      (let [project (-> config :projects (get project-name))]
-        (if (nil? project)
-          (render-404 request)
-          (html-response
-           request
-           {:title (->> project :project-title (str "DROID for "))
-            :content [:div
-                      [:p (->> project :project-description)]
-                      [:div
-                       [:div [:h3 "Branches"]
-                        (when (not (nil? to-delete))
+              (cond
+                (not (refname-valid? branch-name))
+                (-> this-url
+                    (str "?create=1&invalid-name-error=")
+                    (str (-> "Invalid name: "
+                             (str "&quot;" branch-name "&quot;")
+                             (codec/url-encode)))
+                    (redirect))
+
+                (or (data/remote-branch-exists? project-name branch-name)
+                    (data/local-branch-exists? project-name branch-name))
+                (-> this-url
+                    (str "?create=1&invalid-name-error=")
+                    (str (-> "Already exists: "
+                             (str "&quot;" branch-name "&quot;")
+                             (codec/url-encode)))
+                    (redirect))
+
+                :else
+                (do
+                  ;; Create the branch, then refresh the local branch list so that it shows up on
+                  ;; the page:
+                  (send-off data/local-branches data/create-local-branch project-name
+                            branch-name branch-from)
+                  (send-off data/local-branches data/refresh-local-branches [project-name])
+                  (await data/local-branches)
+                  (redirect this-url))))]
+
+      ;; Perform an action based on the parameters present in the request:
+      (cond
+        ;; Delete a local branch:
+        (not (nil? to-really-delete))
+        (do
+          (log/info "Deletion of branch" to-really-delete "from" project-name "initiated by"
+                    (-> request :session :user :login))
+          (send-off data/local-branches data/delete-local-branch project-name to-really-delete)
+          (await data/local-branches)
+          (redirect this-url))
+
+        ;; Checkout a remote branch into the local project workspace:
+        (not (nil? to-checkout))
+        (do
+          (log/info "Checkout of remote branch" to-checkout "into workspace for" project-name
+                    "initiated by" (-> request :session :user :login))
+          (send-off data/local-branches
+                    data/checkout-remote-branch-to-local project-name to-checkout)
+          (await data/local-branches)
+          (redirect this-url))
+
+        ;; Create a new branch:
+        (not (nil? to-create))
+        (do
+          (log/info "Creation of a new branch:" to-create "in project" project-name
+                    "initiated by" (-> request :session :user :login))
+          (create-branch project-name to-create))
+
+        ;; Refresh local and remote branches:
+        (not (nil? refresh))
+        (do
+          (send-off data/local-branches data/refresh-local-branches [project-name])
+          (send-off data/remote-branches
+                    data/refresh-remote-branches-for-project project-name request)
+          (await data/local-branches data/remote-branches)
+          (redirect this-url))
+
+        ;; Otherwise just render the page.
+        :else
+        (let [project (-> config :projects (get project-name))]
+          (if (nil? project)
+            (render-404 request)
+            (html-response
+             request
+             {:title (->> project :project-title (str "DROID for "))
+              :content [:div
+                        [:p (->> project :project-description)]
+
+                        ;; Display this alert and question when to-delete parameter is present:
+                        (when-not (nil? to-delete)
                           [:div {:class "alert alert-danger"}
                            "Are you sure you want to delete the branch "
                            [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
@@ -280,13 +340,61 @@
                             [:a {:class "btn btn-sm btn-danger"
                                  :href (str this-url "?to-really-delete=" to-delete)}
                              "Yes, continue"]]])
+
+                        ;; Display this alert and question when the create parameter is present:
+                        (when-not (nil? create)
+                          [:div {:class "alert alert-info mt-3"}
+                           [:form {:action this-url :method "get"}
+                            [:div {:class "font-weight-bold mb-3 text-primary"}
+                             "Create a new branch"]
+                            [:div {:class "form-group row"}
+                             ;; Select list on available local branches to serve as the
+                             ;; branching-off point:
+                             [:div {:class "col-sm-3"}
+                              [:div
+                               [:label {:for "branch-from" :class "mb-n1 text-secondary"}
+                                "Branch from"]]
+                              [:select {:id "branch-from" :name "branch-from"
+                                        :class "form-control form-control-sm"}
+                               (for [branch-name (-> @data/local-branches
+                                                     (get (keyword project-name))
+                                                     (keys)
+                                                     (#(map name %))
+                                                     (sort))]
+                                 ;; The master branch is selected by default:
+                                 [:option
+                                  (merge {:value branch-name} (when (= branch-name "master")
+                                                                {:selected "selected"}))
+                                  branch-name])]]
+                             ;; Input box for inputting the desired new branch name:
+                             [:div {:class "col-sm-3"}
+                              [:div
+                               [:label {:for "to-create" :class "mb-n1 text-secondary"}
+                                "Branch name"]]
+                              [:div
+                               [:input {:id "to-create" :name "to-create" :type "text"}]]
+                              ;; If the user previously tried to create a branch with an invalid
+                              ;; name, show an alert:
+                              (when-not (nil? invalid-name-error)
+                                [:div {:class "mb-1"}
+                                 [:small {:class "text-danger"} invalid-name-error]])]
+                             ;; The create and cancel buttons:
+                             [:div {:class "col-sm-3"}
+                              [:div "&nbsp;"]
+                              [:button {:type "submit" :class "btn btn-sm btn-success mr-2"}
+                               "Create"]
+                              [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
+                               "Cancel"]]]]])
+
+                        ;; The main content of the project page:
+                        [:h3 "Branches"]
                         [:div {:class "pb-2"}
                          [:a {:class "btn btn-sm btn-primary"
                               :href (str this-url "?refresh=1")
                               :data-toggle "tooltip"
                               :title "Refresh the list of available local and remote branches"}
                           "Refresh"]]
-                        (render-project-branches project-name)]]]}))))))
+                        (render-project-branches project-name)]})))))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
@@ -494,7 +602,7 @@
                [:h3 "Console"]
                (render-console branch params)]]}))
 
-(defn view-file!
+(defn view-file
   "View a file in the workspace if it is in the list of allowed views for the branch. If the file is
   out of date, then ask whether the current version should be served or whether it should be
   rebuilt."
@@ -626,7 +734,7 @@
         :else
         (redirect (str this-url "?confirm-update=1"))))))
 
-(defn hit-branch!
+(defn hit-branch
   "Render a branch, possibly performing an action on it in the process. Note that this function will
   call the branch's agent to potentially modify the branch."
   [{{:keys [project-name branch-name new-action confirm-kill force-kill]} :params

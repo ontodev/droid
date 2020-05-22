@@ -62,6 +62,9 @@
       (keyword)
       (hash-map (gh-api/get-remote-branches project-name options))))
 
+;; TODO: If the user isn't authenticated, then we should silently return nothing (the list of remote
+;; branches should only be available to authenticated users. Users who are not logged in should not
+;; even be able to see them.
 (defn refresh-remote-branches-for-project
   "Refresh the remote GitHub branches associated with the given project, using the given login and
   OAuth2 token to authenticate the request to GitHub."
@@ -79,6 +82,16 @@
        (map #(initialize-remote-branches-for-project %))
        (apply merge)
        (#(agent % :error-mode :continue, :error-handler default-agent-error-handler))))
+
+(defn remote-branch-exists?
+  "Checks whether the given branch name exists among the remote branches associated with the
+  given project name."
+  [project-name branch-name]
+  (->> project-name
+       (keyword)
+       (get @remote-branches)
+       (map #(:name %))
+       (some #(= branch-name %))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Code related to local branches (i.e., branches managed by the server)
@@ -145,58 +158,72 @@
               (assoc % :run-time (->> branch :start-time (- (System/currentTimeMillis))))
               %))))))
 
+(defn- recreate-dir-if-not-exists
+  "If the given directory doesn't exist or it isn't a directory, recreate it."
+  [dirname]
+  (when-not (-> dirname (io/file) (.isDirectory))
+    (log/debug "Recreating directory:" dirname)
+    ;; By setting silent mode to true, the command won't complain if the file doesn't exist:
+    (io/delete-file dirname true)
+    (.mkdir (io/file dirname))))
+
+(defn- initialize-branch
+  "Given a branch of a given project, create its temporary directory and console, and initialize
+  and return an agent that will be used to manage access to the branch's resources."
+  [project-name branch-name]
+  (let [project-temp-dir (get-temp-dir project-name)]
+    ;; If a subdirectory with the given branch name doesn't exist in the temp dir,
+    ;; recreate it:
+    (-> project-temp-dir (str branch-name) (recreate-dir-if-not-exists))
+    ;; If the console.txt file doesn't already exist in the branch's temp dir, then initialize an
+    ;; empty one:
+    (when-not (-> project-temp-dir (str branch-name "/console.txt") (io/file) (.isFile))
+      (-> project-temp-dir (str branch-name) (io/file) (.mkdir))
+      (-> project-temp-dir (str branch-name "/console.txt") (spit nil)))
+
+    ;; Create a hashmap entry mapping the branch name to the contents of its
+    ;; corresponding workspace directory. These contents are represented by a hashmap
+    ;; mapping a keywordized version of each filename/directory to a further hashmap
+    ;; representing that file/directory. In addition to entries corresponding to
+    ;; files and directories, a number of entries for meta-content are also present;
+    ;; initially this is just the branch-name and project-name, for convenience.
+    ;; The hashmap representing the branch as a whole is encapsulated inside an
+    ;; agent, which will be used to serialise updates to the branch info.
+    (-> branch-name
+        (keyword)
+        (hash-map (agent {:project-name project-name, :branch-name branch-name}
+                         :error-mode :continue
+                         :error-handler default-agent-error-handler)))))
+
 (defn- initialize-local-branches-for-project
   "Initialize a hashmap containing information about the contents and status of every local branch
   in the workspace of the given project."
   [project-name & [current-branches]]
   (let [project-workspace-dir (get-workspace-dir project-name)
         project-temp-dir (get-temp-dir project-name)]
-    (letfn [(initialize-branch [branch-name]
-              ;; If the console.txt file doesn't already exist, then initialize an empty one:
-              (when-not (-> project-temp-dir (str branch-name "/console.txt") (io/file) (.isFile))
-                (-> project-temp-dir (str branch-name) (io/file) (.mkdir))
-                (-> project-temp-dir (str branch-name "/console.txt") (spit nil)))
+    (when-not (->> project-workspace-dir (io/file) (.isDirectory))
+      (fail (str project-workspace-dir " doesn't exist or isn't a directory.")))
 
-              ;; Create a hashmap entry mapping the branch name to the contents of its
-              ;; corresponding workspace directory. These contents are represented by a hashmap
-              ;; mapping a keywordized version of each filename/directory to a further hashmap
-              ;; representing that file/directory. In addition to entries corresponding to
-              ;; files and directories, a number of entries for meta-content are also present;
-              ;; initially this is just the branch-name and project-name, for convenience.
-              ;; The hashmap representing the branch as a whole is encapsulated inside an
-              ;; agent, which will be used to serialise updates to the branch info.
-              (-> branch-name
-                  (keyword)
-                  (hash-map (agent {:project-name project-name, :branch-name branch-name}
-                                   :error-mode :continue
-                                   :error-handler default-agent-error-handler))))]
+    ;; If the temp directory doesn't exist or it isn't a directory, recreate it:
+    (recreate-dir-if-not-exists project-temp-dir)
 
-      (when-not (->> project-workspace-dir (io/file) (.isDirectory))
-        (fail (str project-workspace-dir " doesn't exist or isn't a directory.")))
-
-      ;; If the temp directory doesn't exist or it isn't a directory, recreate it:
-      (when-not (->> project-temp-dir (io/file) (.isDirectory))
-        ;; By setting silent mode to true, the command won't complain if the file doesn't exist:
-        (io/delete-file project-temp-dir true)
-        (.mkdir (io/file project-temp-dir)))
-
-      ;; Each sub-directory of the workspace represents a branch with the same name.
-      (let [branch-names (->> project-workspace-dir (io/file) (.list))]
-        (->> branch-names
-             (map #(when (-> project-workspace-dir (str %) (io/file) (.isDirectory))
-                     (let [branch-key (keyword %)
-                           branch-agent (branch-key current-branches)]
-                       (if (nil? branch-agent)
-                         (do
-                           (log/info "Initializing branch:" % "of project:" project-name)
-                           (initialize-branch %))
-                         (-> %
-                             (keyword)
-                             (hash-map (agent (refresh-local-branch @branch-agent)
-                                              :error-mode :continue
-                                              :error-handler default-agent-error-handler)))))))
-             (apply merge)
-             (hash-map (keyword project-name)))))))
+    ;; Each sub-directory of the workspace represents a branch with the same name.
+    (let [branch-names (->> project-workspace-dir (io/file) (.list))]
+      (->> branch-names
+           (map #(when (-> project-workspace-dir (str %) (io/file) (.isDirectory))
+                   (let [branch-key (keyword %)
+                         branch-agent (branch-key current-branches)]
+                     (if (nil? branch-agent)
+                       (do
+                         (log/info "Initializing branch:" % "of project:" project-name)
+                         (initialize-branch project-name %))
+                       (-> %
+                           (keyword)
+                           (hash-map (agent (refresh-local-branch @branch-agent)
+                                            :error-mode :continue
+                                            :error-handler default-agent-error-handler)))))))
+           (apply merge)
+           (hash-map (keyword project-name))))))
 
 (defn refresh-local-branches
   "Refresh all of the local branches associated with the given sequence of project names."
@@ -251,7 +278,6 @@
   "Deletes the given branch of the given project from the given managed server branches,
   and deletes the workspace and temporary directories for the branch in the filesystem."
   [all-branches project-name branch-name]
-  (log/info "Deleting branch" branch-name "from" project-name)
   (-> project-name (get-workspace-dir) (str "/" branch-name) (delete-recursively))
   (-> project-name (get-temp-dir) (str "/" branch-name) (delete-recursively))
   (-> all-branches
@@ -262,8 +288,7 @@
 
 (defn checkout-remote-branch-to-local
   "Checkout a remote GitHub branch into the local workspace."
-  [all-local-branches project-name branch-name]
-  (log/info "Checking out remote branch" branch-name "into workspace for project" project-name)
+  [all-branches project-name branch-name]
   (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
         process (sh/proc "git" "clone" "--single-branch" "--branch" branch-name
                          (str "git@github.com:" org "/" repo) branch-name
@@ -274,9 +299,40 @@
         ;; If there is a problem, log an error and return the local branches unchanged
         (log/error "While attempting to checkout branch" branch-name "of project" project-name
                    "the following error was encountered:" (sh/stream-to-string process :err))
-        all-local-branches)
+        all-branches)
       ;; Otherwise refresh the project; it should pick up the new branch:
-      (refresh-local-branches all-local-branches [project-name]))))
+      (refresh-local-branches all-branches [project-name]))))
+
+(defn create-local-branch
+  "Creates a local branch with the given branch name in the workspace for the given project, with
+  the branch point given by `branch-from`, initialize it and add it to the list of local branches."
+  [all-branches project-name branch-name branch-from]
+  (let [project-workspace-dir (get-workspace-dir project-name)
+        new-branch-dir (str project-workspace-dir branch-name)]
+    ;; Recursively copy the directory in the workspace for the branch with the name `branch-from`
+    ;; into a new directory with the name of the new branch:
+    (let [cp-process (sh/proc "cp" "-r" (str project-workspace-dir branch-from) new-branch-dir)
+          cp-exit-code (future (sh/exit-code cp-process))]
+      (if-not (= @cp-exit-code 0)
+        ;; If there was an error in copying, log it and return the branch list unchanged:
+        (do
+          (log/error "Can't create a workspace directory for" branch-name "of project"
+                     project-name "due to:" (sh/stream-to-string cp-process :err))
+          all-branches)
+        ;; Otherwise, in the newly created directory, call git's command line interface to create
+        ;; a new logical branch with the given name and switch to it:
+        (let [checkout-process (sh/proc "git" "checkout" "-b" branch-name
+                                        :dir new-branch-dir)
+              checkout-exit-code (future (sh/exit-code checkout-process))]
+          ;; If there was an error, log it and return the branches unchanged
+          (if-not (= @checkout-exit-code 0)
+            (do
+              (log/error "Error checking out" branch-name "in project"
+                         project-name "due to:" (sh/stream-to-string cp-process :err))
+              all-branches)
+            ;; Otherwise, initialize the branch and merge it in with the other branches:
+            (merge all-branches
+                   (initialize-branch project-name branch-name))))))))
 
 (def local-branches
   "An agent to handle access to the hashmap that contains info on all of the branches managed by the
@@ -286,3 +342,13 @@
       (keys)
       (#(refresh-local-branches {} %))
       (agent :error-mode :continue :error-handler default-agent-error-handler)))
+
+(defn local-branch-exists?
+  "Checks whether the given branch name exists among the local branches associated with the
+  given project name."
+  [project-name branch-name]
+  (->> project-name
+       (keyword)
+       (get @local-branches)
+       (keys)
+       (some #(= branch-name (name %)))))
