@@ -136,8 +136,9 @@
              ", with uncommitted changes")))))
 
 (defn- render-project-branches
-  "Given the name of a project, render a list of its branches, with links."
-  [project-name]
+  "Given the name of a project, render a list of its branches, with links. If the restricted-access?
+  flag is set to true, do not display any links that would result in changes to the workspace."
+  [project-name restricted-access?]
   (let [local-branch-names (->> project-name
                                 (keyword)
                                 (get @data/local-branches)
@@ -146,25 +147,29 @@
                                 (map name))
         project-url (str "/" project-name)]
     [:ul
-     [:li [:a {:href (str project-url "?create=1") :class "badge badge-success"
-               :data-toggle "tooltip" :title "Create a new local branch"} "Create new"]]
+     (when-not restricted-access?
+       [:li [:a {:href (str project-url "?create=1") :class "badge badge-success"
+                 :data-toggle "tooltip" :title "Create a new local branch"} "Create new"]])
      (for [local-branch-name local-branch-names]
        [:li
-        [:a {:href (str project-url "?to-delete=" local-branch-name)
-             :data-toggle "tooltip" :title "Delete this branch"
-             :class "badge badge-danger"} "Delete"]
-        [:span "&nbsp;"]
+        (when-not restricted-access?
+          [:span
+           [:a {:href (str project-url "?to-delete=" local-branch-name)
+                :data-toggle "tooltip" :title "Delete this branch"
+                :class "badge badge-danger"} "Delete"]
+           [:span "&nbsp;"]])
         [:a {:href (str project-url "/branches/" local-branch-name)}
          local-branch-name] (str " (" (branch-status-summary project-name local-branch-name)  ")")])
 
-     (for [remote-branch (-> @data/remote-branches
-                             (get (keyword project-name)))]
-       (when (not-any? #(= (:name remote-branch) %) local-branch-names)
-         [:li
-          [:a {:href (str project-url "?to-checkout=" (:name remote-branch))
-               :data-toggle "tooltip" :title "Checkout a local copy of this branch"
-               :class "badge badge-info"} "Checkout"]
-          [:span "&nbsp;"] (:name remote-branch)]))]))
+     (when-not restricted-access?
+       (for [remote-branch (-> @data/remote-branches
+                               (get (keyword project-name)))]
+         (when (not-any? #(= (:name remote-branch) %) local-branch-names)
+           [:li
+            [:a {:href (str project-url "?to-checkout=" (:name remote-branch))
+                 :data-toggle "tooltip" :title "Checkout a local copy of this branch"
+                 :class "badge badge-info"} "Checkout"]
+            [:span "&nbsp;"] (:name remote-branch)])))]))
 
 (defn render-404
   "Render the 404 - not found page"
@@ -284,7 +289,8 @@
       ;; Perform an action based on the parameters present in the request:
       (cond
         ;; Delete a local branch:
-        (not (nil? to-really-delete))
+        (and (not (nil? to-really-delete))
+             (not (read-only? request)))
         (do
           (log/info "Deletion of branch" to-really-delete "from" project-name "initiated by"
                     (-> request :session :user :login))
@@ -293,7 +299,8 @@
           (redirect this-url))
 
         ;; Checkout a remote branch into the local project workspace:
-        (not (nil? to-checkout))
+        (and (not (nil? to-checkout))
+             (not (read-only? request)))
         (do
           (log/info "Checkout of remote branch" to-checkout "into workspace for" project-name
                     "initiated by" (-> request :session :user :login))
@@ -303,7 +310,8 @@
           (redirect this-url))
 
         ;; Create a new branch:
-        (not (nil? to-create))
+        (and (not (nil? to-create))
+             (not (read-only? request)))
         (do
           (log/info "Creation of a new branch:" to-create "in project" project-name
                     "initiated by" (-> request :session :user :login))
@@ -330,7 +338,8 @@
                         [:p (->> project :project-description)]
 
                         ;; Display this alert and question when to-delete parameter is present:
-                        (when-not (nil? to-delete)
+                        (when (and (not (nil? to-delete))
+                                   (not (read-only? request)))
                           [:div {:class "alert alert-danger"}
                            "Are you sure you want to delete the branch "
                            [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
@@ -342,7 +351,8 @@
                              "Yes, continue"]]])
 
                         ;; Display this alert and question when the create parameter is present:
-                        (when-not (nil? create)
+                        (when (and (not (nil? create))
+                                   (not (read-only? request)))
                           [:div {:class "alert alert-info mt-3"}
                            [:form {:action this-url :method "get"}
                             [:div {:class "font-weight-bold mb-3 text-primary"}
@@ -394,7 +404,7 @@
                               :data-toggle "tooltip"
                               :title "Refresh the list of available local and remote branches"}
                           "Refresh"]]
-                        (render-project-branches project-name)]})))))))
+                        (->> request (read-only?) (render-project-branches project-name))]})))))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."

@@ -62,17 +62,18 @@
       (keyword)
       (hash-map (gh-api/get-remote-branches project-name options))))
 
-;; TODO: If the user isn't authenticated, then we should silently return nothing (the list of remote
-;; branches should only be available to authenticated users. Users who are not logged in should not
-;; even be able to see them.
 (defn refresh-remote-branches-for-project
   "Refresh the remote GitHub branches associated with the given project, using the given login and
   OAuth2 token to authenticate the request to GitHub."
   [all-current-branches project-name
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens}]
-  (->> (initialize-remote-branches-for-project project-name {:login login, :token token})
-       (merge all-current-branches)))
+  (if (or (nil? token) (nil? login))
+    ;; If the user is not authenticated, do nothing:
+    all-current-branches
+    ;; Otherwise perform the refresh:
+    (->> (initialize-remote-branches-for-project project-name {:login login, :token token})
+         (merge all-current-branches))))
 
 (def remote-branches
   "The list of remote branches in GitHub, per project, that are available to be checked out."
