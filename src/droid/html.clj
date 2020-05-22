@@ -143,14 +143,13 @@
                                 (keyword)
                                 (get @data/local-branches)
                                 (keys)
-                                (sort)
                                 (map name))
         project-url (str "/" project-name)]
     [:ul
      (when-not restricted-access?
        [:li [:a {:href (str project-url "?create=1") :class "badge badge-success"
                  :data-toggle "tooltip" :title "Create a new local branch"} "Create new"]])
-     (for [local-branch-name local-branch-names]
+     (for [local-branch-name (-> local-branch-names (sort) (reverse))]
        [:li
         (when-not restricted-access?
           [:span
@@ -163,13 +162,21 @@
 
      (when-not restricted-access?
        (for [remote-branch (-> @data/remote-branches
-                               (get (keyword project-name)))]
+                               (get (keyword project-name))
+                               (#(sort-by (juxt :pull-request :name) %))
+                               (reverse))]
          (when (not-any? #(= (:name remote-branch) %) local-branch-names)
            [:li
             [:a {:href (str project-url "?to-checkout=" (:name remote-branch))
                  :data-toggle "tooltip" :title "Checkout a local copy of this branch"
                  :class "badge badge-info"} "Checkout"]
-            [:span "&nbsp;"] (:name remote-branch)])))]))
+            [:span {:class "ml-1"} (:name remote-branch)]
+            ;; If the remote branch has an open pull request, render a link to it:
+            (let [pr-url (:pull-request remote-branch)]
+              (when-not (nil? pr-url)
+                [:span {:class "ml-1"} "("
+                 [:a {:href pr-url} "Pull request #" (-> pr-url (string/split #"/") (last))]
+                 ")"]))])))]))
 
 (defn render-404
   "Render the 404 - not found page"
@@ -239,10 +246,11 @@
 
 (defn render-project
   "Render the home page for a project"
-  [{{:keys [project-name refresh to-delete to-really-delete to-checkout
+  [{{:keys [project-name to-delete to-really-delete to-checkout
             create invalid-name-error to-create branch-from]} :params,
     :as request}]
-  (let [this-url (str "/" project-name)]
+  (let [this-url (str "/" project-name)
+        project (-> config :projects (get project-name))]
     (letfn [(refname-valid? [refname]
               ;; Uses git's command line interface to determine whether the given refname is legal.
               (let [process (sh/proc "git" "check-ref-format" "--allow-onelevel" refname)
@@ -288,6 +296,10 @@
 
       ;; Perform an action based on the parameters present in the request:
       (cond
+        ;; No project found with the given name:
+        (nil? project)
+        (render-404 request)
+
         ;; Delete a local branch:
         (and (not (nil? to-really-delete))
              (not (read-only? request)))
@@ -317,94 +329,83 @@
                     "initiated by" (-> request :session :user :login))
           (create-branch project-name to-create))
 
-        ;; Refresh local and remote branches:
-        (not (nil? refresh))
+        ;; Otherwise refresh the project's branches and render the page
+        :else
         (do
+          ;; First refresh the local and remote branches:
           (send-off data/local-branches data/refresh-local-branches [project-name])
           (send-off data/remote-branches
                     data/refresh-remote-branches-for-project project-name request)
           (await data/local-branches data/remote-branches)
-          (redirect this-url))
+          ;; render the response:
+          (html-response
+           request
+           {:title (->> project :project-title (str "DROID for "))
+            :content [:div
+                      [:p (->> project :project-description)]
 
-        ;; Otherwise just render the page.
-        :else
-        (let [project (-> config :projects (get project-name))]
-          (if (nil? project)
-            (render-404 request)
-            (html-response
-             request
-             {:title (->> project :project-title (str "DROID for "))
-              :content [:div
-                        [:p (->> project :project-description)]
+                      ;; Display this alert and question when to-delete parameter is present:
+                      (when (and (not (nil? to-delete))
+                                 (not (read-only? request)))
+                        [:div {:class "alert alert-danger"}
+                         "Are you sure you want to delete the branch "
+                         [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
+                         [:div {:class "pt-2"}
+                          [:a {:class "btn btn-sm btn-primary" :href this-url} "No, cancel"]
+                          [:span "&nbsp;"]
+                          [:a {:class "btn btn-sm btn-danger"
+                               :href (str this-url "?to-really-delete=" to-delete)}
+                           "Yes, continue"]]])
 
-                        ;; Display this alert and question when to-delete parameter is present:
-                        (when (and (not (nil? to-delete))
-                                   (not (read-only? request)))
-                          [:div {:class "alert alert-danger"}
-                           "Are you sure you want to delete the branch "
-                           [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
-                           [:div {:class "pt-2"}
-                            [:a {:class "btn btn-sm btn-primary" :href this-url} "No, cancel"]
-                            [:span "&nbsp;"]
-                            [:a {:class "btn btn-sm btn-danger"
-                                 :href (str this-url "?to-really-delete=" to-delete)}
-                             "Yes, continue"]]])
+                      ;; Display this alert and question when the create parameter is present:
+                      (when (and (not (nil? create))
+                                 (not (read-only? request)))
+                        [:div {:class "alert alert-info mt-3"}
+                         [:form {:action this-url :method "get"}
+                          [:div {:class "font-weight-bold mb-3 text-primary"}
+                           "Create a new branch"]
+                          [:div {:class "form-group row"}
+                           ;; Select list on available local branches to serve as the
+                           ;; branching-off point:
+                           [:div {:class "col-sm-3"}
+                            [:div
+                             [:label {:for "branch-from" :class "mb-n1 text-secondary"}
+                              "Branch from"]]
+                            [:select {:id "branch-from" :name "branch-from"
+                                      :class "form-control form-control-sm"}
+                             (for [branch-name (-> @data/local-branches
+                                                   (get (keyword project-name))
+                                                   (keys)
+                                                   (#(map name %))
+                                                   (sort))]
+                               ;; The master branch is selected by default:
+                               [:option
+                                (merge {:value branch-name} (when (= branch-name "master")
+                                                              {:selected "selected"}))
+                                branch-name])]]
+                           ;; Input box for inputting the desired new branch name:
+                           [:div {:class "col-sm-3"}
+                            [:div
+                             [:label {:for "to-create" :class "mb-n1 text-secondary"}
+                              "Branch name"]]
+                            [:div
+                             [:input {:id "to-create" :name "to-create" :type "text"}]]
+                            ;; If the user previously tried to create a branch with an invalid
+                            ;; name, show an alert:
+                            (when-not (nil? invalid-name-error)
+                              [:div {:class "mb-1"}
+                               [:small {:class "text-danger"} invalid-name-error]])]
+                           ;; The create and cancel buttons:
+                           [:div {:class "col-sm-3"}
+                            [:div "&nbsp;"]
+                            [:button {:type "submit" :class "btn btn-sm btn-success mr-2"}
+                             "Create"]
+                            [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
+                             "Cancel"]]]]])
 
-                        ;; Display this alert and question when the create parameter is present:
-                        (when (and (not (nil? create))
-                                   (not (read-only? request)))
-                          [:div {:class "alert alert-info mt-3"}
-                           [:form {:action this-url :method "get"}
-                            [:div {:class "font-weight-bold mb-3 text-primary"}
-                             "Create a new branch"]
-                            [:div {:class "form-group row"}
-                             ;; Select list on available local branches to serve as the
-                             ;; branching-off point:
-                             [:div {:class "col-sm-3"}
-                              [:div
-                               [:label {:for "branch-from" :class "mb-n1 text-secondary"}
-                                "Branch from"]]
-                              [:select {:id "branch-from" :name "branch-from"
-                                        :class "form-control form-control-sm"}
-                               (for [branch-name (-> @data/local-branches
-                                                     (get (keyword project-name))
-                                                     (keys)
-                                                     (#(map name %))
-                                                     (sort))]
-                                 ;; The master branch is selected by default:
-                                 [:option
-                                  (merge {:value branch-name} (when (= branch-name "master")
-                                                                {:selected "selected"}))
-                                  branch-name])]]
-                             ;; Input box for inputting the desired new branch name:
-                             [:div {:class "col-sm-3"}
-                              [:div
-                               [:label {:for "to-create" :class "mb-n1 text-secondary"}
-                                "Branch name"]]
-                              [:div
-                               [:input {:id "to-create" :name "to-create" :type "text"}]]
-                              ;; If the user previously tried to create a branch with an invalid
-                              ;; name, show an alert:
-                              (when-not (nil? invalid-name-error)
-                                [:div {:class "mb-1"}
-                                 [:small {:class "text-danger"} invalid-name-error]])]
-                             ;; The create and cancel buttons:
-                             [:div {:class "col-sm-3"}
-                              [:div "&nbsp;"]
-                              [:button {:type "submit" :class "btn btn-sm btn-success mr-2"}
-                               "Create"]
-                              [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
-                               "Cancel"]]]]])
-
-                        ;; The main content of the project page:
-                        [:h3 "Branches"]
-                        [:div {:class "pb-2"}
-                         [:a {:class "btn btn-sm btn-primary"
-                              :href (str this-url "?refresh=1")
-                              :data-toggle "tooltip"
-                              :title "Refresh the list of available local and remote branches"}
-                          "Refresh"]]
-                        (->> request (read-only?) (render-project-branches project-name))]})))))))
+                      ;; The main content of the project page is here:
+                      [:h3 "Branches"]
+                      (->> request (read-only?) (render-project-branches project-name))]}))))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
