@@ -49,7 +49,7 @@
                               (#(str % (when (and login token)
                                          (str ", authenticating with " login "'s credentials"))))
                               (log/info))
-                          (branches org repo options))]
+                          (branches org repo {:oauth-token token}))]
 
     (if (= (type remote-branches) clojure.lang.PersistentHashMap)
       (do (log/error
