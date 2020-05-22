@@ -56,11 +56,11 @@
 
 (defn- initialize-remote-branches-for-project
   "Initialize the remote GitHub branches corresponding to the given project, using the given
-  options, if provided, for the call to GitHub."
-  [project-name & [options]]
+  login and token for the call to GitHub."
+  [project-name login token]
   (-> project-name
       (keyword)
-      (hash-map (gh-api/get-remote-branches project-name options))))
+      (hash-map (gh-api/get-remote-branches project-name login token))))
 
 (defn refresh-remote-branches-for-project
   "Refresh the remote GitHub branches associated with the given project, using the given login and
@@ -69,20 +69,18 @@
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens}]
   (if (or (nil? token) (nil? login))
-    ;; If the user is not authenticated, do nothing:
-    all-current-branches
+    ;; If the user is not authenticated, log it but just return the branch list as is:
+    (do
+      (log/debug "Ignoring non-authenticated request to refresh remote branches")
+      all-current-branches)
     ;; Otherwise perform the refresh:
-    (->> (initialize-remote-branches-for-project project-name {:login login, :token token})
+    (->> (initialize-remote-branches-for-project project-name login token)
          (merge all-current-branches))))
 
 (def remote-branches
   "The list of remote branches in GitHub, per project, that are available to be checked out."
-  (->> config
-       :projects
-       (keys)
-       (map #(initialize-remote-branches-for-project %))
-       (apply merge)
-       (#(agent % :error-mode :continue, :error-handler default-agent-error-handler))))
+  ;; We begin empty:
+  (agent {} :error-mode :continue, :error-handler default-agent-error-handler))
 
 (defn remote-branch-exists?
   "Checks whether the given branch name exists among the remote branches associated with the
