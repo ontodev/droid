@@ -613,7 +613,7 @@
                         (str " (" (branch-status-summary project-name branch-name)  ")")]]
 
                [:div {:class "row"}
-                [:div {:class "col-sm-8"}
+                [:div {:class "col-sm-6"}
                  [:h3 "Workflow"]
                  ;; If the missing-view parameter is present, then the user with read-only access is
                  ;; trying to look at a view that doesn't exist:
@@ -631,37 +631,39 @@
                 ;; Render the Version Control section:
                 ;; TODO: Right now this section is just a mock-up. The functionality for each
                 ;; button needs to be implemented.
-                [:div {:class "col-sm-4"}
+                [:div {:class "col-sm-6"}
                  [:h3 "Version Control"]
-                 [:div {:class "btn-group-vertical" :role "group"}
-                  [:a {:href "" :class "btn btn-sm btn-success mb-2"
-                       :data-toggle "tooltip"
-                       :title "Show which files have changed since the last commit"}
-                   "Show branch status"]
-                  [:a {:href "" :class "btn btn-sm btn-success mb-2"
-                       :data-toggle "tooltip"
-                       :title "Show changes to tracked files since the last commit"}
-                   "Show file differences"]
-                  [:a {:href "" :class "btn btn-sm btn-success mb-2"
-                       :data-toggle "tooltip"
-                       :title "Fetch the latest changes from GitHub"}
-                   "Fetch GitHub updates"]
-                  [:a {:href "" :class "btn btn-sm btn-warning mb-2"
-                       :data-toggle "tooltip"
-                       :title "Update this branch with the latest changes from GitHub"}
-                   "Pull GitHub updates"]
-                  [:a {:href "" :class "btn btn-sm btn-warning mb-2"
-                       :data-toggle "tooltip"
-                       :title "Commit your changes locally"}
-                   "Commit changes"]
-                  [:a {:href "" :class "btn btn-sm btn-warning mb-2"
-                       :data-toggle "tooltip"
-                       :title "Update your last commit with new changes"}
-                   "Amend last commit"]
-                  [:a {:href "" :class "btn btn-sm btn-danger mb-2"
-                       :data-toggle "tooltip"
-                       :title "Push your latest local commits to GitHub"}
-                   "Push commit(s)"]]]]
+                 [:table {:class "table table-borderless table-sm"}
+                  [:tr
+                   [:td
+                    [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Status"]]
+                   [:td "Show which files have changed since the last commit"]]
+                  [:tr
+                   [:td
+                    [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Diff"]]
+                   [:td "Show changes to tracked files since the last commit"]]
+                  [:tr
+                   [:td
+                    [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Fetch"]]
+                   [:td "Fetch the latest changes from GitHub"]]
+                  [:tr
+                   [:td
+                    [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Pull"]]
+                   [:td "Update this branch with the latest changes from GitHub"]]
+                  [:tr
+                   [:td
+                    [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Commit"]]
+                   [:td "Commit your changes locally"]]
+                  [:tr
+                   [:td
+                    [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Ammend"]]
+                   [:td "Update your last commit with new changes"]]
+                  [:tr
+                   [:td
+                    [:a {:href "" :class "btn btn-sm btn-danger btn-block"} "Push"]]
+                   [:td "Push your latest local commit(s) to GitHub"]]]]]
+
+               [:hr {:class "line1"}]
 
                [:div
                 [:h3 "Console"]
