@@ -1,4 +1,4 @@
-(ns droid.github-api
+(ns droid.github
   (:require [clojure.string :as string]
             [tentacles.core :refer [api-call]]
             [tentacles.pulls :refer [pulls]]
