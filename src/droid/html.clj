@@ -612,22 +612,60 @@
                [:small [:p {:class "mt-n2"}
                         (str " (" (branch-status-summary project-name branch-name)  ")")]]
 
-               [:h3 "Workflow"]
-               ;; If the missing-view parameter is present, then the user with read-only access is
-               ;; trying to look at a view that doesn't exist:
-               (cond
-                 (not (nil? missing-view))
-                 (notify-missing-view branch view-path)
+               [:div {:class "row"}
+                [:div {:class "col-sm-8"}
+                 [:h3 "Workflow"]
+                 ;; If the missing-view parameter is present, then the user with read-only access is
+                 ;; trying to look at a view that doesn't exist:
+                 (cond
+                   (not (nil? missing-view))
+                   (notify-missing-view branch view-path)
 
-                 (not (nil? confirm-update))
-                 (prompt-to-update-view branch view-path))
+                   (not (nil? confirm-update))
+                   (prompt-to-update-view branch view-path))
 
-               ;; Render the Workflow HTML from the Makefile:
-               (or (:html Makefile)
-                   [:ul [:li "No workflow found"]])
+                 ;; Render the Workflow HTML from the Makefile:
+                 (or (:html Makefile)
+                     [:ul [:li "No workflow found"]])]
 
-               [:h3 "Console"]
-               (render-console branch params)]]}))
+                ;; Render the Version Control section:
+                ;; TODO: Right now this section is just a mock-up. The functionality for each
+                ;; button needs to be implemented.
+                [:div {:class "col-sm-4"}
+                 [:h3 "Version Control"]
+                 [:div {:class "btn-group-vertical" :role "group"}
+                  [:a {:href "" :class "btn btn-sm btn-success mb-2"
+                       :data-toggle "tooltip"
+                       :title "Show which files have changed since the last commit"}
+                   "Show branch status"]
+                  [:a {:href "" :class "btn btn-sm btn-success mb-2"
+                       :data-toggle "tooltip"
+                       :title "Show changes to tracked files since the last commit"}
+                   "Show file differences"]
+                  [:a {:href "" :class "btn btn-sm btn-success mb-2"
+                       :data-toggle "tooltip"
+                       :title "Fetch the latest changes from GitHub"}
+                   "Fetch GitHub updates"]
+                  [:a {:href "" :class "btn btn-sm btn-warning mb-2"
+                       :data-toggle "tooltip"
+                       :title "Update this branch with the latest changes from GitHub"}
+                   "Pull GitHub updates"]
+                  [:a {:href "" :class "btn btn-sm btn-warning mb-2"
+                       :data-toggle "tooltip"
+                       :title "Commit your changes locally"}
+                   "Commit changes"]
+                  [:a {:href "" :class "btn btn-sm btn-warning mb-2"
+                       :data-toggle "tooltip"
+                       :title "Update your last commit with new changes"}
+                   "Amend last commit"]
+                  [:a {:href "" :class "btn btn-sm btn-danger mb-2"
+                       :data-toggle "tooltip"
+                       :title "Push your latest local commits to GitHub"}
+                   "Push commit(s)"]]]]
+
+               [:div
+                [:h3 "Console"]
+                (render-console branch params)]]]}))
 
 (defn view-file
   "View a file in the workspace if it is in the list of allowed views for the branch. If the file is
