@@ -579,11 +579,11 @@
 
      (render-status-bar)
      (if-not (empty? command)
-       [:pre [:code {:class "shell"} (str "$ " command)]]
+       [:pre {:class "bg-light p-2"} [:samp {:class "shell"} (str "$ " command)]]
        [:div])
 
      ;; Render the contents of the console itself:
-     [:pre [:code {:class "shell"} console]]
+     [:pre {:class "bg-light p-2"} [:samp {:class "shell"} console]]
 
      ;; If an action is running and the console has a large number of lines in it, render the status
      ;; bar again:
@@ -643,33 +643,34 @@
                      [:td "Show which files have changed since the last commit"]]
                     [:tr
                      [:td
-                      ;; TODO: Implement this:
-                      [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Diff"]]
+                      [:a {:href (str this-url "?new-action=git-diff")
+                           :class "btn btn-sm btn-success btn-block"} "Diff"]]
                      [:td "Show changes to tracked files since the last commit"]]
                     [:tr
                      [:td
-                      ;; TODO: Implement this:
-                      [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Fetch"]]
+
+                      [:a {:href (str this-url "?new-action=git-fetch")
+                           :class "btn btn-sm btn-success btn-block"} "Fetch"]]
                      [:td "Fetch the latest changes from GitHub"]]
                     [:tr
                      [:td
-                      ;; TODO: Implement this:
-                      [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Pull"]]
+                      [:a {:href (str this-url "?new-action=git-pull")
+                           :class "btn btn-sm btn-warning btn-block"} "Pull"]]
                      [:td "Update this branch with the latest changes from GitHub"]]
                     [:tr
                      [:td
-                      ;; TODO: Implement this:
-                      [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Commit"]]
+                      [:a {:href (str this-url "?new-action=git-commit")
+                           :class "btn btn-sm btn-warning btn-block"} "Commit"]]
                      [:td "Commit your changes locally"]]
                     [:tr
                      [:td
-                      ;; TODO: Implement this:
-                      [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Ammend"]]
+                      [:a {:href (str this-url "?new-action=git-amend")
+                           :class "btn btn-sm btn-warning btn-block"} "Ammend"]]
                      [:td "Update your last commit with new changes"]]
                     [:tr
                      [:td
-                      ;; TODO: Implement this:
-                      [:a {:href "" :class "btn btn-sm btn-danger btn-block"} "Push"]]
+                      [:a {:href (str this-url "?new-action=git-pull")
+                           :class "btn btn-sm btn-danger btn-block"} "Push"]]
                      [:td "Push your latest local commit(s) to GitHub"]]]])]
 
                [:hr {:class "line1"}]

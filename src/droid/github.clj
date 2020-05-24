@@ -8,7 +8,14 @@
 
 (def git-actions
   "The version control operations available in DROID"
-  {:git-status "git -c color.status=false status"})
+  {:git-status "git -c color.status=false status"
+   :git-diff "git diff --no-color"
+   :git-fetch "git fetch"
+   ;; TODO: Implement these:
+   :git-pull ":"
+   :git-commit ":"
+   :git-amend ":"
+   :git-push ":"})
 
 (defn get-project-permissions
   "Given a GitHub login and an OAuth2 token, returns a hash-map specifying the user's permissions
