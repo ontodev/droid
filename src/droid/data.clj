@@ -5,7 +5,7 @@
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
             [droid.dir :refer [get-workspace-dir get-temp-dir]]
-            [droid.github-api :as gh-api]
+            [droid.github :as gh]
             [droid.log :as log]
             [droid.make :as make]))
 
@@ -61,7 +61,7 @@
   [project-name login token]
   (-> project-name
       (keyword)
-      (hash-map (gh-api/get-remote-branches project-name login token))))
+      (hash-map (gh/get-remote-branches project-name login token))))
 
 (defn refresh-remote-branches-for-project
   "Refresh the remote GitHub branches associated with the given project, using the given login and
