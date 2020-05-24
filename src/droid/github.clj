@@ -6,6 +6,10 @@
             [droid.config :refer [config]]
             [droid.log :as log]))
 
+(def git-actions
+  "The version control operations available in DROID"
+  {:git-status "git -c color.status=false status"})
+
 (defn get-project-permissions
   "Given a GitHub login and an OAuth2 token, returns a hash-map specifying the user's permissions
   for every project managed by the server instance."

@@ -7,6 +7,7 @@
             [droid.data :as data]
             [droid.make :as make]
             [droid.dir :refer [get-workspace-dir]]
+            [droid.github :as gh]
             [droid.log :as log]
             [ring.util.codec :as codec]
             [ring.util.response :refer [file-response redirect]]))
@@ -612,6 +613,8 @@
                [:small [:p {:class "mt-n2"}
                         (str " (" (branch-status-summary project-name branch-name)  ")")]]
 
+               [:hr {:class "line1"}]
+
                [:div {:class "row"}
                 [:div {:class "col-sm-6"}
                  [:h3 "Workflow"]
@@ -629,39 +632,45 @@
                      [:ul [:li "No workflow found"]])]
 
                 ;; Render the Version Control section:
-                ;; TODO: Right now this section is just a mock-up. The functionality for each
-                ;; button needs to be implemented.
-                [:div {:class "col-sm-6"}
-                 [:h3 "Version Control"]
-                 [:table {:class "table table-borderless table-sm"}
-                  [:tr
-                   [:td
-                    [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Status"]]
-                   [:td "Show which files have changed since the last commit"]]
-                  [:tr
-                   [:td
-                    [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Diff"]]
-                   [:td "Show changes to tracked files since the last commit"]]
-                  [:tr
-                   [:td
-                    [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Fetch"]]
-                   [:td "Fetch the latest changes from GitHub"]]
-                  [:tr
-                   [:td
-                    [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Pull"]]
-                   [:td "Update this branch with the latest changes from GitHub"]]
-                  [:tr
-                   [:td
-                    [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Commit"]]
-                   [:td "Commit your changes locally"]]
-                  [:tr
-                   [:td
-                    [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Ammend"]]
-                   [:td "Update your last commit with new changes"]]
-                  [:tr
-                   [:td
-                    [:a {:href "" :class "btn btn-sm btn-danger btn-block"} "Push"]]
-                   [:td "Push your latest local commit(s) to GitHub"]]]]]
+                (let [this-url (str "/" project-name "/branches/" branch-name)]
+                  [:div {:class "col-sm-6"}
+                   [:h3 "Version Control"]
+                   [:table {:class "table table-borderless table-sm"}
+                    [:tr
+                     [:td
+                      [:a {:href (str this-url "?new-action=git-status")
+                           :class "btn btn-sm btn-success btn-block"} "Status"]]
+                     [:td "Show which files have changed since the last commit"]]
+                    [:tr
+                     [:td
+                      ;; TODO: Implement this:
+                      [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Diff"]]
+                     [:td "Show changes to tracked files since the last commit"]]
+                    [:tr
+                     [:td
+                      ;; TODO: Implement this:
+                      [:a {:href "" :class "btn btn-sm btn-success btn-block"} "Fetch"]]
+                     [:td "Fetch the latest changes from GitHub"]]
+                    [:tr
+                     [:td
+                      ;; TODO: Implement this:
+                      [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Pull"]]
+                     [:td "Update this branch with the latest changes from GitHub"]]
+                    [:tr
+                     [:td
+                      ;; TODO: Implement this:
+                      [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Commit"]]
+                     [:td "Commit your changes locally"]]
+                    [:tr
+                     [:td
+                      ;; TODO: Implement this:
+                      [:a {:href "" :class "btn btn-sm btn-warning btn-block"} "Ammend"]]
+                     [:td "Update your last commit with new changes"]]
+                    [:tr
+                     [:td
+                      ;; TODO: Implement this:
+                      [:a {:href "" :class "btn btn-sm btn-danger btn-block"} "Push"]]
+                     [:td "Push your latest local commit(s) to GitHub"]]]])]
 
                [:hr {:class "line1"}]
 
@@ -809,12 +818,18 @@
   (letfn [(launch-process [branch]
             (log/info "Starting action" new-action "on branch" branch-name "of project"
                       project-name "for user" (-> request :session :user :login))
-            (let [process (sh/proc "bash" "-c"
+            (let [command (if (some #(= % new-action) (->> gh/git-actions (keys) (map name)))
+                            ;; If the action is a git action then lookup its corresponding command
+                            ;; in the git-actions map:
+                            (-> gh/git-actions (get (keyword new-action)))
+                            ;; Otherwise prefix it with "make ":
+                            (str "make " new-action))
+                  process (sh/proc "bash" "-c"
                                    ;; `exec` is needed here to prevent the make process from
                                    ;; detaching from the parent (since that would make it difficult
                                    ;; to destroy later).
                                    (str
-                                    "exec make " new-action
+                                    "exec " command
                                     " > ../../temp/" branch-name "/console.txt"
                                     " 2>&1")
                                    :dir (get-workspace-dir project-name branch-name))]
@@ -823,7 +838,7 @@
               (Thread/sleep 1000)
               (assoc branch
                      :action new-action
-                     :command (str "make " new-action)
+                     :command command
                      :process process
                      :start-time (System/currentTimeMillis)
                      :cancelled? false
@@ -848,7 +863,7 @@
       ;; always redirect back to the branch page, which results in another call to this function,
       ;; which always calls await when it starts (see above).
       (cond
-        ;; This first condition should not normally be reached, since the action buttons should all
+        ;; This first condition will not normally be hit, since the action buttons should all
         ;; be greyed out for read-only users. But this could nonetheless happen if the user tries
         ;; to manually enter the action url into the browser's address bar, so we guard against that
         ;; here:
@@ -867,7 +882,8 @@
 
         ;; If there is no action to be performed, or the action is unrecognised, then just render
         ;; the page using the existing branch data:
-        (not-any? #(= % new-action) (->> @branch-agent :Makefile :general-actions))
+        (and (not-any? #(= % new-action) (->> @branch-agent :Makefile :general-actions))
+             (not-any? #(= % new-action) (->> gh/git-actions (keys) (map name))))
         (do
           (when-not (nil? new-action)
             (log/warn "Unrecognized action:" new-action))
