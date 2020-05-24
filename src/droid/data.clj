@@ -9,14 +9,6 @@
             [droid.log :as log]
             [droid.make :as make]))
 
-(defn- fail
-  "Logs a fatal error and then exits with a failure status (unless the server is running in
-  development mode."
-  [errorstr]
-  (log/fatal errorstr)
-  (when-not (= (:op-env config) :dev)
-    (System/exit 1)))
-
 (def secrets
   "Secret IDs and passcodes, loaded from environment variables."
   ;; Note that the env package maps an environment variable named ENV_VAR into the keyword
@@ -26,7 +18,7 @@
        (map #(let [val (env %)]
                (if (nil? val)
                  ;; Raise an error if the environment variable isn't found:
-                 (-> % (str " not set") (fail))
+                 (-> % (str " not set") (log/fail))
                  ;; Otherwise return a hashmap with one entry:
                  {% val})))
        ;; Merge the hashmaps corresponding to each environment variable into one hashmap:
@@ -50,6 +42,15 @@
   (io/delete-file topname true)
   (log/debug "Deleted" topname))
 
+(defn- recreate-dir-if-not-exists
+  "If the given directory doesn't exist or it isn't a directory, recreate it."
+  [dirname]
+  (when-not (-> dirname (io/file) (.isDirectory))
+    (log/debug "Recreating directory:" dirname)
+    ;; By setting silent mode to true, the command won't complain if the file doesn't exist:
+    (io/delete-file dirname true)
+    (.mkdir (io/file dirname))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Code related to remote branches (i.e., branches available via GitHub)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -69,7 +70,7 @@
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens}]
   (if (or (nil? token) (nil? login))
-    ;; If the user is not authenticated, log it but just return the branch list as is:
+    ;; If the user is not authenticated, log it but just return the branch collection as is:
     (do
       (log/debug "Ignoring non-authenticated request to refresh remote branches")
       all-current-branches)
@@ -78,8 +79,8 @@
          (merge all-current-branches))))
 
 (def remote-branches
-  "The list of remote branches in GitHub, per project, that are available to be checked out."
-  ;; We begin empty:
+  "The remote branches, per project, that are available to be checked out from GitHub."
+  ;; We begin with an empty hash-map:
   (agent {} :error-mode :continue, :error-handler default-agent-error-handler))
 
 (defn remote-branch-exists?
@@ -93,17 +94,18 @@
        (some #(= branch-name %))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; Code related to local branches (i.e., branches managed by the server)
+;; Code related to local branches (i.e., branches managed by the server in its workspace)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn refresh-local-branch
   "Given a map containing information on the contents of the directory corresponding to the given
   branch in the workspace, generate an updated version of the map by re-reading the directory
-  contents and return it."
+  contents and returning it."
   [{:keys [branch-name project-name] :as branch}]
   (letfn [(parse-git-status [text]
             ;; Parses the porcelain git status short output and extracts the branch tracking info
-            ;; and info about uncommitted files.
+            ;; and info about uncommitted files. Note that this output is guaranteed to be the same
+            ;; across git versions.
             (let [[branch-status & file-statuses] (string/split-lines text)
                   local-remote-re "(((\\S+)\\.{3}(\\S+)|(\\S+)))"
                   ahead-behind-re "( \\[(ahead (\\d+))?(, )?(behind (\\d+))?\\])?"
@@ -157,18 +159,9 @@
               (assoc % :run-time (->> branch :start-time (- (System/currentTimeMillis))))
               %))))))
 
-(defn- recreate-dir-if-not-exists
-  "If the given directory doesn't exist or it isn't a directory, recreate it."
-  [dirname]
-  (when-not (-> dirname (io/file) (.isDirectory))
-    (log/debug "Recreating directory:" dirname)
-    ;; By setting silent mode to true, the command won't complain if the file doesn't exist:
-    (io/delete-file dirname true)
-    (.mkdir (io/file dirname))))
-
 (defn- initialize-branch
-  "Given a branch of a given project, create its temporary directory and console, and initialize
-  and return an agent that will be used to manage access to the branch's resources."
+  "Given the names of a project and branch, create the branch's temporary directory and console, and
+  initialize and return an agent that will be used to manage access to the branch's resources."
   [project-name branch-name]
   (let [project-temp-dir (get-temp-dir project-name)]
     ;; If a subdirectory with the given branch name doesn't exist in the temp dir,
@@ -194,14 +187,15 @@
                          :error-mode :continue
                          :error-handler default-agent-error-handler)))))
 
-(defn- initialize-local-branches-for-project
-  "Initialize a hashmap containing information about the contents and status of every local branch
-  in the workspace of the given project."
+(defn- refresh-local-branches-for-project
+  "Returns a hashmap containing information about the contents and status of every local branch
+  in the workspace of the given project. If the collection of current branches is given, an
+  updated version of it is returned, otherwise a new collection is initialized."
   [project-name & [current-branches]]
   (let [project-workspace-dir (get-workspace-dir project-name)
         project-temp-dir (get-temp-dir project-name)]
     (when-not (->> project-workspace-dir (io/file) (.isDirectory))
-      (fail (str project-workspace-dir " doesn't exist or isn't a directory.")))
+      (log/fail (str project-workspace-dir " doesn't exist or isn't a directory.")))
 
     ;; If the temp directory doesn't exist or it isn't a directory, recreate it:
     (recreate-dir-if-not-exists project-temp-dir)
@@ -231,7 +225,7 @@
        (map #(->> %
                   (keyword)
                   (get all-branches)
-                  (initialize-local-branches-for-project %)))
+                  (refresh-local-branches-for-project %)))
        ;; Merge the sequence of hash-maps generated into a single hash-map:
        (apply merge)
        ;; Merge that hash-map into the hash-map for all projects:
@@ -263,7 +257,8 @@
          (apply merge))))
 
 (defn reset-all-local-branches
-  "Reset all managed branches for all projects."
+  "Reset all managed branches for all projects by killing all managed processes, deleting all
+  temporary data, and reinitializing all local branches."
   [all-branches]
   (log/info "Killing all managed processes ...")
   (kill-all-managed-processes all-branches)
@@ -304,7 +299,7 @@
 
 (defn create-local-branch
   "Creates a local branch with the given branch name in the workspace for the given project, with
-  the branch point given by `branch-from`, initialize it and add it to the list of local branches."
+  the branch point given by `branch-from`, and adds it to the collection of local branches."
   [all-branches project-name branch-name branch-from]
   (let [project-workspace-dir (get-workspace-dir project-name)
         new-branch-dir (str project-workspace-dir branch-name)]
@@ -313,7 +308,7 @@
     (let [cp-process (sh/proc "cp" "-r" (str project-workspace-dir branch-from) new-branch-dir)
           cp-exit-code (future (sh/exit-code cp-process))]
       (if-not (= @cp-exit-code 0)
-        ;; If there was an error in copying, log it and return the branch list unchanged:
+        ;; If there was an error in copying, log it and return the branch collection unchanged:
         (do
           (log/error "Can't create a workspace directory for" branch-name "of project"
                      project-name "due to:" (sh/stream-to-string cp-process :err))

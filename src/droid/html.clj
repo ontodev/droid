@@ -119,7 +119,7 @@
     (assoc branch :cancelled? true)))
 
 (defn- branch-status-summary
-  "Given the name of a project and branch, output a summary string of the branch's commit status
+  "Given the names of a project and branch, output a summary string of the branch's commit status
   as compared with its remote."
   [project-name branch-name]
   (let [branch-agent (-> @data/local-branches
@@ -136,8 +136,8 @@
              ", with uncommitted changes")))))
 
 (defn- render-project-branches
-  "Given the name of a project, render a list of its branches, with links. If the restricted-access?
-  flag is set to true, do not display any links that would result in changes to the workspace."
+  "Given the name of a project, render a list of its branches, with links. If restricted-access? is
+  set to true, do not display any links to actions that would result in changes to the workspace."
   [project-name restricted-access?]
   (let [local-branch-names (->> project-name
                                 (keyword)
@@ -286,8 +286,8 @@
 
                 :else
                 (do
-                  ;; Create the branch, then refresh the local branch list so that it shows up on
-                  ;; the page:
+                  ;; Create the branch, then refresh the local branch collection so that it shows up
+                  ;; on the page:
                   (send-off data/local-branches data/create-local-branch project-name
                             branch-name branch-from)
                   (send-off data/local-branches data/refresh-local-branches [project-name])
@@ -341,7 +341,7 @@
         ;; Otherwise just render the page
         :else
         (do
-          ;; If the list of remote branches is empty (which will be true if the server has
+          ;; If the collection of remote branches is empty (which will be true if the server has
           ;; restarted recently) then refresh it:
           (when (and (->> project-name (keyword) (get @data/remote-branches) (empty?))
                      (not (read-only? request)))
@@ -413,7 +413,7 @@
                             [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
                              "Cancel"]]]]])
 
-                      ;; The main content of the project page is here:
+                      ;; The non-conditional content of the project page is here:
                       [:h3 "Branches"]
                       [:div {:class "pb-2"}
                        [:a {:class "btn btn-sm btn-primary"

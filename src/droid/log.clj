@@ -56,3 +56,11 @@
   [first-word & other-words]
   (when (not (screened-out? :fatal))
     (apply log "FATAL" first-word other-words)))
+
+(defn fail
+  "Logs a fatal error and then exits with a failure status (unless the server is running in
+  development mode."
+  [errorstr]
+  (fatal errorstr)
+  (when-not (= (:op-env config) :dev)
+    (System/exit 1)))
