@@ -46,7 +46,7 @@
   "If the given directory doesn't exist or it isn't a directory, recreate it."
   [dirname]
   (when-not (-> dirname (io/file) (.isDirectory))
-    (log/debug "Recreating directory:" dirname)
+    (log/debug "(Re)creating directory:" dirname)
     ;; By setting silent mode to true, the command won't complain if the file doesn't exist:
     (io/delete-file dirname true)
     (.mkdir (io/file dirname))))
@@ -299,34 +299,35 @@
 
 (defn create-local-branch
   "Creates a local branch with the given branch name in the workspace for the given project, with
-  the branch point given by `branch-from`, and adds it to the collection of local branches."
-  [all-branches project-name branch-name branch-from]
-  (let [project-workspace-dir (get-workspace-dir project-name)
-        new-branch-dir (str project-workspace-dir branch-name)]
-    ;; Recursively copy the directory in the workspace for the branch with the name `branch-from`
-    ;; into a new directory with the name of the new branch:
-    (let [cp-process (sh/proc "cp" "-r" (str project-workspace-dir branch-from) new-branch-dir)
-          cp-exit-code (future (sh/exit-code cp-process))]
-      (if-not (= @cp-exit-code 0)
-        ;; If there was an error in copying, log it and return the branch collection unchanged:
-        (do
-          (log/error "Can't create a workspace directory for" branch-name "of project"
-                     project-name "due to:" (sh/stream-to-string cp-process :err))
-          all-branches)
-        ;; Otherwise, in the newly created directory, call git's command line interface to create
-        ;; a new logical branch with the given name and switch to it:
-        (let [checkout-process (sh/proc "git" "checkout" "-b" branch-name
-                                        :dir new-branch-dir)
-              checkout-exit-code (future (sh/exit-code checkout-process))]
-          ;; If there was an error, log it and return the branches unchanged
-          (if-not (= @checkout-exit-code 0)
-            (do
-              (log/error "Error checking out" branch-name "in project"
-                         project-name "due to:" (sh/stream-to-string cp-process :err))
-              all-branches)
-            ;; Otherwise, initialize the branch and merge it in with the other branches:
-            (merge all-branches
-                   (initialize-branch project-name branch-name))))))))
+  the branch point given by `base-branch-name`, and adds it to the collection of local branches."
+  [all-branches project-name branch-name base-branch-name]
+  (let [base-branch-dir (-> project-name (get-workspace-dir) (str base-branch-name))
+        new-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
+    ;; Recursively copy the base branch's directory to the new branch directory, then in the new
+    ;; directory: Unstage any staged files, revert any modified files to their checked out
+    ;; versions, clean up untracked files and directories, and finally create the new branch and
+    ;; switch to it. If there is an error in any of these commands, then log it, remove the newly
+    ;; created branch directory (if it exists), and return the branch collection unchanged.
+    ;; Otherwise, initialize the new branch and merge it into the branch collection to return.
+    (try
+      (doseq [command [["cp" "-r" base-branch-dir new-branch-dir]
+                       ["git" "reset" :dir new-branch-dir]
+                       ["git" "checkout" "." :dir new-branch-dir]
+                       ["git" "clean" "-f" "-d" :dir new-branch-dir]
+                       ["git" "checkout" "-b" branch-name :dir new-branch-dir]]]
+        (let [process (apply sh/proc command)
+              exit-code (future (sh/exit-code process))]
+          (log/debug "Running" (->> command (string/join " ")))
+          (when-not (= @exit-code 0)
+            (-> (str "Error while running '" command "': ")
+                (str (sh/stream-to-string process :err))
+                (Exception.)
+                (throw)))))
+      (catch Exception e
+        (log/error (.getMessage e))
+        (delete-recursively new-branch-dir)
+        all-branches)))
+  (merge all-branches (initialize-branch project-name branch-name)))
 
 (def local-branches
   "An agent to handle access to the hashmap that contains info on all of the branches managed by the
