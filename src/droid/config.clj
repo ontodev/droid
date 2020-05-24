@@ -21,7 +21,7 @@
                  :test true
                  :prod true}
 
-   ;; List of userids that are allowed to use the application:
+   ;; List of userids that are considered site administrators:
    :site-admin-github-ids {:dev #{""}
                            :test #{""}
                            :prod #{""}}})
