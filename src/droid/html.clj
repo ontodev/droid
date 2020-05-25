@@ -330,6 +330,10 @@
                     "initiated by" (-> request :session :user :login))
           (create-branch project-name to-create))
 
+        ;; TODO: It seems there is a bug: I updated the Makefile's workflow manually, and then hit
+        ;; the Refresh button in DROID. The changes to the workflow should have been reflected on
+        ;; the branch page but they were not.
+
         ;; Refresh local and remote branches:
         (not (nil? refresh))
         (do
@@ -598,7 +602,8 @@
   page corresponding to a branch."
   [{:keys [branch-name project-name Makefile process] :as branch}
    {:keys [params]
-    {:keys [new-action view-path missing-view confirm-kill confirm-update]} :params
+    {:keys [new-action view-path missing-view confirm-kill confirm-update
+            get-commit-msg get-commit-amend-msg]} :params
     :as request}]
   (html-response
    request
@@ -631,47 +636,75 @@
                  (or (:html Makefile)
                      [:ul [:li "No workflow found"]])]
 
-                ;; Render the Version Control section:
-                (let [this-url (str "/" project-name "/branches/" branch-name)]
-                  [:div {:class "col-sm-6"}
-                   [:h3 "Version Control"]
-                   [:table {:class "table table-borderless table-sm"}
-                    [:tr
-                     [:td
-                      [:a {:href (str this-url "?new-action=git-status")
-                           :class "btn btn-sm btn-success btn-block"} "Status"]]
-                     [:td "Show which files have changed since the last commit"]]
-                    [:tr
-                     [:td
-                      [:a {:href (str this-url "?new-action=git-diff")
-                           :class "btn btn-sm btn-success btn-block"} "Diff"]]
-                     [:td "Show changes to tracked files since the last commit"]]
-                    [:tr
-                     [:td
+                (when-not (read-only? request)
+                  ;; Render the Version Control section:
+                  (let [this-url (str "/" project-name "/branches/" branch-name)]
+                    [:div {:class "col-sm-6"}
+                     [:h3 "Version Control"]
 
-                      [:a {:href (str this-url "?new-action=git-fetch")
-                           :class "btn btn-sm btn-success btn-block"} "Fetch"]]
-                     [:td "Fetch the latest changes from GitHub"]]
-                    [:tr
-                     [:td
-                      [:a {:href (str this-url "?new-action=git-pull")
-                           :class "btn btn-sm btn-warning btn-block"} "Pull"]]
-                     [:td "Update this branch with the latest changes from GitHub"]]
-                    [:tr
-                     [:td
-                      [:a {:href (str this-url "?new-action=git-commit")
-                           :class "btn btn-sm btn-warning btn-block"} "Commit"]]
-                     [:td "Commit your changes locally"]]
-                    [:tr
-                     [:td
-                      [:a {:href (str this-url "?new-action=git-amend")
-                           :class "btn btn-sm btn-warning btn-block"} "Ammend"]]
-                     [:td "Update your last commit with new changes"]]
-                    [:tr
-                     [:td
-                      [:a {:href (str this-url "?new-action=git-pull")
-                           :class "btn btn-sm btn-danger btn-block"} "Push"]]
-                     [:td "Push your latest local commit(s) to GitHub"]]]])]
+                     (cond
+                       (not (nil? get-commit-msg))
+                       [:div {:class "alert alert-warning m-1"}
+                        [:form {:action this-url :method "get"}
+                         [:div {:class "form-group row"}
+                          [:div
+                           [:label {:for "commit-msg" :class "m-1 ml-3 mr-3"}
+                            "Enter a commit message"]]
+                          [:div
+                           [:input {:id "commit-msg" :name "commit-msg" :type "text"}]]]
+                         [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
+                         [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
+
+                       (not (nil? get-commit-amend-msg))
+                       [:div {:class "alert alert-warning m-1"}
+                        [:form {:action this-url :method "get"}
+                         [:div {:class "form-group row"}
+                          [:div
+                           ;; TODO: Add in the old commit message as a placeholder.
+                           [:label {:for "commit-amend-msg" :class "m-1 ml-3 mr-3"}
+                            "Enter the new commit message"]]
+                          [:div
+                           [:input {:id "commit-amend-msg" :name "commit-amend-msg" :type "text"}]]]
+                         [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
+                         [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]])
+
+                     [:table {:class "table table-borderless table-sm"}
+                      [:tr
+                       [:td
+                        [:a {:href (str this-url "?new-action=git-status")
+                             :class "btn btn-sm btn-success btn-block"} "Status"]]
+                       [:td "Show which files have changed since the last commit"]]
+                      [:tr
+                       [:td
+                        [:a {:href (str this-url "?new-action=git-diff")
+                             :class "btn btn-sm btn-success btn-block"} "Diff"]]
+                       [:td "Show changes to tracked files since the last commit"]]
+                      [:tr
+                       [:td
+
+                        [:a {:href (str this-url "?new-action=git-fetch")
+                             :class "btn btn-sm btn-success btn-block"} "Fetch"]]
+                       [:td "Fetch the latest changes from GitHub"]]
+                      [:tr
+                       [:td
+                        [:a {:href (str this-url "?new-action=git-pull")
+                             :class "btn btn-sm btn-warning btn-block"} "Pull"]]
+                       [:td "Update this branch with the latest changes from GitHub"]]
+                      [:tr
+                       [:td
+                        [:a {:href (str this-url "?get-commit-msg=1")
+                             :class "btn btn-sm btn-warning btn-block"} "Commit"]]
+                       [:td "Commit your changes locally"]]
+                      [:tr
+                       [:td
+                        [:a {:href (str this-url "?get-commit-amend-msg=1")
+                             :class "btn btn-sm btn-warning btn-block"} "Amend"]]
+                       [:td "Update your last commit with new changes"]]
+                      [:tr
+                       [:td
+                        [:a {:href (str this-url "?new-action=git-pull")
+                             :class "btn btn-sm btn-danger btn-block"} "Push"]]
+                       [:td "Push your latest local commit(s) to GitHub"]]]]))]
 
                [:hr {:class "line1"}]
 
