@@ -11,11 +11,11 @@
   {:git-status "git -c color.status=false status"
    :git-diff "git diff --no-color"
    :git-fetch "git fetch"
+   :git-pull "git pull"
    ;; TODO: Implement these:
-   :git-pull ":"
-   :git-commit ":"
-   :git-amend ":"
-   :git-push ":"})
+   :git-commit "true"
+   :git-amend "true"
+   :git-push "true"})
 
 (defn get-project-permissions
   "Given a GitHub login and an OAuth2 token, returns a hash-map specifying the user's permissions
