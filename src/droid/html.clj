@@ -207,7 +207,7 @@
 
     [:table {:class "table table-sm table-striped table-borderless mt-3"}
      [:thead
-      [:tr [:th] [:th "Name"] [:th "Pull request"] [:th "Git status"]]]
+      [:tr (when-not restricted-access? [:th]) [:th "Name"] [:th "Pull request"] [:th "Git status"]]]
      ;; Render the local master branch first if it is present:
      (->> local-branch-names (filter #(= % "master")) (first) (render-local-branch-row))
      ;; Render all of the other local branches:
