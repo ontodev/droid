@@ -128,7 +128,7 @@
     (send-off branch-agent data/refresh-local-branch)
     (await branch-agent)
     (if-not (-> @branch-agent :git-status :remote)
-      "no remote"
+      [:span {:class "text-muted"} "No remote"]
       (str (-> @branch-agent :git-status :ahead) " ahead, "
            (-> @branch-agent :git-status :behind) " behind '"
            (-> @branch-agent :git-status :remote) "'"
@@ -144,39 +144,107 @@
                                 (get @data/local-branches)
                                 (keys)
                                 (map name))
-        project-url (str "/" project-name)]
-    [:ul
-     (when-not restricted-access?
-       [:li [:a {:href (str project-url "?create=1") :class "badge badge-success"
-                 :data-toggle "tooltip" :title "Create a new local branch"} "Create new"]])
-     (for [local-branch-name (-> local-branch-names (sort) (reverse))]
-       [:li
-        (when-not restricted-access?
-          [:span
-           [:a {:href (str project-url "?to-delete=" local-branch-name)
-                :data-toggle "tooltip" :title "Delete this branch"
-                :class "badge badge-danger"} "Delete"]
-           [:span "&nbsp;"]])
-        [:a {:href (str project-url "/branches/" local-branch-name)}
-         local-branch-name] (str " (" (branch-status-summary project-name local-branch-name)  ")")])
 
-     (when-not restricted-access?
-       (for [remote-branch (-> @data/remote-branches
-                               (get (keyword project-name))
-                               (#(sort-by (juxt :pull-request :name) %))
-                               (reverse))]
-         (when (not-any? #(= (:name remote-branch) %) local-branch-names)
-           [:li
-            [:a {:href (str project-url "?to-checkout=" (:name remote-branch))
-                 :data-toggle "tooltip" :title "Checkout a local copy of this branch"
-                 :class "badge badge-info"} "Checkout"]
-            [:span {:class "ml-1"} (:name remote-branch)]
-            ;; If the remote branch has an open pull request, render a link to it:
-            (let [pr-url (:pull-request remote-branch)]
-              (when-not (nil? pr-url)
-                [:span {:class "ml-1"} "("
-                 [:a {:href pr-url} "Pull request #" (-> pr-url (string/split #"/") (last))]
-                 ")"]))])))]))
+        [org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+
+        project-url (str "/" project-name)
+
+        remote-branches (->> @data/remote-branches
+                             (#(get % (keyword project-name)))
+                             ;; Branches with pull requests get displayed first, otherwise sort by
+                             ;; name. The (juxt) function creates a sequence out of the given fields
+                             ;; corresponding to each of the two entries to compare.
+                             (sort-by (juxt :pull-request :name)
+                                      #(let [pr-order (compare (-> %1 (first) (nil?))
+                                                               (-> %2 (first) (nil?)))
+                                             name-order (compare (second %1)
+                                                                 (second %2))]
+                                         (if (or (< pr-order 0)
+                                                 (and (= pr-order 0) (< name-order 0)))
+                                           ;; -1 signifies that one is "less than" two, 0 that they
+                                           ;; are equal, and 1 that it is "greater than".
+                                           -1
+                                           1))))
+
+        render-pr-link #(let [pr-url (:pull-request %)]
+                          (when-not (nil? pr-url)
+                            [:a {:href pr-url} "#" (-> pr-url (string/split #"/") (last))]))
+
+        render-local-branch-row (fn [branch-name]
+                                  (when branch-name
+                                    [:tr
+                                     (when-not restricted-access?
+                                       [:td
+                                        [:a {:href (str project-url "?to-delete=" branch-name)
+                                             :data-toggle "tooltip" :title "Delete this branch"
+                                             :class "badge badge-danger"} "Delete"]])
+                                     [:td [:a {:href (str project-url "/branches/" branch-name)}
+                                           branch-name]]
+                                     [:td
+                                      (let [remote-branch (->> remote-branches
+                                                               (filter #(= branch-name (:name %)))
+                                                               (first))]
+                                        (when remote-branch
+                                          (render-pr-link remote-branch)))]
+                                     [:td (branch-status-summary project-name branch-name)]]))
+
+        render-remote-branch-row (fn [remote-branch]
+                                   (when-not restricted-access?
+                                     [:tr
+                                      [:td
+                                       [:a {:href (str project-url "?to-checkout="
+                                                       (:name remote-branch))
+                                            :data-toggle "tooltip"
+                                            :title "Checkout a local copy of this branch"
+                                            :class "badge badge-info"} "Checkout"]]
+                                      [:td [:a {:href (->> remote-branch
+                                                           :name
+                                                           (str "https://github.com/" org "/" repo
+                                                                "/tree/"))}
+                                            (:name remote-branch)]]
+                                      [:td (render-pr-link remote-branch)]
+                                      [:td]]))]
+
+    [:table {:class "table table-sm table-striped table-borderless mt-3"}
+     [:thead
+      [:tr [:th] [:th "Name"] [:th "Pull request"] [:th "Git status"]]]
+     ;; Render the local master branch first if it is present:
+     (->> local-branch-names (filter #(= % "master")) (first) (render-local-branch-row))
+     ;; Render all of the other local branches:
+     (for [local-branch-name (->> local-branch-names
+                                  (filter #(not= % "master"))
+                                  ;; Branches with pull requests get displayed first, otherwise sort
+                                  ;; by name.
+                                  (sort (fn [one two]
+                                          (letfn [(pr-nil? [branch-name]
+                                                    (->> remote-branches
+                                                         (filter #(= branch-name (:name %)))
+                                                         (first)
+                                                         :pull-request
+                                                         (nil?)))]
+                                            (let [pr-order (compare (pr-nil? one)
+                                                                    (pr-nil? two))
+                                                  name-order (compare one two)]
+                                              (if (or (< pr-order 0)
+                                                      (and (= pr-order 0) (< name-order 0)))
+                                                ;; -1 signifies that one is "less than" two, 0 that
+                                                ;; they are equal, and 1 that it is "greater than"
+                                                -1
+                                                1))))))]
+
+       (render-local-branch-row local-branch-name))
+
+     ;; Render the master branch if it is present and there is no local copy:
+     (when (not-any? #(= "master" %) local-branch-names)
+       (->> remote-branches
+            (filter #(= (:name %) "master"))
+            (first)
+            (render-remote-branch-row)))
+     ;; Render all of the other remote branches that don't have local copies:
+     (for [remote-branch remote-branches]
+       (when (and (not= (:name remote-branch) "master")
+                  (not-any? #(= (:name remote-branch) %) local-branch-names))
+         (render-remote-branch-row remote-branch)))]))
 
 (defn render-404
   "Render the 404 - not found page"
@@ -419,8 +487,14 @@
                        [:a {:class "btn btn-sm btn-primary"
                             :href (str this-url "?refresh=1")
                             :data-toggle "tooltip"
-                            :title "Refresh the list of available local and remote branches"}
-                        "Refresh"]]
+                            :title "Refresh available local and remote branches"}
+                        "Refresh"]
+                       (when-not (read-only? request)
+                         [:a {:class "btn btn-sm btn-success ml-2"
+                              :href (str this-url "?create=1")
+                              :data-toggle "tooltip"
+                              :title "Create a new local branch"}
+                          "Create new"])]
                       (->> request (read-only?) (render-project-branches project-name))]}))))))
 
 (defn- render-status-bar-for-action
@@ -610,7 +684,7 @@
               [:div
                [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
                [:small [:p {:class "mt-n2"}
-                        (str " (" (branch-status-summary project-name branch-name)  ")")]]
+                        (branch-status-summary project-name branch-name)]]
 
                [:h3 "Workflow"]
                ;; If the missing-view parameter is present, then the user with read-only access is
