@@ -2,11 +2,12 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [hiccup.page :refer [html5]]
+            [hickory.core :as hickory]
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
             [droid.data :as data]
             [droid.make :as make]
-            [droid.dir :refer [get-workspace-dir]]
+            [droid.dir :refer [get-workspace-dir get-temp-dir]]
             [droid.github :as gh]
             [droid.log :as log]
             [ring.util.codec :as codec]
@@ -627,7 +628,7 @@
 (defn- render-console
   "Given some branch data, and a number of parameters related to an action or a view, render
   the console on the branch page."
-  [{:keys [action start-time command exit-code console] :as branch}
+  [{:keys [branch-name project-name action start-time command exit-code console] :as branch}
    {:keys [new-action view-path confirm-update confirm-kill] :as params}]
   (letfn [(render-status-bar []
             (cond
@@ -640,28 +641,51 @@
               (prompt-to-kill-for-action branch new-action)
 
               :else
-              (render-status-bar-for-action branch)))]
+              (render-status-bar-for-action branch)))
 
-    ;; Render the part of the branch corresponding to the console:
+          (render-console-text []
+            ;; Look for ANSI escape sequences in the console text. (see:
+            ;; https://en.wikipedia.org/wiki/ANSI_escape_code#Escape_sequences). If any are found,
+            ;; then launch the python program `ansi2html` in the shell to convert them all to HTML.
+            ;; Either way wrap the console text in a pre-formatted block and return it.
+            (let [escape-index (->> 0x1B (char) (string/index-of console))
+                  ansi-commands? (and escape-index (->> escape-index (inc) (nth console) (int)
+                                                        (#(and (>= % 0x40) (<= % 0x5F)))))
+                  render-pre-block (fn [arg]
+                                     [:pre {:class "bg-light p-2"} [:samp {:class "shell"} arg]])]
+              (if-not ansi-commands?
+                (render-pre-block console)
+                (let [process (do (log/debug "Colourizing console using ansi2html ...")
+                                  (sh/proc "bash" "-c" (str "exec ansi2html -i < console.txt")
+                                           :dir (get-temp-dir project-name branch-name)))
+                      ansi2html-exit-code (future (sh/exit-code process))
+                      colourized-console (if (not= @ansi2html-exit-code 0)
+                                           (do (log/error "Unable to colourize console.")
+                                               console)
+                                           (->> (sh/stream-to-string process :out)
+                                                (hickory/parse-fragment)
+                                                (map hickory/as-hiccup)))]
+                  (render-pre-block colourized-console)))))]
+
     [:div {:id "console"}
      (if (nil? exit-code)
        ;; If no process is running or has been run, then ask the user to kick one off:
        [:p "Press a button above to execute an action."]
-       ;; Otherwise render the info for the action, the status bar, and the literal command
-       ;; corresponding to it:
+       ;; Otherwise render the info for the action that was run last:
        (let [readable-start (->> start-time (java.time.Instant/ofEpochMilli) (str))]
          [:div
           [:p {:class "alert alert-info"} (str "Action " action " started at ")
            [:span {:class "date"} readable-start] " ("
            [:span {:class "since"} readable-start] ")"]]))
 
+     ;; The status bar and command:
      (render-status-bar)
      (if-not (empty? command)
        [:pre {:class "bg-light p-2"} [:samp {:class "shell"} (str "$ " command)]]
        [:div])
 
-     ;; Render the contents of the console itself:
-     [:pre {:class "bg-light p-2"} [:samp {:class "shell"} console]]
+     ;; The actual console text:
+     (render-console-text)
 
      ;; If an action is running and the console has a large number of lines in it, render the status
      ;; bar again:

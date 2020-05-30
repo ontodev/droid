@@ -8,6 +8,7 @@
                  [compojure "1.6.1"]
                  [environ "1.1.0"]
                  [hiccup "1.0.5"]
+                 [hickory "0.7.1"]
                  [http-kit "2.3.0"]
                  [jdbc-ring-session "1.3"]
                  [markdown-to-hiccup "0.6.2"]

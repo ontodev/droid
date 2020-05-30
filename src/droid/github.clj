@@ -8,8 +8,8 @@
 
 (def git-actions
   "The version control operations available in DROID"
-  {:git-status "git -c color.status=false status"
-   :git-diff "git diff --no-color"
+  {:git-status "git status"
+   :git-diff "git diff"
    :git-fetch "git fetch"
    :git-pull "git pull"
    ;; TODO: Implement these:
