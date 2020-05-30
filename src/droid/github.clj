@@ -13,6 +13,8 @@
    :git-diff "git diff"
    :git-fetch "git fetch"
    :git-pull "git pull"
+   ;; TODO: Implement this one:
+   :git-push "true"
    :git-commit (fn [encoded-commit-msg]
                  ;; A function to generate a command line string that will commit to git with the
                  ;; given URL encoded commit message.
@@ -20,10 +22,15 @@
                    (if (and (not (nil? commit-msg))
                             (-> commit-msg (string/trim) (not-empty)))
                      (format "git commit --all -m \"%s\"" commit-msg)
-                     (log/error "Received empty commit message"))))
-   ;; TODO: Implement these:
-   :git-amend "true"
-   :git-push "true"})
+                     (log/error "Received empty commit message for commit"))))
+   :git-amend (fn [encoded-commit-msg]
+                ;; A function to generate a command line string that will ammend the last commit to
+                ;; git with the given URL encoded commit message.
+                (let [commit-msg (codec/url-decode encoded-commit-msg)]
+                  (if (and (not (nil? commit-msg))
+                           (-> commit-msg (string/trim) (not-empty)))
+                    (format "git commit --all --amend -m \"%s\"" commit-msg)
+                    (log/error "Received empty commit message for commit amendment"))))})
 
 (defn get-project-permissions
   "Given a GitHub login and an OAuth2 token, returns a hash-map specifying the user's permissions
