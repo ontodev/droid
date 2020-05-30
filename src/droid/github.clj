@@ -1,5 +1,6 @@
 (ns droid.github
   (:require [clojure.string :as string]
+            [ring.util.codec :as codec]
             [tentacles.core :refer [api-call]]
             [tentacles.pulls :refer [pulls]]
             [tentacles.repos :refer [branches]]
@@ -12,8 +13,15 @@
    :git-diff "git diff"
    :git-fetch "git fetch"
    :git-pull "git pull"
+   :git-commit (fn [encoded-commit-msg]
+                 ;; A function to generate a command line string that will commit to git with the
+                 ;; given URL encoded commit message.
+                 (let [commit-msg (codec/url-decode encoded-commit-msg)]
+                   (if (and (not (nil? commit-msg))
+                            (-> commit-msg (string/trim) (not-empty)))
+                     (format "git commit --all -m \"%s\"" commit-msg)
+                     (log/error "Received empty commit message"))))
    ;; TODO: Implement these:
-   :git-commit "true"
    :git-amend "true"
    :git-push "true"})
 
