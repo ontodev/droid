@@ -16,6 +16,33 @@ For OAuth2 integration to work properly, DROID assumes that the following enviro
 
 These should match the client id and secret of your GitHub OAuth2 app.
 
+## Python virtual environment and `ansi2html`
+
+DROID is implemented using Clojure, but uses the Python library [ansi2html](https://pypi.org/project/ansi2html/) to colourize console output. For this to work you must set up a python virtual environment in DROID's root directory and install the dependencies specified in `requirements.txt` in the same directory. Once this is done, DROID should be run only after activating the virtual environment.
+
+1. Create the virtual environment:
+
+   ```
+   cd <droid-root>
+   python3 -m venv _venv
+   ```
+
+2. Activate the virtual environment:
+
+   ```
+   source _venv/bin/activate
+   ```
+
+You should now see the string "`(_venv)`" prefixed to your command-line prompt, indicating that you have successfully activated the virtual environment.
+
+3. Install the dependencies in `requirements.txt`:
+
+   ```
+   pip install -r requirements.txt
+   ```
+
+Steps 1 and 3 only need to be run once at installation time. Step 2, activating the Python virtual environment, is required in order for colourization to work. You must make sure that the virtual environment is active (as indicated by the string "`(_venv)`" at the beginning of your command prompt) before starting DROID.
+
 ## Configuration file
 
 DROID assumes that a file called 'config.edn' exists in DROID's root directory with the following contents:
