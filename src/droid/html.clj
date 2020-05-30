@@ -1,6 +1,7 @@
 (ns droid.html
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
+            [clojure.test :refer [function?]]
             [hiccup.page :refer [html5]]
             [hickory.core :as hickory]
             [me.raynes.conch.low-level :as sh]
@@ -399,10 +400,6 @@
                     "initiated by" (-> request :session :user :login))
           (create-branch project-name to-create))
 
-        ;; TODO: It seems there is a bug: I updated the Makefile's workflow manually, and then hit
-        ;; the Refresh button in DROID. The changes to the workflow should have been reflected on
-        ;; the branch page but they were not.
-
         ;; Refresh local and remote branches:
         (not (nil? refresh))
         (do
@@ -543,7 +540,7 @@
   "Given some branch data, and a new action to run, render an alert box asking the user to confirm
   that (s)he would like to kill the currently running process."
   [{:keys [branch-name project-name action] :as branch}
-   new-action]
+   new-action new-action-param]
   (let [branch-url (str "/" project-name "/branches/" branch-name)]
     [:div {:class "alert alert-warning"}
      [:p [:span {:class "text-monospace font-weight-bold"} action]
@@ -553,7 +550,13 @@
      [:span [:a {:class "btn btn-secondary btn-sm" :href branch-url} "No, do nothing"]]
      [:span {:class "col-sm-1"}]
      [:span [:a {:class "btn btn-danger btn-sm"
-                 :href (str branch-url "?new-action=" new-action "&force-kill=1")}
+                 :href (-> branch-url
+                           (str "?new-action=" new-action)
+                           (str (when new-action-param
+                                  (->> new-action-param
+                                       (codec/url-encode)
+                                       (str "&new-action-param="))))
+                           (str "&force-kill=1"))}
              "Yes, go ahead"]]]))
 
 (defn- view-exists?
@@ -629,7 +632,7 @@
   "Given some branch data, and a number of parameters related to an action or a view, render
   the console on the branch page."
   [{:keys [branch-name project-name action start-time command exit-code console] :as branch}
-   {:keys [new-action view-path confirm-update confirm-kill] :as params}]
+   {:keys [new-action new-action-param view-path confirm-update confirm-kill] :as params}]
   (letfn [(render-status-bar []
             (cond
               (and (not (nil? view-path))
@@ -638,7 +641,7 @@
 
               (and (not (nil? new-action))
                    (not (nil? confirm-kill)))
-              (prompt-to-kill-for-action branch new-action)
+              (prompt-to-kill-for-action branch new-action new-action-param)
 
               :else
               (render-status-bar-for-action branch)))
@@ -700,115 +703,129 @@
   page corresponding to a branch."
   [{:keys [branch-name project-name Makefile process] :as branch}
    {:keys [params]
-    {:keys [new-action view-path missing-view confirm-kill confirm-update
-            get-commit-msg get-commit-amend-msg]} :params
+    {:keys [new-action new-action-param view-path missing-view confirm-kill confirm-update
+            get-commit-msg get-commit-amend-msg commit-msg]} :params
     :as request}]
-  (html-response
-   request
-   {:title (-> config :projects (get project-name) :project-title
-               (str " -- " branch-name))
-    :heading (str "DROID for "
-                  (-> config :projects (get project-name) :project-title))
-    :content [:div
-              [:p (-> config :projects (get project-name) :project-description)]
-              [:div
-               [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
-               [:small [:p {:class "mt-n2"}
-                        (branch-status-summary project-name branch-name)]]
+  (let [this-url (str "/" project-name "/branches/" branch-name)]
+    (if (and (not (read-only? request))
+             (not (nil? commit-msg))
+             (-> commit-msg (string/trim) (not-empty)))
+      ;; If this is a request to commit to git, then redirect back to the page with a new action
+      ;; corresponding to it. Note that such requests that do not include a commit message are
+      ;; silently ignored.
+      (let [encoded-commit-msg (-> commit-msg (string/replace #"\"" "'") (codec/url-encode))]
+        (log/info "User" (-> request :session :user :login)
+                  "added local commit to branch" branch-name "in project"
+                  project-name "with commit message:" commit-msg)
+        (-> this-url
+            (str "?new-action=git-commit&new-action-param=" encoded-commit-msg)
+            (redirect)))
+      ;; Otherwise process the request as normal:
+      (html-response
+       request
+       {:title (-> config :projects (get project-name) :project-title
+                   (str " -- " branch-name))
+        :heading (str "DROID for "
+                      (-> config :projects (get project-name) :project-title))
+        :content [:div
+                  [:p (-> config :projects (get project-name) :project-description)]
+                  [:div
+                   [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
+                   [:small [:p {:class "mt-n2"}
+                            (branch-status-summary project-name branch-name)]]
 
-               [:hr {:class "line1"}]
+                   [:hr {:class "line1"}]
 
-               [:div {:class "row"}
-                [:div {:class "col-sm-6"}
-                 [:h3 "Workflow"]
-                 ;; If the missing-view parameter is present, then the user with read-only access is
-                 ;; trying to look at a view that doesn't exist:
-                 (cond
-                   (not (nil? missing-view))
-                   (notify-missing-view branch view-path)
-
-                   (not (nil? confirm-update))
-                   (prompt-to-update-view branch view-path))
-
-                 ;; Render the Workflow HTML from the Makefile:
-                 (or (:html Makefile)
-                     [:ul [:li "No workflow found"]])]
-
-                (when-not (read-only? request)
-                  ;; Render the Version Control section:
-                  (let [this-url (str "/" project-name "/branches/" branch-name)]
+                   [:div {:class "row"}
                     [:div {:class "col-sm-6"}
-                     [:h3 "Version Control"]
-
+                     [:h3 "Workflow"]
+                     ;; If the missing-view parameter is present, then the user with read-only access
+                     ;; is trying to look at a view that doesn't exist:
                      (cond
-                       (not (nil? get-commit-msg))
-                       [:div {:class "alert alert-warning m-1"}
-                        [:form {:action this-url :method "get"}
-                         [:div {:class "form-group row"}
-                          [:div
-                           [:label {:for "commit-msg" :class "m-1 ml-3 mr-3"}
-                            "Enter a commit message"]]
-                          [:div
-                           [:input {:id "commit-msg" :name "commit-msg" :type "text"}]]]
-                         [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
-                         [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
+                       (not (nil? missing-view))
+                       (notify-missing-view branch view-path)
 
-                       (not (nil? get-commit-amend-msg))
-                       [:div {:class "alert alert-warning m-1"}
-                        [:form {:action this-url :method "get"}
-                         [:div {:class "form-group row"}
-                          [:div
-                           ;; TODO: Add in the old commit message as a placeholder.
-                           [:label {:for "commit-amend-msg" :class "m-1 ml-3 mr-3"}
-                            "Enter the new commit message"]]
-                          [:div
-                           [:input {:id "commit-amend-msg" :name "commit-amend-msg" :type "text"}]]]
-                         [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
-                         [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]])
+                       (not (nil? confirm-update))
+                       (prompt-to-update-view branch view-path))
 
-                     [:table {:class "table table-borderless table-sm"}
-                      [:tr
-                       [:td
-                        [:a {:href (str this-url "?new-action=git-status")
-                             :class "btn btn-sm btn-success btn-block"} "Status"]]
-                       [:td "Show which files have changed since the last commit"]]
-                      [:tr
-                       [:td
-                        [:a {:href (str this-url "?new-action=git-diff")
-                             :class "btn btn-sm btn-success btn-block"} "Diff"]]
-                       [:td "Show changes to tracked files since the last commit"]]
-                      [:tr
-                       [:td
+                     ;; Render the Workflow HTML from the Makefile:
+                     (or (:html Makefile)
+                         [:ul [:li "No workflow found"]])]
 
-                        [:a {:href (str this-url "?new-action=git-fetch")
-                             :class "btn btn-sm btn-success btn-block"} "Fetch"]]
-                       [:td "Fetch the latest changes from GitHub"]]
-                      [:tr
-                       [:td
-                        [:a {:href (str this-url "?new-action=git-pull")
-                             :class "btn btn-sm btn-warning btn-block"} "Pull"]]
-                       [:td "Update this branch with the latest changes from GitHub"]]
-                      [:tr
-                       [:td
-                        [:a {:href (str this-url "?get-commit-msg=1")
-                             :class "btn btn-sm btn-warning btn-block"} "Commit"]]
-                       [:td "Commit your changes locally"]]
-                      [:tr
-                       [:td
-                        [:a {:href (str this-url "?get-commit-amend-msg=1")
-                             :class "btn btn-sm btn-warning btn-block"} "Amend"]]
-                       [:td "Update your last commit with new changes"]]
-                      [:tr
-                       [:td
-                        [:a {:href (str this-url "?new-action=git-pull")
-                             :class "btn btn-sm btn-danger btn-block"} "Push"]]
-                       [:td "Push your latest local commit(s) to GitHub"]]]]))]
+                    ;; Render the Version Control section if the user has sufficient permission:
+                    (when-not (read-only? request)
+                      [:div {:class "col-sm-6"}
+                       [:h3 "Version Control"]
 
-               [:hr {:class "line1"}]
+                       (cond
+                         (not (nil? get-commit-msg))
+                         [:div {:class "alert alert-warning m-1"}
+                          [:form {:action this-url :method "get"}
+                           [:div {:class "form-group row"}
+                            [:div
+                             [:label {:for "commit-msg" :class "m-1 ml-3 mr-3"}
+                              "Enter a commit message"]]
+                            [:div
+                             [:input {:id "commit-msg" :name "commit-msg" :type "text"}]]]
+                           [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
+                           [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
 
-               [:div
-                [:h3 "Console"]
-                (render-console branch params)]]]}))
+                         (not (nil? get-commit-amend-msg))
+                         [:div {:class "alert alert-warning m-1"}
+                          [:form {:action this-url :method "get"}
+                           [:div {:class "form-group row"}
+                            [:div
+                             ;; TODO: Add in the old commit message as a placeholder.
+                             [:label {:for "commit-amend-msg" :class "m-1 ml-3 mr-3"}
+                              "Enter the new commit message"]]
+                            [:div
+                             [:input {:id "commit-amend-msg" :name "commit-amend-msg" :type "text"}]]]
+                           [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
+                           [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]])
+
+                       [:table {:class "table table-borderless table-sm"}
+                        [:tr
+                         [:td
+                          [:a {:href (str this-url "?new-action=git-status")
+                               :class "btn btn-sm btn-success btn-block"} "Status"]]
+                         [:td "Show which files have changed since the last commit"]]
+                        [:tr
+                         [:td
+                          [:a {:href (str this-url "?new-action=git-diff")
+                               :class "btn btn-sm btn-success btn-block"} "Diff"]]
+                         [:td "Show changes to tracked files since the last commit"]]
+                        [:tr
+                         [:td
+
+                          [:a {:href (str this-url "?new-action=git-fetch")
+                               :class "btn btn-sm btn-success btn-block"} "Fetch"]]
+                         [:td "Fetch the latest changes from GitHub"]]
+                        [:tr
+                         [:td
+                          [:a {:href (str this-url "?new-action=git-pull")
+                               :class "btn btn-sm btn-warning btn-block"} "Pull"]]
+                         [:td "Update this branch with the latest changes from GitHub"]]
+                        [:tr
+                         [:td
+                          [:a {:href (str this-url "?get-commit-msg=1")
+                               :class "btn btn-sm btn-warning btn-block"} "Commit"]]
+                         [:td "Commit your changes locally"]]
+                        [:tr
+                         [:td
+                          [:a {:href (str this-url "?get-commit-amend-msg=1")
+                               :class "btn btn-sm btn-warning btn-block"} "Amend"]]
+                         [:td "Update your last commit with new changes"]]
+                        [:tr
+                         [:td
+                          [:a {:href (str this-url "?new-action=git-pull")
+                               :class "btn btn-sm btn-danger btn-block"} "Push"]]
+                         [:td "Push your latest local commit(s) to GitHub"]]]])]]
+
+                  [:hr {:class "line1"}]
+
+                  [:div
+                   [:h3 "Console"]
+                   (render-console branch params)]]}))))
 
 (defn view-file
   "View a file in the workspace if it is in the list of allowed views for the branch. If the file is
@@ -945,36 +962,48 @@
 (defn hit-branch
   "Render a branch, possibly performing an action on it in the process. Note that this function will
   call the branch's agent to potentially modify the branch."
-  [{{:keys [project-name branch-name new-action confirm-kill force-kill]} :params
+  [{{:keys [project-name branch-name new-action new-action-param confirm-kill force-kill]} :params
     :as request}]
   (letfn [(launch-process [branch]
             (log/info "Starting action" new-action "on branch" branch-name "of project"
-                      project-name "for user" (-> request :session :user :login))
+                      project-name "for user" (-> request :session :user :login)
+                      (when new-action-param (str "with parameter " new-action-param)))
             (let [command (if (some #(= % new-action) (->> gh/git-actions (keys) (map name)))
                             ;; If the action is a git action then lookup its corresponding command
-                            ;; in the git-actions map:
-                            (-> gh/git-actions (get (keyword new-action)))
+                            ;; in the git-actions map. If the action returned is a function, then
+                            ;; call it on the new-action-param parameter to generate the command
+                            ;; string, otherwise use it as is.
+                            (-> gh/git-actions
+                                (get (keyword new-action))
+                                (#(if (function? %)
+                                    (% new-action-param)
+                                    %)))
                             ;; Otherwise prefix it with "make ":
                             (str "make " new-action))
-                  process (sh/proc "bash" "-c"
-                                   ;; `exec` is needed here to prevent the make process from
-                                   ;; detaching from the parent (since that would make it difficult
-                                   ;; to destroy later).
-                                   (str
-                                    "exec " command
-                                    " > ../../temp/" branch-name "/console.txt"
-                                    " 2>&1")
-                                   :dir (get-workspace-dir project-name branch-name))]
-              ;; After spawning the process, add a pointer to it to the branch as
-              ;; well as its meta-information:
+                  process (when-not (nil? command)
+                            (sh/proc "bash" "-c"
+                                     ;; `exec` is needed here to prevent the make process from
+                                     ;; detaching from the parent (since that would make it
+                                     ;; difficult to destroy later).
+                                     (str
+                                      "exec " command
+                                      " > ../../temp/" branch-name "/console.txt"
+                                      " 2>&1")
+                                     :dir (get-workspace-dir project-name branch-name)))]
+              ;; Sleep briefly:
               (Thread/sleep 1000)
-              (assoc branch
-                     :action new-action
-                     :command command
-                     :process process
-                     :start-time (System/currentTimeMillis)
-                     :cancelled? false
-                     :exit-code (future (sh/exit-code process)))))]
+              (if (nil? command)
+                ;; If the command is nil just return the branch back unchanged:
+                branch
+                ;; Otherwise add a pointer to the spawned process to the branch as
+                ;; well as the command name and other meta-information:
+                (assoc branch
+                       :action new-action
+                       :command command
+                       :process process
+                       :start-time (System/currentTimeMillis)
+                       :cancelled? false
+                       :exit-code (future (sh/exit-code process))))))]
 
     (let [branch-key (keyword branch-name)
           project-key (keyword project-name)
@@ -1046,7 +1075,12 @@
           ;; and include the confirm-kill parameter which will be used during rendering to display
           ;; a prompt.
           :else
-          (redirect (str this-url "?new-action=" new-action "&confirm-kill=1#console")))
+          (-> this-url
+              (str "?new-action=" new-action)
+              (str (when new-action-param
+                     (->> new-action-param (codec/url-encode) (str "&new-action-param="))))
+              (str "&confirm-kill=1#console")
+              (redirect)))
 
         ;; If there is an action to be performed and there is no currently running process, then
         ;; simply launch the new process:
