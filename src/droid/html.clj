@@ -704,23 +704,46 @@
   [{:keys [branch-name project-name Makefile process] :as branch}
    {:keys [params]
     {:keys [new-action new-action-param view-path missing-view confirm-kill confirm-update
-            get-commit-msg get-commit-amend-msg commit-msg]} :params
+            get-commit-msg get-commit-amend-msg commit-msg commit-amend-msg]} :params
     :as request}]
-  (let [this-url (str "/" project-name "/branches/" branch-name)]
-    (if (and (not (read-only? request))
-             (not (nil? commit-msg))
-             (-> commit-msg (string/trim) (not-empty)))
-      ;; If this is a request to commit to git, then redirect back to the page with a new action
-      ;; corresponding to it. Note that such requests that do not include a commit message are
-      ;; silently ignored.
+  (let [this-url (str "/" project-name "/branches/" branch-name)
+        get-last-commit-msg #(let [process (sh/proc "git" "show" "-s" "--format=%s"
+                                                    :dir (get-workspace-dir project-name
+                                                                            branch-name))
+                                   exit-code (future (sh/exit-code process))]
+                               (if-not (= 0 @exit-code)
+                                 (do (log/error "Unable to retrieve previous commit message")
+                                     "")
+                                 (sh/stream-to-string process :out)))]
+    (cond
+      ;; A brand new commit has been requested:
+      (and (not (read-only? request))
+           (not (nil? commit-msg))
+           (-> commit-msg (string/trim) (not-empty)))
       (let [encoded-commit-msg (-> commit-msg (string/replace #"\"" "'") (codec/url-encode))]
         (log/info "User" (-> request :session :user :login)
-                  "added local commit to branch" branch-name "in project"
+                  "adding local commit to branch" branch-name "in project"
                   project-name "with commit message:" commit-msg)
         (-> this-url
             (str "?new-action=git-commit&new-action-param=" encoded-commit-msg)
             (redirect)))
+
+      ;; An amendment to the last commit has been requested:
+      (and (not (read-only? request))
+           (not (nil? commit-amend-msg))
+           (-> commit-amend-msg (string/trim) (not-empty)))
+      (let [encoded-commit-amend-msg (-> commit-amend-msg
+                                         (string/replace #"\"" "'")
+                                         (codec/url-encode))]
+        (log/info "User" (-> request :session :user :login)
+                  "amending local commit to branch" branch-name "in project"
+                  project-name "with commit message:" commit-amend-msg)
+        (-> this-url
+            (str "?new-action=git-amend&new-action-param=" encoded-commit-amend-msg)
+            (redirect)))
+
       ;; Otherwise process the request as normal:
+      :else
       (html-response
        request
        {:title (-> config :projects (get project-name) :project-title
@@ -775,12 +798,13 @@
                           [:form {:action this-url :method "get"}
                            [:div {:class "form-group row"}
                             [:div
-                             ;; TODO: Add in the old commit message as a placeholder.
                              [:label {:for "commit-amend-msg" :class "m-1 ml-3 mr-3"}
                               "Enter the new commit message"]]
                             [:div
-                             [:input {:id "commit-amend-msg" :name "commit-amend-msg" :type "text"}]]]
-                           [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
+                             [:input {:id "commit-amend-msg" :name "commit-amend-msg" :type "text"
+                                      ;; Use the previous commit message as the default value:
+                                      :onClick "this.select();" :value (get-last-commit-msg)}]]]
+                           [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Amend"]
                            [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]])
 
                        [:table {:class "table table-borderless table-sm"}
