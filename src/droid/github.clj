@@ -13,8 +13,7 @@
    :git-diff "git diff"
    :git-fetch "git fetch"
    :git-pull "git pull"
-   ;; TODO: Implement this one:
-   :git-push "true"
+   :git-push "git push"
    :git-commit (fn [encoded-commit-msg]
                  ;; A function to generate a command line string that will commit to git with the
                  ;; given URL encoded commit message.
