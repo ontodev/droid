@@ -698,46 +698,131 @@
                          (count)))
          (render-status-bar)))]))
 
-(defn- render-branch-page
-  "Given some branch data, and a number of parameters related to an action or a view, construct the
-  page corresponding to a branch."
-  [{:keys [branch-name project-name Makefile process] :as branch}
+(defn- render-version-control-section
+  "Render the Version Control section on the page for a branch"
+  [{:keys [branch-name project-name] :as branch}
    {:keys [params]
-    {:keys [new-action new-action-param view-path missing-view confirm-kill confirm-update
-            get-commit-msg get-commit-amend-msg commit-msg commit-amend-msg]} :params
+    {:keys [confirm-push get-commit-msg get-commit-amend-msg]} :params
     :as request}]
-  (let [this-url (str "/" project-name "/branches/" branch-name)
-        get-last-commit-msg #(let [process (sh/proc "git" "show" "-s" "--format=%s"
+  (let [get-last-commit-msg #(let [process (sh/proc "git" "show" "-s" "--format=%s"
                                                     :dir (get-workspace-dir project-name
                                                                             branch-name))
                                    exit-code (future (sh/exit-code process))]
                                (if-not (= 0 @exit-code)
-                                 (do (log/error "Unable to retrieve previous commit message")
+                                 (do (log/error "Unable to retrieve previous commit message:"
+                                                (sh/stream-to-string process :err))
                                      "")
-                                 (sh/stream-to-string process :out)))]
+                                 (sh/stream-to-string process :out)))
+        get-commits-to-push #(let [process (sh/proc "git" "log" "--branches" "--not" "--remotes"
+                                                    "--reverse" "--format=%s"
+                                                    :dir (get-workspace-dir project-name
+                                                                            branch-name))
+                                   exit-code (future (sh/exit-code process))]
+                               (if-not (= 0 @exit-code)
+                                 (do (log/error "Unable to retrieve commit list:"
+                                                (sh/stream-to-string process :err))
+                                     "")
+                                 (-> process (sh/stream-to-string :out) (string/split-lines))))
+        this-url (str "/" project-name "/branches/" branch-name)]
+
+    [:div {:class "col-sm-6"}
+     [:h3 "Version Control"]
+     (cond
+       ;; If a commit was requested, render a dialog to get the commit message:
+       (not (nil? get-commit-msg))
+       [:div {:class "alert alert-warning m-1"}
+        [:form {:action this-url :method "get"}
+         [:div {:class "form-group row"}
+          [:div [:label {:for "commit-msg" :class "m-1 ml-3 mr-3"} "Enter a commit message"]]
+          [:div [:input {:id "commit-msg" :name "commit-msg" :type "text"}]]]
+         [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
+         [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
+
+       ;; If an amendment to the last commit was requested, render a dialog to get the new commit
+       ;; message:
+       (not (nil? get-commit-amend-msg))
+       [:div {:class "alert alert-warning m-1"}
+        [:form {:action this-url :method "get"}
+         [:div {:class "form-group row"}
+          [:div [:label {:for "commit-amend-msg" :class "m-1 ml-3 mr-3"}
+                 "Enter a new commit message"]]
+          [:div [:input {:id "commit-amend-msg" :name "commit-amend-msg" :type "text"
+                         ;; Use the previous commit message as the default value:
+                         :onClick "this.select();" :value (get-last-commit-msg)}]]]
+         [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Amend"]
+         [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
+
+       ;; If a push was requested, render a dialog showing the list of local commits that would be
+       ;; pushed, and ask the user to confirm:
+       (not (nil? confirm-push))
+       [:div {:class "alert alert-danger m-1"}
+        [:div {:class "font-weight-bold"} "The following commits will be pushed:"]
+        [:ol
+         (->> (get-commits-to-push) (map #(do [:li %])))]
+        [:a {:href this-url :class "btn btn-sm btn-secondary"} "Cancel"]
+        [:a {:href (str this-url "?new-action=git-push")
+             :class "ml-2 btn btn-sm btn-danger"} "Push commits"]])
+
+     ;; The git action buttons:
+     [:table {:class "table table-borderless table-sm"}
+      [:tr
+       [:td [:a {:href (str this-url "?new-action=git-status")
+                 :class "btn btn-sm btn-success btn-block"} "Status"]]
+       [:td "Show which files have changed since the last commit"]]
+      [:tr
+       [:td [:a {:href (str this-url "?new-action=git-diff")
+                 :class "btn btn-sm btn-success btn-block"} "Diff"]]
+       [:td "Show changes to tracked files since the last commit"]]
+      [:tr
+       [:td [:a {:href (str this-url "?new-action=git-fetch")
+                 :class "btn btn-sm btn-success btn-block"} "Fetch"]]
+       [:td "Fetch the latest changes from GitHub"]]
+      [:tr
+       [:td [:a {:href (str this-url "?new-action=git-pull")
+                 :class "btn btn-sm btn-warning btn-block"} "Pull"]]
+       [:td "Update this branch with the latest changes from GitHub"]]
+      [:tr
+       [:td [:a {:href (str this-url "?get-commit-msg=1")
+                 :class "btn btn-sm btn-warning btn-block"} "Commit"]]
+       [:td "Commit your changes locally"]]
+      [:tr
+       [:td [:a {:href (str this-url "?get-commit-amend-msg=1")
+                 :class "btn btn-sm btn-warning btn-block"} "Amend"]]
+       [:td "Update your last commit with new changes"]]
+      [:tr
+       [:td [:a {:href (str this-url "?confirm-push=1")
+                 :class "btn btn-sm btn-danger btn-block"} "Push"]]
+       [:td "Push your latest local commit(s) to GitHub"]]]]))
+
+(defn- render-branch-page
+  "Given some branch data, and a number of parameters related to an action or a view, construct the
+  page corresponding to a branch."
+  [{:keys [branch-name project-name Makefile] :as branch}
+   {:keys [params]
+    {:keys [view-path missing-view confirm-update commit-msg commit-amend-msg]} :params
+    :as request}]
+  (let [this-url (str "/" project-name "/branches/" branch-name)]
     (cond
-      ;; A brand new commit has been requested:
+      ;; A brand new commit has been requested (and confirmed):
       (and (not (read-only? request))
            (not (nil? commit-msg))
            (-> commit-msg (string/trim) (not-empty)))
       (let [encoded-commit-msg (-> commit-msg (string/replace #"\"" "'") (codec/url-encode))]
-        (log/info "User" (-> request :session :user :login)
-                  "adding local commit to branch" branch-name "in project"
-                  project-name "with commit message:" commit-msg)
+        (log/info "User" (-> request :session :user :login) "adding local commit to branch"
+                  branch-name "in project" project-name "with commit message:" commit-msg)
         (-> this-url
             (str "?new-action=git-commit&new-action-param=" encoded-commit-msg)
             (redirect)))
 
-      ;; An amendment to the last commit has been requested:
+      ;; An amendment to the last commit has been requested (and confirmed):
       (and (not (read-only? request))
            (not (nil? commit-amend-msg))
            (-> commit-amend-msg (string/trim) (not-empty)))
       (let [encoded-commit-amend-msg (-> commit-amend-msg
                                          (string/replace #"\"" "'")
                                          (codec/url-encode))]
-        (log/info "User" (-> request :session :user :login)
-                  "amending local commit to branch" branch-name "in project"
-                  project-name "with commit message:" commit-amend-msg)
+        (log/info "User" (-> request :session :user :login) "amending local commit to branch"
+                  branch-name "in project" project-name "with commit message:" commit-amend-msg)
         (-> this-url
             (str "?new-action=git-amend&new-action-param=" encoded-commit-amend-msg)
             (redirect)))
@@ -746,16 +831,13 @@
       :else
       (html-response
        request
-       {:title (-> config :projects (get project-name) :project-title
-                   (str " -- " branch-name))
-        :heading (str "DROID for "
-                      (-> config :projects (get project-name) :project-title))
+       {:title (-> config :projects (get project-name) :project-title (str " -- " branch-name))
+        :heading (str "DROID for " (-> config :projects (get project-name) :project-title))
         :content [:div
                   [:p (-> config :projects (get project-name) :project-description)]
                   [:div
                    [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
-                   [:small [:p {:class "mt-n2"}
-                            (branch-status-summary project-name branch-name)]]
+                   [:small [:p {:class "mt-n2"} (branch-status-summary project-name branch-name)]]
 
                    [:hr {:class "line1"}]
 
@@ -777,73 +859,7 @@
 
                     ;; Render the Version Control section if the user has sufficient permission:
                     (when-not (read-only? request)
-                      [:div {:class "col-sm-6"}
-                       [:h3 "Version Control"]
-
-                       (cond
-                         (not (nil? get-commit-msg))
-                         [:div {:class "alert alert-warning m-1"}
-                          [:form {:action this-url :method "get"}
-                           [:div {:class "form-group row"}
-                            [:div
-                             [:label {:for "commit-msg" :class "m-1 ml-3 mr-3"}
-                              "Enter a commit message"]]
-                            [:div
-                             [:input {:id "commit-msg" :name "commit-msg" :type "text"}]]]
-                           [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
-                           [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
-
-                         (not (nil? get-commit-amend-msg))
-                         [:div {:class "alert alert-warning m-1"}
-                          [:form {:action this-url :method "get"}
-                           [:div {:class "form-group row"}
-                            [:div
-                             [:label {:for "commit-amend-msg" :class "m-1 ml-3 mr-3"}
-                              "Enter the new commit message"]]
-                            [:div
-                             [:input {:id "commit-amend-msg" :name "commit-amend-msg" :type "text"
-                                      ;; Use the previous commit message as the default value:
-                                      :onClick "this.select();" :value (get-last-commit-msg)}]]]
-                           [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Amend"]
-                           [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]])
-
-                       [:table {:class "table table-borderless table-sm"}
-                        [:tr
-                         [:td
-                          [:a {:href (str this-url "?new-action=git-status")
-                               :class "btn btn-sm btn-success btn-block"} "Status"]]
-                         [:td "Show which files have changed since the last commit"]]
-                        [:tr
-                         [:td
-                          [:a {:href (str this-url "?new-action=git-diff")
-                               :class "btn btn-sm btn-success btn-block"} "Diff"]]
-                         [:td "Show changes to tracked files since the last commit"]]
-                        [:tr
-                         [:td
-
-                          [:a {:href (str this-url "?new-action=git-fetch")
-                               :class "btn btn-sm btn-success btn-block"} "Fetch"]]
-                         [:td "Fetch the latest changes from GitHub"]]
-                        [:tr
-                         [:td
-                          [:a {:href (str this-url "?new-action=git-pull")
-                               :class "btn btn-sm btn-warning btn-block"} "Pull"]]
-                         [:td "Update this branch with the latest changes from GitHub"]]
-                        [:tr
-                         [:td
-                          [:a {:href (str this-url "?get-commit-msg=1")
-                               :class "btn btn-sm btn-warning btn-block"} "Commit"]]
-                         [:td "Commit your changes locally"]]
-                        [:tr
-                         [:td
-                          [:a {:href (str this-url "?get-commit-amend-msg=1")
-                               :class "btn btn-sm btn-warning btn-block"} "Amend"]]
-                         [:td "Update your last commit with new changes"]]
-                        [:tr
-                         [:td
-                          [:a {:href (str this-url "?new-action=git-pull")
-                               :class "btn btn-sm btn-danger btn-block"} "Push"]]
-                         [:td "Push your latest local commit(s) to GitHub"]]]])]]
+                      (render-version-control-section branch request))]]
 
                   [:hr {:class "line1"}]
 
