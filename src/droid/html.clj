@@ -718,7 +718,7 @@
   "Render the Version Control section on the page for a branch"
   [{:keys [branch-name project-name] :as branch}
    {:keys [params]
-    {:keys [confirm-push get-commit-msg get-commit-amend-msg next-task]} :params
+    {:keys [confirm-push get-commit-msg get-commit-amend-msg next-task pr-added]} :params
     :as request}]
   (let [get-last-commit-msg #(let [process (sh/proc "git" "show" "-s" "--format=%s"
                                                     :dir (get-workspace-dir project-name
@@ -796,13 +796,23 @@
             (-> branch :exit-code (deref) (= 0)))
        [:div {:class "alert alert-success m-1"}
         [:div {:class "mb-3"} "Commits pushed successfully."]
-        ;; TODO: Implement this:
         [:form {:action this-url :method "get"}
          [:div {:class "form-group row"}
-          [:div [:input {:id "pr-desc" :name "pr-desc" :type "text" :class "ml-3 mr-2"
-                         :placeholder "Pull request description" :required true}]]
+          [:div [:input {:id "pr-to-add" :name "pr-to-add" :type "text" :class "ml-3 mr-2"
+                         :required true :onClick "this.select();" :value (get-last-commit-msg)}]]
           [:button {:type "submit" :class "btn btn-sm btn-primary mr-2"} "Create a pull request"]
-          [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]]])
+          [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]]]
+
+       ;; A an attempt to create a PR has been made. If pr-added is an empty string then the attempt
+       ;; was unsuccessful, otherwise it will contain the URL of the PR.
+       (not (nil? pr-added))
+       (if-not (empty? pr-added)
+         [:div {:class "alert alert-success"}
+          [:div "PR created successfully. To view it click " [:a {:href pr-added} "here."]]
+          [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]]
+         [:div {:class "alert alert-warning"}
+          [:div "Your PR could not be created. Contact an administrator for assistance."]
+          [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]]))
 
      ;; The git action buttons:
      [:table {:class "table table-borderless table-sm"}
@@ -840,7 +850,7 @@
   page corresponding to a branch."
   [{:keys [branch-name project-name Makefile] :as branch}
    {:keys [params]
-    {:keys [view-path missing-view confirm-update commit-msg commit-amend-msg]} :params
+    {:keys [view-path missing-view confirm-update commit-msg commit-amend-msg pr-to-add]} :params
     :as request}]
   (let [this-url (str "/" project-name "/branches/" branch-name)]
     (cond
@@ -867,6 +877,18 @@
         (-> this-url
             (str "?new-action=git-amend&new-action-param=" encoded-commit-amend-msg)
             (redirect)))
+
+      ;; The creation of a pull request has been requested. Here we simply call the function in gh/
+      ;; and add its return value to the URL for redirection. Any problems are handled elsewhere.
+      (and (not (read-only? request))
+           (not (nil? pr-to-add)))
+      (->> pr-to-add
+           (gh/create-pr project-name branch-name
+                         (-> request :session :user :login)
+                         (-> request :oauth2/access-tokens :github :token))
+           (codec/url-encode)
+           (str this-url "?pr-added=")
+           (redirect))
 
       ;; Otherwise process the request as normal:
       :else
