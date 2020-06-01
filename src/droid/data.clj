@@ -148,7 +148,7 @@
                ;; Merge the newly generated hashmap with the currently saved hashmap:
                (merge branch)
                ;; Merge in the Makefile info:
-               (merge (make/get-makefile-info branch)))
+               (#(merge % (make/get-makefile-info branch))))
           ;; Add the git status of the branch:
           (assoc :git-status git-status)
           ;; Add the console contents and info about the running process, if any:
