@@ -2,7 +2,6 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [markdown-to-hiccup.core :as m2h]
-            [me.raynes.conch.low-level :as sh]
             [droid.dir :refer [get-workspace-dir]]
             [droid.log :as log]))
 
