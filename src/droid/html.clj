@@ -137,6 +137,8 @@
   "Given the names of a project and branch, output a summary string of the branch's commit status
   as compared with its remote."
   [project-name branch-name]
+  ;; TODO: the remote (e.g., 'origin/master') should be in the form of a link to the branch
+  ;; in GitHub.
   (let [branch-agent (-> @data/local-branches
                          (get (keyword project-name))
                          (get (keyword branch-name)))]
@@ -793,10 +795,14 @@
             (-> branch :action (= "git-push"))
             (-> branch :exit-code (deref) (= 0)))
        [:div {:class "alert alert-success m-1"}
-        [:div {:class "mb-2"} "Commits pushed successfully."]
+        [:div {:class "mb-3"} "Commits pushed successfully."]
         ;; TODO: Implement this:
-        [:a {:href this-url :class "btn btn-sm btn-primary"} "Create pull request"]
-        [:a {:href this-url :class "btn btn-sm btn-secondary ml-2"} "Dismiss"]])
+        [:form {:action this-url :method "get"}
+         [:div {:class "form-group row"}
+          [:div [:input {:id "pr-desc" :name "pr-desc" :type "text" :class "ml-3 mr-2"
+                         :placeholder "Pull request description" :required true}]]
+          [:button {:type "submit" :class "btn btn-sm btn-primary mr-2"} "Create a pull request"]
+          [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]]])
 
      ;; The git action buttons:
      [:table {:class "table table-borderless table-sm"}
@@ -1090,9 +1096,15 @@
           last-exit-code (:exit-code @branch-agent)
           this-url (str "/" project-name "/branches/" branch-name)]
 
-      ;; Send off a branch refresh and then (await) for it (and for any previous jobs) to finish:
+      ;; Send off a branch refresh and then (await) for it (and for any previous modifications to
+      ;; the branch) to finish:
       (send-off branch-agent data/refresh-local-branch)
       (await branch-agent)
+
+      ;; If the associated process is a git action, then wait for it to finish, which is
+      ;; accomplished by dereferencing its exit code:
+      (when (->> gh/git-actions (keys) (map name) (some #(= % (:action @branch-agent))))
+        (-> @branch-agent :exit-code (deref)))
 
       ;; Note that below we do not call (await) after calling (send-off), because below we
       ;; always redirect back to the branch page, which results in another call to this function,
