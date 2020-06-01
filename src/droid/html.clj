@@ -137,20 +137,29 @@
   "Given the names of a project and branch, output a summary string of the branch's commit status
   as compared with its remote."
   [project-name branch-name]
-  ;; TODO: the remote (e.g., 'origin/master') should be in the form of a link to the branch
-  ;; in GitHub.
   (let [branch-agent (-> @data/local-branches
                          (get (keyword project-name))
-                         (get (keyword branch-name)))]
+                         (get (keyword branch-name)))
+
+        [org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+
+        render-remote (fn [remote]
+                        [:a {:href (-> remote
+                                       (string/split #"/")
+                                       (last)
+                                       (#(str "https://github.com/" org "/" repo "/tree/" %)))}
+                         remote])]
+
     (send-off branch-agent data/refresh-local-branch)
     (await branch-agent)
     (if-not (-> @branch-agent :git-status :remote)
       [:span {:class "text-muted"} "No remote"]
-      (str (-> @branch-agent :git-status :ahead) " ahead, "
-           (-> @branch-agent :git-status :behind) " behind '"
-           (-> @branch-agent :git-status :remote) "'"
-           (when (-> @branch-agent :git-status :uncommitted?)
-             ", with uncommitted changes")))))
+      [:span
+       (str (-> @branch-agent :git-status :ahead) " ahead, "
+            (-> @branch-agent :git-status :behind) " behind ")
+       (-> @branch-agent :git-status :remote (render-remote))
+       (when (-> @branch-agent :git-status :uncommitted?)
+         ", with uncommitted changes")])))
 
 (defn- render-project-branches
   "Given the name of a project, render a list of its branches, with links. If restricted-access? is
