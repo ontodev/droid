@@ -93,7 +93,7 @@
      [:div {:id "content" :class "container p-3"}
       (login-status request)
       [:hr {:class "line1"}]
-      [:h1 [:a {:href "/"} heading]]
+      [:h1 heading]
       content]
      ;; Optional JavaScript. jQuery first, then Popper.js, then Bootstrap JS.
      [:script {:src "https://code.jquery.com/jquery-3.4.1.slim.min.js"
@@ -233,7 +233,7 @@
 
     [:table {:class "table table-sm table-striped table-borderless mt-3"}
      [:thead
-      [:tr (when-not restricted-access? [:th]) [:th "Name"] [:th "Pull request"] [:th "Git status"]]]
+      [:tr (when-not restricted-access? [:th]) [:th "Branch"] [:th "Pull request"] [:th "Git status"]]]
      ;; Render the local master branch first if it is present:
      (->> local-branch-names (filter #(= % "master")) (first) (render-local-branch-row))
      ;; Render all of the other local branches:
@@ -306,7 +306,7 @@
       (html-response
        request
        {:title "DROID"
-        :heading "DROID"
+        :heading [:div [:a {:href "/"} "DROID"]]
         :content [:div
                   [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
                   [:div
@@ -327,18 +327,18 @@
                         "Yes, continue"]]])
                    [:div
                     [:h3 "Available Projects"]
+                    [:ul {:class ""}
+                     (for [project (-> config :projects)]
+                       [:li [:a {:href (->> project (key) (str "/"))}
+                             (->> project (val) :project-title)]
+                        [:span "&nbsp;"]
+                        (->> project (val) :project-description)])]
                     (when (and (site-admin?) (nil? reset))
                       [:div {:class "pb-3"}
                        [:a {:class "btn btn-sm btn-danger" :href "/?reset=1"
                             :data-toggle "tooltip"
                             :title "Clear branch data for all projects"}
-                        "Reset branch data"]])
-                    [:ul {:class "list-unstyled"}
-                     (for [project (-> config :projects)]
-                       [:li [:a {:href (->> project (key) (str "/"))}
-                             (->> project (val) :project-title)]
-                        [:span "&nbsp;"]
-                        (->> project (val) :project-description)])]]]]}))))
+                        "Reset branch data"]])]]]}))))
 
 (defn render-project
   "Render the home page for a project"
@@ -449,6 +449,10 @@
           (html-response
            request
            {:title (->> project :project-title (str "DROID for "))
+            :heading [:div
+                      [:a {:href "/"} "DROID"]
+                      " / "
+                      (-> project :project-title)]
             :content [:div
                       [:p (->> project :project-description)]
 
@@ -676,7 +680,7 @@
             ;; https://en.wikipedia.org/wiki/ANSI_escape_code#Escape_sequences). If any are found,
             ;; then launch the python program `ansi2html` in the shell to convert them all to HTML.
             ;; Either way wrap the console text in a pre-formatted block and return it.
-            (let [escape-index (->> 0x1B (char) (string/index-of console))
+            (let [escape-index (when console (->> 0x1B (char) (string/index-of console)))
                   ansi-commands? (and escape-index (->> escape-index (inc) (nth console) (int)
                                                         (#(and (>= % 0x40) (<= % 0x5F)))))
                   render-pre-block (fn [arg]
@@ -904,12 +908,15 @@
       (html-response
        request
        {:title (-> config :projects (get project-name) :project-title (str " -- " branch-name))
-        :heading (str "DROID for " (-> config :projects (get project-name) :project-title))
+        :heading [:div
+                  [:a {:href "/"} "DROID"]
+                  " / "
+                  [:a {:href (str "/" project-name)} project-name]
+                  " / "
+                  branch-name]
         :content [:div
-                  [:p (-> config :projects (get project-name) :project-description)]
                   [:div
-                   [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
-                   [:small [:p {:class "mt-n2"} (branch-status-summary project-name branch-name)]]
+                   [:p {:class "mt-n2"} (branch-status-summary project-name branch-name)]
 
                    [:hr {:class "line1"}]
 

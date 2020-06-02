@@ -285,7 +285,7 @@
   [all-branches project-name branch-name]
   (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
         process (sh/proc "git" "clone" "--single-branch" "--branch" branch-name
-                         (str "git@github.com:" org "/" repo) branch-name
+                         (str "https://github.com/" org "/" repo) branch-name
                          :dir (get-workspace-dir project-name))
         exit-code (future (sh/exit-code process))]
     (if-not (= @exit-code 0)
