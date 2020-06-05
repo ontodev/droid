@@ -477,7 +477,7 @@
                           [:div {:class "font-weight-bold mb-3 text-primary"}
                            "Create a new branch"]
                           [:div {:class "form-group row"}
-                           ;; Select list on available local branches to serve as the
+                           ;; Select list on available remote branches to serve as the
                            ;; branching-off point:
                            [:div {:class "col-sm-3"}
                             [:div
@@ -485,11 +485,11 @@
                               "Branch from"]]
                             [:select {:id "branch-from" :name "branch-from"
                                       :class "form-control form-control-sm"}
-                             (for [branch-name (-> @data/local-branches
-                                                   (get (keyword project-name))
-                                                   (keys)
-                                                   (#(map name %))
-                                                   (sort))]
+                             (for [branch-name (->> project-name
+                                                    (keyword)
+                                                    (get @data/remote-branches)
+                                                    (map #(get % :name))
+                                                    (sort))]
                                ;; The master branch is selected by default:
                                [:option
                                 (merge {:value branch-name} (when (= branch-name "master")
@@ -802,27 +802,46 @@
             [:div {:class "mb-3"} "There are no commits to push"]
             [:a {:href this-url :class "btn btn-sm btn-warning"} "Dismiss"]]))
 
-       ;; If the request includes a "next-task" parameter which indicates that a PR can be created,
-       ;; provide the user with the option to do so:
+       ;; The request includes a "next-task" parameter which indicates that a PR should be created:
        (and (= next-task "create-pr")
             (-> branch :action (= "git-push"))
             (-> branch :exit-code (deref) (= 0)))
-       [:div {:class "alert alert-success m-1"}
-        [:div {:class "mb-3"} "Commits pushed successfully."]
-        [:form {:action this-url :method "get"}
-         [:div {:class "form-group row"}
-          [:div [:input {:id "pr-to-add" :name "pr-to-add" :type "text" :class "ml-3 mr-2"
-                         :required true :onClick "this.select();" :value (get-last-commit-msg)}]]
-          [:button {:type "submit" :class "btn btn-sm btn-primary mr-2"} "Create a pull request"]
-          [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]]]
+       (let [current-pr (->> @data/remote-branches
+                             (#(get % (keyword project-name)))
+                             (filter #(= branch-name (:name %)))
+                             (first)
+                             :pull-request)]
+         (if (nil? current-pr)
+           ;; If the current branch doesn't already have a PR associated, provide the user with
+           ;; the option to create one:
+           [:div {:class "alert alert-success m-1"}
+            [:div {:class "mb-3"} "Commits pushed successfully."]
+            [:form {:action this-url :method "get"}
+             [:div {:class "form-group row"}
+              [:div
+               [:input {:id "pr-to-add" :name "pr-to-add" :type "text" :class "ml-3 mr-2"
+                        :required true :onClick "this.select();" :value (get-last-commit-msg)}]]
+              [:button {:type "submit" :class "btn btn-sm btn-primary mr-2"}
+               "Create a pull request"]
+              [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]]]
+           ;; Otherwise display a link to the current PR:
+           [:div {:class "alert alert-success m-1"}
+            [:div {:class "mb-3"} "Commits pushed successfully. A "
+             [:a {:href current-pr} "pull request is already open"] " on this branch."]
+            [:div [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]]]))
 
        ;; A an attempt to create a PR has been made. If pr-added is an empty string then the attempt
        ;; was unsuccessful, otherwise it will contain the URL of the PR.
        (not (nil? pr-added))
        (if-not (empty? pr-added)
-         [:div {:class "alert alert-success"}
-          [:div "PR created successfully. To view it click " [:a {:href pr-added} "here."]]
-          [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]]
+         (do
+           ;; Kick off a refresh of the remote branches but don't await for it since we already have
+           ;; the URL of the new PR in pr-added:
+           (send-off data/remote-branches
+                     data/refresh-remote-branches-for-project project-name request)
+           [:div {:class "alert alert-success"}
+            [:div "PR created successfully. To view it click " [:a {:href pr-added} "here."]]
+            [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]])
          [:div {:class "alert alert-warning"}
           [:div "Your PR could not be created. Contact an administrator for assistance."]
           [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]]))
@@ -1093,12 +1112,12 @@
             (let [command (if (some #(= % new-action) (->> gh/git-actions (keys) (map name)))
                             ;; If the action is a git action then lookup its corresponding command
                             ;; in the git-actions map. If the action returned is a function, then
-                            ;; call it on the new-action-param parameter to generate the command
-                            ;; string, otherwise use it as is.
+                            ;; pass it the new-action-param and the current uder to generate the
+                            ;; command string, otherwise use it as is.
                             (-> gh/git-actions
                                 (get (keyword new-action))
                                 (#(if (function? %)
-                                    (% new-action-param)
+                                    (% {:param new-action-param, :user (-> request :session :user)})
                                     %)))
                             ;; Otherwise prefix it with "make ":
                             (str "make " new-action))

@@ -284,37 +284,49 @@
   "Checkout a remote GitHub branch into the local workspace."
   [all-branches project-name branch-name]
   (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
-        process (sh/proc "git" "clone" "--single-branch" "--branch" branch-name
-                         (str "https://github.com/" org "/" repo) branch-name
-                         :dir (get-workspace-dir project-name))
-        exit-code (future (sh/exit-code process))]
-    (if-not (= @exit-code 0)
-      (do
-        ;; If there is a problem, log an error and return the local branches unchanged
-        (log/error "While attempting to checkout branch" branch-name "of project" project-name
-                   "the following error was encountered:" (sh/stream-to-string process :err))
-        all-branches)
-      ;; Otherwise refresh the project; it should pick up the new branch:
-      (refresh-local-branches all-branches [project-name]))))
+        cloned-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
+    ;; Clone the remote branch and configure it to use colours. If there is an error, then log it,
+    ;; remove the newly created branch directory if it exists, and return the branch collection
+    ;; back unchanged. Otherwise refresh the local branches for the project, which should pick up
+    ;; the newly cloned directory:
+    (try
+      (doseq [command [["git" "clone" "--branch" branch-name
+                        (str "git@github.com:" org "/" repo) branch-name
+                        :dir (get-workspace-dir project-name)]
+                       ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]]]
+        (let [process (apply sh/proc command)
+              exit-code (future (sh/exit-code process))]
+          (log/debug "Running" (->> command (string/join " ")))
+          (when-not (= @exit-code 0)
+            (-> (str "Error while running '" command "': ")
+                (str (sh/stream-to-string process :err))
+                (Exception.)
+                (throw)))))
+      (catch Exception e
+        (log/error (.getMessage e))
+        (delete-recursively cloned-branch-dir)
+        all-branches)))
+  ;; Otherwise refresh the project; it should pick up the new branch:
+  (refresh-local-branches all-branches [project-name]))
 
 (defn create-local-branch
   "Creates a local branch with the given branch name in the workspace for the given project, with
   the branch point given by `base-branch-name`, and adds it to the collection of local branches."
   [all-branches project-name branch-name base-branch-name]
-  (let [base-branch-dir (-> project-name (get-workspace-dir) (str base-branch-name))
+  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
         new-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
-    ;; Recursively copy the base branch's directory to the new branch directory, then in the new
-    ;; directory: Unstage any staged files, revert any modified files to their checked out
-    ;; versions, clean up untracked files and directories, and finally create the new branch and
-    ;; switch to it. If there is an error in any of these commands, then log it, remove the newly
-    ;; created branch directory (if it exists), and return the branch collection unchanged.
-    ;; Otherwise, initialize the new branch and merge it into the branch collection to return.
+    ;; Clone the base branch from upstream, then locally checkout to a new branch, and push the
+    ;; new branch to upstream. If there is an error in any of these commands, then log it, remove
+    ;; the newly created branch directory (if it exists), and return the branch collection
+    ;; unchanged. Otherwise, initialize the new branch and merge it into the branch collection to
+    ;; return.
     (try
-      (doseq [command [["cp" "-r" base-branch-dir new-branch-dir]
-                       ["git" "reset" :dir new-branch-dir]
-                       ["git" "checkout" "." :dir new-branch-dir]
-                       ["git" "clean" "-f" "-d" :dir new-branch-dir]
-                       ["git" "checkout" "-b" branch-name :dir new-branch-dir]]]
+      (doseq [command [["git" "clone" "--branch" base-branch-name
+                        (str "git@github.com:" org "/" repo) branch-name
+                        :dir (get-workspace-dir project-name)]
+                       ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
+                       ["git" "checkout" "-b" branch-name :dir new-branch-dir]
+                       ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]]]
         (let [process (apply sh/proc command)
               exit-code (future (sh/exit-code process))]
           (log/debug "Running" (->> command (string/join " ")))

@@ -10,11 +10,21 @@ DROID is in early development and is designed to work on Unix (Linux, macOS) sys
 
 ## GitHub environment variables
 
+### OAuth2
+
 For OAuth2 integration to work properly, DROID assumes that the following environment variables have been set:
 - GITHUB_CLIENT_ID
 - GITHUB_CLIENT_SECRET
 
 These should match the client id and secret of your GitHub OAuth2 app.
+
+### Default committer
+
+DROID modifies the "author" of a commit to match the info for the authenticated user who requested it. The "committer" info should be changed as well, but in this case we do it globally in environment variables:
+
+export GIT_COMMITTER_NAME="DROID"
+export GIT_COMMITTER_EMAIL=""
+
 
 ## Python virtual environment and `ansi2html`
 
