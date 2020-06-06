@@ -291,7 +291,7 @@
     ;; the newly cloned directory:
     (try
       (doseq [command [["git" "clone" "--branch" branch-name
-                        (str "git@github.com:" org "/" repo) branch-name
+                        (str "https://github.com/" org "/" repo) branch-name
                         :dir (get-workspace-dir project-name)]
                        ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]]]
         (let [process (apply sh/proc command)
@@ -322,7 +322,7 @@
     ;; return.
     (try
       (doseq [command [["git" "clone" "--branch" base-branch-name
-                        (str "git@github.com:" org "/" repo) branch-name
+                        (str "https://github.com/" org "/" repo) branch-name
                         :dir (get-workspace-dir project-name)]
                        ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
                        ["git" "checkout" "-b" branch-name :dir new-branch-dir]
