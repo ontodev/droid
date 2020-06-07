@@ -27,6 +27,7 @@
 (defn- default-agent-error-handler
   "The default error handler to use with agents"
   []
+  ;; TODO: Errors are being swallowed. Why?
   (fn [the-agent exception]
     (log/error (.getMessage exception))))
 
@@ -212,9 +213,7 @@
                          (initialize-branch project-name %))
                        (-> %
                            (keyword)
-                           (hash-map (agent (refresh-local-branch @branch-agent)
-                                            :error-mode :continue
-                                            :error-handler default-agent-error-handler)))))))
+                           (hash-map (send-off branch-agent refresh-local-branch)))))))
            (apply merge)
            (hash-map (keyword project-name))))))
 
@@ -246,12 +245,12 @@
          (map (fn [project-key]
                 (->> all-branches
                      project-key
-                     (vals)
-                     (map deref)
-                     (map kill-process)
-                     (map #(hash-map (-> % :branch-name (keyword))
-                                     (agent % :error-mode :continue
-                                            :error-handler default-agent-error-handler)))
+                     (vals) ;; <-- these are the branch agents
+                     (map #(send-off % kill-process))
+                     ;; After killing all the managed processes, re-merge the agents into the
+                     ;; global hash-map:
+                     (map #(hash-map (-> % (deref) :branch-name (keyword))
+                                     %))
                      (apply merge)
                      (hash-map project-key))))
          (apply merge))))

@@ -70,11 +70,13 @@
            ;; add the branch and project names to the map that is returned (this is a bit redundant,
            ;; since these are also available at the branch's top level, but having them here will
            ;; prove convenient later):
-           (#(->> %
-                  :markdown
-                  (string/trim-newline)
-                  (assoc % :markdown)
-                  (merge {:branch-name branch-name, :project-name project-name})))))))
+           ((fn [makefile]
+              (->> makefile
+                   :markdown
+                   (#(or % ""))
+                   (string/trim-newline)
+                   (assoc makefile :markdown)
+                   (merge {:branch-name branch-name, :project-name project-name}))))))))
 
 (defn- process-markdown
   "Given a makefile with: (1) markdown representing its workflow; (2) a list of phony targets;
