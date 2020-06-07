@@ -416,6 +416,7 @@
                     "initiated by" (-> request :session :user :login))
           (send-off data/local-branches
                     data/checkout-remote-branch-to-local project-name to-checkout)
+          (send-off data/local-branches data/refresh-local-branches [project-name])
           (await data/local-branches)
           (redirect this-url))
 
