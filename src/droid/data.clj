@@ -306,14 +306,8 @@
         (log/error (.getMessage e))
         (delete-recursively cloned-branch-dir)
         all-branches)))
-
-  ;; If there is no error then initialize the branch with the project and branch name info. The
-  ;; calling function will be responsible for actually refreshing the branch later.
-  (-> all-branches
-      (get (keyword project-name))
-      (assoc (keyword branch-name) (agent {:project-name project-name, :branch-name branch-name}
-                                          :error-mode :continue
-                                          :error-handler default-agent-error-handler))))
+  ;; Otherwise refresh the project; it should pick up the new branch:
+  (refresh-local-branches all-branches [project-name]))
 
 (defn create-local-branch
   "Creates a local branch with the given branch name in the workspace for the given project, with
