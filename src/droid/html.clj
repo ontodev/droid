@@ -387,7 +387,7 @@
                   ;; Create the branch, then refresh the local branch collection so that it shows up
                   ;; on the page:
                   (send-off data/local-branches data/create-local-branch project-name
-                            branch-name branch-from)
+                            branch-name branch-from request)
                   (send-off data/local-branches data/refresh-local-branches [project-name])
                   (await data/local-branches)
                   (redirect this-url))))]
@@ -1118,7 +1118,13 @@
                                 (get (keyword new-action))
                                 (#(if (function? %)
                                     (% {:param new-action-param, :user (-> request :session :user)})
-                                    %)))
+                                    (cond
+                                      (= % "git-push")
+                                      (do (data/store-creds project-name branch-name request)
+                                          %)
+
+                                      :else
+                                      %))))
                             ;; Otherwise prefix it with "make ":
                             (str "make " new-action))
                   process (when-not (nil? command)

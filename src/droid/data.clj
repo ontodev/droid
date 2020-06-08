@@ -279,6 +279,23 @@
       (#(hash-map (keyword project-name) %))
       (#(merge all-branches %))))
 
+(defn store-creds
+  "TODO: Insert docstring here"
+  [project-name branch-name
+   {{{:keys [login]} :user} :session,
+    {{:keys [token]} :github} :oauth2/access-tokens}]
+  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+        process (sh/proc "bash" "-c" (str "exec echo 'https://" login ":" token "@github.com/"
+                                          org "/" repo "' > .git-credentials")
+                         :dir (str (get-workspace-dir project-name) "/" branch-name))
+        exit-code (future (sh/exit-code process))]
+    (log/debug "Storing github credentials for" project-name "/" branch-name)
+    (when-not (= @exit-code 0)
+      (-> (str "Error while storing credentials: ")
+          (str (sh/stream-to-string process :err))
+          (Exception.)
+          (throw)))))
+
 (defn checkout-remote-branch-to-local
   "Checkout a remote GitHub branch into the local workspace."
   [all-branches project-name branch-name]
@@ -292,6 +309,9 @@
       (doseq [command [["git" "clone" "--branch" branch-name
                         (str "https://github.com/" org "/" repo) branch-name
                         :dir (get-workspace-dir project-name)]
+                       ["bash" "-c" "exec echo '.gitignore' > .gitignore" :dir cloned-branch-dir]
+                       ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                        :dir cloned-branch-dir]
                        ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]]]
         (let [process (apply sh/proc command)
               exit-code (future (sh/exit-code process))]
@@ -311,7 +331,9 @@
 (defn create-local-branch
   "Creates a local branch with the given branch name in the workspace for the given project, with
   the branch point given by `base-branch-name`, and adds it to the collection of local branches."
-  [all-branches project-name branch-name base-branch-name]
+  [all-branches project-name branch-name base-branch-name
+   {{{:keys [login]} :user} :session,
+    {{:keys [token]} :github} :oauth2/access-tokens}]
   (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
         new-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
     ;; Clone the base branch from upstream, then locally checkout to a new branch, and push the
@@ -321,8 +343,16 @@
     ;; return.
     (try
       (doseq [command [["git" "clone" "--branch" base-branch-name
-                        (str "https://github.com/" org "/" repo) branch-name
+                        (format "https://github.com/%s/%s" org repo) branch-name
                         :dir (get-workspace-dir project-name)]
+                       ["bash" "-c" "exec echo '.gitignore' > .gitignore" :dir new-branch-dir]
+                       ["bash" "-c" "exec echo '.git-credentials' >> .gitignore" :dir new-branch-dir]
+                       ["bash" "-c" (str "exec echo 'https://" login ":" token
+                                         "@github.com/" org "/" repo "' > .git-credentials")
+                        :dir new-branch-dir]
+                       ["bash" "-c" (str "exec git config credential.helper "
+                                         "'store --file=.git-credentials'")
+                        :dir new-branch-dir]
                        ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
                        ["git" "checkout" "-b" branch-name :dir new-branch-dir]
                        ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]]]
