@@ -14,10 +14,10 @@
    :git-fetch "git fetch"
    :git-pull "git pull"
    :git-push "git push"
-   :git-commit (fn [{:keys [param user] :as options}]
+   :git-commit (fn [{:keys [msg user] :as options}]
                  ;; A function to generate a command line string that will commit to git with the
-                 ;; given URL encoded commit message.
-                 (let [commit-msg (codec/url-decode param)]
+                 ;; given URL encoded commit message and given user info.
+                 (let [commit-msg (codec/url-decode msg)]
                    (if (and (not (nil? commit-msg))
                             (-> commit-msg (string/trim) (not-empty)))
                      (format "git commit --all -m \"%s\" --author \"%s <%s>\""
@@ -25,10 +25,10 @@
                              (or (:name user) (:login user))
                              (or (:email user) ""))
                      (log/error "Received empty commit message for commit"))))
-   :git-amend (fn [{:keys [param user] :as options}]
+   :git-amend (fn [{:keys [msg user] :as options}]
                 ;; A function to generate a command line string that will ammend the last commit to
-                ;; git with the given URL encoded commit message.
-                (let [commit-msg (codec/url-decode param)]
+                ;; git with the given URL encoded commit message and given user info.
+                (let [commit-msg (codec/url-decode msg)]
                   (if (and (not (nil? commit-msg))
                            (-> commit-msg (string/trim) (not-empty)))
                     (format "git commit --all --amend -m \"%s\" --author \"%s <%s>\""

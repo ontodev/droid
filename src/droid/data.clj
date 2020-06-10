@@ -280,21 +280,27 @@
       (#(merge all-branches %))))
 
 (defn store-creds
-  "TODO: Insert docstring here"
-  [project-name branch-name
+  "Given the names of a project and of a branch within that project, and the login and token for the
+  current user's OAuth2 session, store these credentials in a file in the directory for the branch.
+  The all-branches parameter is required in order to serialize this function through an agent, but
+  it is simply passed through without modification."
+  [all-branches project-name branch-name
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens}]
   (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
-        process (sh/proc "bash" "-c" (str "exec echo 'https://" login ":" token "@github.com/"
-                                          org "/" repo "' > .git-credentials")
-                         :dir (str (get-workspace-dir project-name) "/" branch-name))
-        exit-code (future (sh/exit-code process))]
+        url (str "https://" login ":" token "@github.com/" org "/" repo)]
     (log/debug "Storing github credentials for" project-name "/" branch-name)
-    (when-not (= @exit-code 0)
-      (-> (str "Error while storing credentials: ")
-          (str (sh/stream-to-string process :err))
-          (Exception.)
-          (throw)))))
+    (-> project-name (get-workspace-dir) (str branch-name "/.git-credentials") (spit url))
+    all-branches))
+
+(defn remove-creds
+  "Given the names of a project and a branch within that project, remove the credentials file from
+  the directory for the branch. The all-branches parameter is required in order to serialize this
+  function through an agent, but it is simply passed through without modification."
+  [all-branches project-name branch-name]
+  (log/debug "Removing github credentials from" project-name "/" branch-name)
+  (-> project-name (get-workspace-dir) (str branch-name "/.git-credentials") (io/delete-file true))
+  all-branches)
 
 (defn checkout-remote-branch-to-local
   "Checkout a remote GitHub branch into the local workspace."
@@ -311,6 +317,9 @@
                         :dir (get-workspace-dir project-name)]
                        ["bash" "-c" "exec echo '.gitignore' > .gitignore" :dir cloned-branch-dir]
                        ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                        :dir cloned-branch-dir]
+                       ["bash" "-c" (str "exec git config credential.helper "
+                                         "'store --file=.git-credentials'")
                         :dir cloned-branch-dir]
                        ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]]]
         (let [process (apply sh/proc command)
@@ -343,10 +352,11 @@
     ;; return.
     (try
       (doseq [command [["git" "clone" "--branch" base-branch-name
-                        (format "https://github.com/%s/%s" org repo) branch-name
+                        (str "https://github.com/" org "/" repo) branch-name
                         :dir (get-workspace-dir project-name)]
                        ["bash" "-c" "exec echo '.gitignore' > .gitignore" :dir new-branch-dir]
-                       ["bash" "-c" "exec echo '.git-credentials' >> .gitignore" :dir new-branch-dir]
+                       ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                        :dir new-branch-dir]
                        ["bash" "-c" (str "exec echo 'https://" login ":" token
                                          "@github.com/" org "/" repo "' > .git-credentials")
                         :dir new-branch-dir]
@@ -355,7 +365,8 @@
                         :dir new-branch-dir]
                        ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
                        ["git" "checkout" "-b" branch-name :dir new-branch-dir]
-                       ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]]]
+                       ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]
+                       ["rm" "-f" ".git-credentials" :dir new-branch-dir]]]
         (let [process (apply sh/proc command)
               exit-code (future (sh/exit-code process))]
           (log/debug "Running" (->> command (string/join " ")))

@@ -8,27 +8,9 @@ DROID differs from Continuous Testing/Integration solutions such as Jenkins or T
 
 DROID is in early development and is designed to work on Unix (Linux, macOS) systems.
 
-## GitHub environment variables
-
-### OAuth2
-
-For OAuth2 integration to work properly, DROID assumes that the following environment variables have been set:
-- GITHUB_CLIENT_ID
-- GITHUB_CLIENT_SECRET
-
-These should match the client id and secret of your GitHub OAuth2 app.
-
-### Default committer
-
-DROID modifies the "author" of a commit to match the info for the authenticated user who requested it. The "committer" info should be changed as well, but in this case we do it globally in environment variables:
-
-export GIT_COMMITTER_NAME="DROID"
-export GIT_COMMITTER_EMAIL=""
-
-
 ## Python virtual environment and `ansi2html`
 
-DROID is implemented using Clojure, but uses the Python library [ansi2html](https://pypi.org/project/ansi2html/) to colourize console output. For this to work you must set up a python virtual environment in DROID's root directory and install the dependencies specified in `requirements.txt` in the same directory. Once this is done, DROID should be run only after activating the virtual environment.
+DROID is implemented using [Clojure](https://clojure.org/), but uses the Python library [ansi2html](https://pypi.org/project/ansi2html/) to colourize console output. For this to work you must set up a python virtual environment in DROID's root directory and install the dependencies specified in `requirements.txt` in the same directory. Once this is done, DROID should be run only after activating the virtual environment.
 
 1. Create the virtual environment:
 
@@ -52,6 +34,26 @@ You should now see the string "`(_venv)`" prefixed to your command-line prompt, 
    ```
 
 Steps 1 and 3 only need to be run once at installation time. Step 2, activating the Python virtual environment, is required in order for colourization to work. You must make sure that the virtual environment is active (as indicated by the string "`(_venv)`" at the beginning of your command prompt) before starting DROID.
+
+## GitHub environment variables
+
+DROID assumes that the following environment variables have been set. It may be convenient to add them to your python virtual environment activation script (`_venv/bin/activate`).
+
+### OAuth2
+
+For OAuth2 integration to work properly, DROID assumes that the following environment variables have been set:
+- GITHUB_CLIENT_ID
+- GITHUB_CLIENT_SECRET
+
+These should match the client id and secret of your GitHub OAuth2 app.
+
+### Default committer
+
+DROID modifies the "author" of a commit to match the info for the authenticated user who requested it. The "committer" info should be changed as well, but in this case we do it globally in environment variables:
+
+export GIT_COMMITTER_NAME="DROID"
+export GIT_COMMITTER_EMAIL=""
+
 
 ## Configuration file
 

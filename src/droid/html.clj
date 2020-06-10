@@ -1111,20 +1111,13 @@
                       (when new-action-param (str "with parameter " new-action-param)))
             (let [command (if (some #(= % new-action) (->> gh/git-actions (keys) (map name)))
                             ;; If the action is a git action then lookup its corresponding command
-                            ;; in the git-actions map. If the action returned is a function, then
-                            ;; pass it the new-action-param and the current uder to generate the
-                            ;; command string, otherwise use it as is.
+                            ;; in the git-actions map. If the value retrieved is a function, then
+                            ;; pass it the appropriate parameters. Otherwise, return it as is.
                             (-> gh/git-actions
                                 (get (keyword new-action))
                                 (#(if (function? %)
-                                    (% {:param new-action-param, :user (-> request :session :user)})
-                                    (cond
-                                      (= % "git-push")
-                                      (do (data/store-creds project-name branch-name request)
-                                          %)
-
-                                      :else
-                                      %))))
+                                    (% {:msg new-action-param, :user (-> request :session :user)})
+                                    %)))
                             ;; Otherwise prefix it with "make ":
                             (str "make " new-action))
                   process (when-not (nil? command)
@@ -1206,11 +1199,16 @@
              (not (realized? last-exit-code)))
         (cond
           ;; If the force-kill parameter has been sent, then simply kill the old process and
-          ;; relaunch the new one:
+          ;; relaunch the new one. If the action is a git push, store the user credentials first
+          ;; and then remove them afterwards.
           (not (nil? force-kill))
           (do
             (send-off branch-agent kill-process (-> request :session :user))
+            (when (= new-action "git-push")
+              (send-off data/local-branches data/store-creds project-name branch-name request))
             (send-off branch-agent launch-process)
+            (when (= new-action "git-push")
+              (send-off branch-agent data/remove-creds project-name branch-name))
             (-> this-url
                 ;; Remove the force kill and new action parameters:
                 (str "?" (-> params
@@ -1235,10 +1233,15 @@
               (redirect)))
 
         ;; If there is an action to be performed and there is no currently running process, then
-        ;; simply launch the new process and redirect back to the page:
+        ;; simply launch the new process and redirect back to the page. If the action is a git push,
+        ;; store the user credentials first and then remove them afterwards.
         :else
         (do
+          (when (= new-action "git-push")
+            (send-off data/local-branches data/store-creds project-name branch-name request))
           (send-off branch-agent launch-process)
+          (when (= new-action "git-push")
+            (send-off branch-agent data/remove-creds project-name branch-name))
           (-> this-url
               ;; Remove the new action params so that the user will not be able to launch the action
               ;; again by hitting his browser's refresh button by mistake:
