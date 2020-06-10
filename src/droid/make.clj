@@ -52,12 +52,17 @@
 
                        ;; If we are here, then we haven't hit the end of the workflow yet. Add any
                        ;; lines beginning in '#' or '# ' to the markdown:
-                       (string/starts-with? next-line "# ")
-                       (assoc makefile :markdown
-                              (concat-markdown-lines (:markdown makefile) (subs next-line 2)))
                        (string/starts-with? next-line "#")
-                       (assoc makefile :markdown
-                              (concat-markdown-lines (:markdown makefile) (subs next-line 1)))
+                       (let [content (-> (if (string/starts-with? next-line "# ")
+                                           (subs next-line 2)
+                                           (subs next-line 1))
+                                         (string/trim)
+                                         ;; If this is a blank string, then replace it with the HTML
+                                         ;; code for a space as a workaround for the fact that the m2h
+                                         ;; library ignores empty lines:
+                                         (#(or (not-empty %) "&nbsp;\n")))]
+                         (assoc makefile :markdown
+                                (concat-markdown-lines (:markdown makefile) content)))
 
                        ;; If we are here then we have finished reading the workflow lines. Add a
                        ;; double newline to the end of the markdown to indicate that we're done:
