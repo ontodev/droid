@@ -74,8 +74,8 @@
   (3) the name of the branch that the makefile is on: Output a new makefile record that contains:
   (1) The original markdown; (2) the original phony target list; (3) the original branch name;
   (4) a list of all targets; (5) a list of those targets which represent general actions; (6) a list
-  of those targets which represent views; (7) a html representation (in the form of a hiccup
-  structure) of the markdown."
+  of those targets which represent file views; (7) a list of those targets which represent directory
+  views; (8) a html representation (in the form of a hiccup structure) of the markdown."
   [{:keys [markdown phony-targets project-name branch-name] :as makefile}]
   (when markdown
     (let [html (->> markdown (m2h/md->hiccup) (m2h/component))]
@@ -102,7 +102,8 @@
                      (flatten-to-1st-level)
                      (into #{})))
 
-              (process-makefile-html [{:keys [html views general-actions branch-name] :as makefile}]
+              (process-makefile-html [{:keys [html file-views general-actions branch-name]
+                                       :as makefile}]
                 ;; Recurses through the html hiccup structure and transforms any links that are
                 ;; found into either action links or view links:
                 (letfn [(process-link [[tag {href :href} text :as link]]
@@ -115,7 +116,7 @@
                                   ;; access to.
                                   :class "btn btn-primary btn-sm action-btn"} text]
 
-                            (some #(= href %) views)
+                            (some #(= href %) file-views)
                             [tag {:href (str "/" project-name "/branches/" branch-name
                                              "/views/" href)} text]
 
@@ -125,7 +126,7 @@
                          (if (= (type elem) clojure.lang.PersistentVector)
                            (if (= (first elem) :a)
                              (process-link elem)
-                             (vec (process-makefile-html {:html elem, :views views,
+                             (vec (process-makefile-html {:html elem, :file-views file-views,
                                                           :general-actions general-actions,
                                                           :branch-name branch-name})))
                            elem))
@@ -144,7 +145,7 @@
                        {:targets #{href}}
                        (if (some #(= href %) phony-targets)
                          {:general-actions #{href}}
-                         {:views #{href}})))))
+                         {:file-views #{href}})))))
              (apply merge-with into)
              ;; Add the original html to the makefile record, and then send everything through
              ;; process-makefile-html, which will transform the view and action links accordingly:

@@ -1019,7 +1019,7 @@
           ;; one of these allowed views will be honoured:
           allowed-views (do (send-off branch-agent data/refresh-local-branch)
                             (await branch-agent)
-                            (-> @branch-agent :Makefile :views))]
+                            (-> @branch-agent :Makefile :file-views))]
 
       ;; Note that below we do not call (await) after calling (send-off), because below we
       ;; always then redirect back to the view page, which results in another call to this function,
