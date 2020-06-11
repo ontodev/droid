@@ -3,7 +3,6 @@
             [clojure.string :as string]
             [clojure.test :refer [function?]]
             [hiccup.page :refer [html5]]
-            [hickory.core :as hickory]
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
             [droid.data :as data]
