@@ -18,70 +18,56 @@
     ;; If there is no Makefile in the workspace for the branch, then log a warning and return nil:
     (log/warn "Branch" branch-name "does not contain a Makefile.")
     ;; Otherwise, parse the Makefile:
-    (letfn [(concat-markdown-lines [line1 line2]
-              (cond
-                (and (string/blank? line1) (string/blank? line2)) ""
-                (string/blank? line1) line2
-                (string/blank? line2) line1
-                :else (str line1 "\n" line2)))]
-      (->> "/Makefile"
-           (str (get-workspace-dir project-name branch-name))
-           (slurp)
-           (string/split-lines)
-           (reduce (fn [makefile next-line]
-                     (cond
-                       ;; Add any phony targets found to the set of such targets in the makefile
-                       ;; record to be returned:
-                       (re-matches #"^\s*\.PHONY:.*" next-line)
-                       (assoc makefile :phony-targets
-                              (into (or (:phony-targets makefile) #{})
-                                    (->> (string/split next-line #"\s+")
-                                         ;; Extract only the actual phony target names:
-                                         (filter #(and (not (= "" %))
-                                                       (not (= ".PHONY:" %)))))))
+    (->> "/Makefile"
+         (str (get-workspace-dir project-name branch-name))
+         (slurp)
+         (string/split-lines)
+         (reduce (fn [makefile next-line]
+                   (cond
+                     ;; Add any phony targets found to the set of such targets in the makefile
+                     ;; record to be returned:
+                     (re-matches #"^\s*\.PHONY:.*" next-line)
+                     (assoc makefile :phony-targets
+                            (into (or (:phony-targets makefile) #{})
+                                  (->> (string/split next-line #"\s+")
+                                       ;; Extract only the actual phony target names:
+                                       (filter #(and (not (= "" %))
+                                                     (not (= ".PHONY:" %)))))))
 
-                       ;; If we have hit upon the start of the workflow, initialize the markdown
-                       ;; part of the makefile record to be returned:
-                       (nil? (:markdown makefile))
-                       (when (= next-line "### Workflow")
-                         (assoc makefile :markdown ""))
+                     ;; If we have hit upon the start of the workflow, initialize the markdown
+                     ;; part of the makefile record to be returned:
+                     (nil? (:markdown makefile))
+                     (when (= next-line "### Workflow")
+                       (assoc makefile :workflow true :markdown []))
 
-                       ;; If we're already done with parsing the workflow, just return what we have:
-                       (string/ends-with? (:markdown makefile) "\n\n")
-                       makefile
+                     ;; If we're already done with parsing the workflow, just return what we have:
+                     (not (:workflow makefile))
+                     makefile
 
-                       ;; If we are here, then we haven't hit the end of the workflow yet. Add any
-                       ;; lines beginning in '#' or '# ' to the markdown:
-                       (string/starts-with? next-line "#")
-                       (let [content (-> (if (string/starts-with? next-line "# ")
-                                           (subs next-line 2)
-                                           (subs next-line 1))
-                                         (string/trim)
-                                         ;; If this is a blank string, then replace it with the HTML
-                                         ;; code for a space as a workaround for the fact that the m2h
-                                         ;; library ignores empty lines:
-                                         (#(or (not-empty %) "&nbsp;\n")))]
-                         (assoc makefile :markdown
-                                (concat-markdown-lines (:markdown makefile) content)))
+                     ;; If we are here, then we haven't hit the end of the workflow yet. Add any
+                     ;; lines beginning in '#' or '# ' to the markdown:
+                     (string/starts-with? next-line "# ")
+                     (update-in makefile [:markdown] conj (subs next-line 2))
 
-                       ;; If we are here then we have finished reading the workflow lines. Add a
-                       ;; double newline to the end of the markdown to indicate that we're done:
-                       :else
-                       (assoc makefile :markdown
-                              (-> makefile :markdown (str "\n\n")))))
-                   ;; The call to reduce begins with an uninitialized makefile map:
-                   nil)
-           ;; Remove any extra newlines from the end of the workflow that was parsed, and finally
-           ;; add the branch and project names to the map that is returned (this is a bit redundant,
-           ;; since these are also available at the branch's top level, but having them here will
-           ;; prove convenient later):
-           ((fn [makefile]
-              (->> makefile
-                   :markdown
-                   (#(or % ""))
-                   (string/trim-newline)
-                   (assoc makefile :markdown)
-                   (merge {:branch-name branch-name, :project-name project-name}))))))))
+                     (string/starts-with? next-line "#")
+                     (update-in makefile [:markdown] conj (subs next-line 1))
+
+                     ;; If we are here then we have finished reading the workflow lines. Add a
+                     ;; double newline to the end of the markdown to indicate that we're done:
+                     :else
+                     (assoc makefile :workflow false)))
+                 ;; The call to reduce begins with an uninitialized makefile map:
+                 nil)
+         ;; Remove any extra newlines from the end of the workflow that was parsed, and finally
+         ;; add the branch and project names to the map that is returned (this is a bit redundant,
+         ;; since these are also available at the branch's top level, but having them here will
+         ;; prove convenient later):
+         ((fn [makefile]
+            (->> (get makefile :markdown [])
+                 (string/join "\n")
+                 (string/trim-newline)
+                 (assoc (dissoc makefile :workflow) :markdown)
+                 (merge {:branch-name branch-name, :project-name project-name})))))))
 
 (defn- process-markdown
   "Given a makefile with: (1) markdown representing its workflow; (2) a list of phony targets;
