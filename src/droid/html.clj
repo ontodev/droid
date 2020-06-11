@@ -682,17 +682,20 @@
             (let [escape-index (when console (->> 0x1B (char) (string/index-of console)))
                   ansi-commands? (and escape-index (->> escape-index (inc) (nth console) (int)
                                                         (#(and (>= % 0x40) (<= % 0x5F)))))
+                  pwd (get-temp-dir project-name branch-name)
                   render-pre-block (fn [arg]
                                      [:pre {:class "bg-light p-2"} [:samp {:class "shell"} arg]])]
-              (if (and ansi-commands? (< (count console) 50000))
+              (if ansi-commands?
                 (let [process (do (log/debug "Colourizing console using ansi2html ...")
-                                  (sh/proc "bash" "-c" (str "exec ansi2html -i < console.txt")
-                                           :dir (get-temp-dir project-name branch-name)))
+                                  (sh/proc "bash" "-c"
+                                           (str "exec ansi2html -i < console.txt > console.html")
+                                           :dir pwd))
                       ansi2html-exit-code (future (sh/exit-code process))
                       colourized-console (if (not= @ansi2html-exit-code 0)
                                            (do (log/error "Unable to colourize console.")
                                                console)
-                                           (sh/stream-to-string process :out))]
+                                           (slurp (str pwd "console.html")))]
+                  (io/delete-file (str pwd "console.html"))
                   (render-pre-block colourized-console))
                 (-> console
                     (string/replace #"\u001b\[.*?m" "")
