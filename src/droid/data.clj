@@ -3,9 +3,10 @@
             [clojure.string :as string]
             [environ.core :refer [env]]
             [me.raynes.conch.low-level :as sh]
+            [droid.command :as cmd]
             [droid.config :refer [config]]
             [droid.dir :refer [get-workspace-dir get-temp-dir]]
-            [droid.github-api :as gh-api]
+            [droid.github :as gh]
             [droid.log :as log]
             [droid.make :as make]))
 
@@ -27,6 +28,7 @@
 (defn- default-agent-error-handler
   "The default error handler to use with agents"
   []
+  ;; TODO: Errors are being swallowed. Why?
   (fn [the-agent exception]
     (log/error (.getMessage exception))))
 
@@ -61,7 +63,7 @@
   [project-name login token]
   (-> project-name
       (keyword)
-      (hash-map (gh-api/get-remote-branches project-name login token))))
+      (hash-map (gh/get-remote-branches project-name login token))))
 
 (defn refresh-remote-branches-for-project
   "Refresh the remote GitHub branches associated with the given project, using the given login and
@@ -148,7 +150,7 @@
                ;; Merge the newly generated hashmap with the currently saved hashmap:
                (merge branch)
                ;; Merge in the Makefile info:
-               (merge (make/get-makefile-info branch)))
+               (#(merge % (make/get-makefile-info branch))))
           ;; Add the git status of the branch:
           (assoc :git-status git-status)
           ;; Add the console contents and info about the running process, if any:
@@ -212,9 +214,7 @@
                          (initialize-branch project-name %))
                        (-> %
                            (keyword)
-                           (hash-map (agent (refresh-local-branch @branch-agent)
-                                            :error-mode :continue
-                                            :error-handler default-agent-error-handler)))))))
+                           (hash-map (send-off branch-agent refresh-local-branch)))))))
            (apply merge)
            (hash-map (keyword project-name))))))
 
@@ -246,12 +246,12 @@
          (map (fn [project-key]
                 (->> all-branches
                      project-key
-                     (vals)
-                     (map deref)
-                     (map kill-process)
-                     (map #(hash-map (-> % :branch-name (keyword))
-                                     (agent % :error-mode :continue
-                                            :error-handler default-agent-error-handler)))
+                     (vals) ;; <-- these are the branch agents
+                     (map #(send-off % kill-process))
+                     ;; After killing all the managed processes, re-merge the agents into the
+                     ;; global hash-map:
+                     (map #(hash-map (-> % (deref) :branch-name (keyword))
+                                     %))
                      (apply merge)
                      (hash-map project-key))))
          (apply merge))))
@@ -280,49 +280,85 @@
       (#(hash-map (keyword project-name) %))
       (#(merge all-branches %))))
 
+(defn store-creds
+  "Given the names of a project and of a branch within that project, and the login and token for the
+  current user's OAuth2 session, store these credentials in a file in the directory for the branch.
+  The all-branches parameter is required in order to serialize this function through an agent, but
+  it is simply passed through without modification."
+  [all-branches project-name branch-name
+   {{{:keys [login]} :user} :session,
+    {{:keys [token]} :github} :oauth2/access-tokens}]
+  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+        url (str "https://" login ":" token "@github.com/" org "/" repo)]
+    (log/debug "Storing github credentials for" project-name "/" branch-name)
+    (-> project-name (get-workspace-dir) (str branch-name "/.git-credentials") (spit url))
+    all-branches))
+
+(defn remove-creds
+  "Given the names of a project and a branch within that project, remove the credentials file from
+  the directory for the branch. The all-branches parameter is required in order to serialize this
+  function through an agent, but it is simply passed through without modification."
+  [all-branches project-name branch-name]
+  (log/debug "Removing github credentials from" project-name "/" branch-name)
+  (-> project-name (get-workspace-dir) (str branch-name "/.git-credentials") (io/delete-file true))
+  all-branches)
+
 (defn checkout-remote-branch-to-local
   "Checkout a remote GitHub branch into the local workspace."
   [all-branches project-name branch-name]
   (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
-        process (sh/proc "git" "clone" "--single-branch" "--branch" branch-name
-                         (str "git@github.com:" org "/" repo) branch-name
-                         :dir (get-workspace-dir project-name))
-        exit-code (future (sh/exit-code process))]
-    (if-not (= @exit-code 0)
-      (do
-        ;; If there is a problem, log an error and return the local branches unchanged
-        (log/error "While attempting to checkout branch" branch-name "of project" project-name
-                   "the following error was encountered:" (sh/stream-to-string process :err))
-        all-branches)
-      ;; Otherwise refresh the project; it should pick up the new branch:
-      (refresh-local-branches all-branches [project-name]))))
+        cloned-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
+    ;; Clone the remote branch and configure it to use colours. If there is an error, then log it,
+    ;; remove the newly created branch directory if it exists, and return the branch collection
+    ;; back unchanged. Otherwise refresh the local branches for the project, which should pick up
+    ;; the newly cloned directory:
+    (try
+      (cmd/run-commands [["git" "clone" "--branch" branch-name
+                          (str "https://github.com/" org "/" repo) branch-name
+                          :dir (get-workspace-dir project-name)]
+                         ["bash" "-c" "exec echo '.gitignore' > .gitignore" :dir cloned-branch-dir]
+                         ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                          :dir cloned-branch-dir]
+                         ["bash" "-c" (str "exec git config credential.helper "
+                                           "'store --file=.git-credentials'")
+                          :dir cloned-branch-dir]
+                         ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]])
+      (catch Exception e
+        (log/error (.getMessage e))
+        (delete-recursively cloned-branch-dir)
+        all-branches)))
+  ;; Otherwise refresh the project; it should pick up the new branch:
+  (refresh-local-branches all-branches [project-name]))
 
 (defn create-local-branch
   "Creates a local branch with the given branch name in the workspace for the given project, with
   the branch point given by `base-branch-name`, and adds it to the collection of local branches."
-  [all-branches project-name branch-name base-branch-name]
-  (let [base-branch-dir (-> project-name (get-workspace-dir) (str base-branch-name))
+  [all-branches project-name branch-name base-branch-name
+   {{{:keys [login]} :user} :session,
+    {{:keys [token]} :github} :oauth2/access-tokens
+    :as request}]
+  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
         new-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
-    ;; Recursively copy the base branch's directory to the new branch directory, then in the new
-    ;; directory: Unstage any staged files, revert any modified files to their checked out
-    ;; versions, clean up untracked files and directories, and finally create the new branch and
-    ;; switch to it. If there is an error in any of these commands, then log it, remove the newly
-    ;; created branch directory (if it exists), and return the branch collection unchanged.
-    ;; Otherwise, initialize the new branch and merge it into the branch collection to return.
+    ;; Clone the base branch from upstream, then locally checkout to a new branch, and push the
+    ;; new branch to upstream. If there is an error in any of these commands, then log it, remove
+    ;; the newly created branch directory (if it exists), and return the branch collection
+    ;; unchanged. Otherwise, initialize the new branch and merge it into the branch collection to
+    ;; return.
     (try
-      (doseq [command [["cp" "-r" base-branch-dir new-branch-dir]
-                       ["git" "reset" :dir new-branch-dir]
-                       ["git" "checkout" "." :dir new-branch-dir]
-                       ["git" "clean" "-f" "-d" :dir new-branch-dir]
-                       ["git" "checkout" "-b" branch-name :dir new-branch-dir]]]
-        (let [process (apply sh/proc command)
-              exit-code (future (sh/exit-code process))]
-          (log/debug "Running" (->> command (string/join " ")))
-          (when-not (= @exit-code 0)
-            (-> (str "Error while running '" command "': ")
-                (str (sh/stream-to-string process :err))
-                (Exception.)
-                (throw)))))
+      (cmd/run-commands [["git" "clone" "--branch" base-branch-name
+                          (str "https://github.com/" org "/" repo) branch-name
+                          :dir (get-workspace-dir project-name)]
+                         ["bash" "-c" "exec echo '.gitignore' > .gitignore" :dir new-branch-dir]
+                         ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                          :dir new-branch-dir]])
+      (store-creds all-branches project-name branch-name request)
+      (cmd/run-commands [["bash" "-c" (str "exec git config credential.helper "
+                                           "'store --file=.git-credentials'")
+                          :dir new-branch-dir]
+                         ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
+                         ["git" "checkout" "-b" branch-name :dir new-branch-dir]
+                         ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]])
+      (remove-creds all-branches project-name branch-name)
       (catch Exception e
         (log/error (.getMessage e))
         (delete-recursively new-branch-dir)

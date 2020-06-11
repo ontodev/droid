@@ -16,6 +16,8 @@
                  [ring/ring-defaults "0.3.2"]
                  [ring-oauth2 "0.1.4"]
                  [tentacles "0.5.1"]]
+  :plugins [[lein-ring "0.12.5"]]
+  :ring {:handler droid.handler/app}
   :main ^:skip-aot droid.core
   :target-path "target/%s"
   :profiles {:uberjar {:aot :all}})

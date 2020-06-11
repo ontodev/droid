@@ -1,12 +1,14 @@
 (ns droid.html
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
+            [clojure.test :refer [function?]]
             [hiccup.page :refer [html5]]
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
             [droid.data :as data]
             [droid.make :as make]
-            [droid.dir :refer [get-workspace-dir]]
+            [droid.dir :refer [get-workspace-dir get-temp-dir]]
+            [droid.github :as gh]
             [droid.log :as log]
             [ring.util.codec :as codec]
             [ring.util.response :refer [file-response redirect]]))
@@ -48,6 +50,18 @@
       [:nav navbar-attrs
        [:small [:a {:href "/oauth2/github"} "Login via GitHub"]]])))
 
+;; This function is useful for passing parameters through in a redirect without having to know
+;; what they are:
+(defn- params-to-query-str
+  "Given a map of parameters, construct a string suitable for use in a GET request"
+  [params]
+  (->> params
+       (map #(-> %
+                 (key)
+                 (name)
+                 (str "=" (val %))))
+       (string/join "&")))
+
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session] :as request}
@@ -78,7 +92,7 @@
      [:div {:id "content" :class "container p-3"}
       (login-status request)
       [:hr {:class "line1"}]
-      [:h1 [:a {:href "/"} heading]]
+      [:h1 heading]
       content]
      ;; Optional JavaScript. jQuery first, then Popper.js, then Bootstrap JS.
      [:script {:src "https://code.jquery.com/jquery-3.4.1.slim.min.js"
@@ -124,16 +138,27 @@
   [project-name branch-name]
   (let [branch-agent (-> @data/local-branches
                          (get (keyword project-name))
-                         (get (keyword branch-name)))]
+                         (get (keyword branch-name)))
+
+        [org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+
+        render-remote (fn [remote]
+                        [:a {:href (-> remote
+                                       (string/split #"/")
+                                       (last)
+                                       (#(str "https://github.com/" org "/" repo "/tree/" %)))}
+                         remote])]
+
     (send-off branch-agent data/refresh-local-branch)
     (await branch-agent)
     (if-not (-> @branch-agent :git-status :remote)
       [:span {:class "text-muted"} "No remote"]
-      (str (-> @branch-agent :git-status :ahead) " ahead, "
-           (-> @branch-agent :git-status :behind) " behind '"
-           (-> @branch-agent :git-status :remote) "'"
-           (when (-> @branch-agent :git-status :uncommitted?)
-             ", with uncommitted changes")))))
+      [:span
+       (str (-> @branch-agent :git-status :ahead) " ahead, "
+            (-> @branch-agent :git-status :behind) " behind ")
+       (-> @branch-agent :git-status :remote (render-remote))
+       (when (-> @branch-agent :git-status :uncommitted?)
+         ", with uncommitted changes")])))
 
 (defn- render-project-branches
   "Given the name of a project, render a list of its branches, with links. If restricted-access? is
@@ -207,7 +232,7 @@
 
     [:table {:class "table table-sm table-striped table-borderless mt-3"}
      [:thead
-      [:tr (when-not restricted-access? [:th]) [:th "Name"] [:th "Pull request"] [:th "Git status"]]]
+      [:tr (when-not restricted-access? [:th]) [:th "Branch"] [:th "Pull request"] [:th "Git status"]]]
      ;; Render the local master branch first if it is present:
      (->> local-branch-names (filter #(= % "master")) (first) (render-local-branch-row))
      ;; Render all of the other local branches:
@@ -258,9 +283,11 @@
 
 (defn index
   "Render the index page"
-  [{{:keys [just-logged-out reset really-reset]} :params,
+  [{:keys [params]
+    {:keys [just-logged-out reset really-reset]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
+  (log/debug "Processing request in index with params:" params)
   (letfn [(site-admin? []
             (some #(= login %) (-> config :site-admin-github-ids (get (:op-env config)))))]
     (cond
@@ -278,7 +305,7 @@
       (html-response
        request
        {:title "DROID"
-        :heading "DROID"
+        :heading [:div [:a {:href "/"} "DROID"]]
         :content [:div
                   [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
                   [:div
@@ -299,24 +326,26 @@
                         "Yes, continue"]]])
                    [:div
                     [:h3 "Available Projects"]
+                    [:ul {:class ""}
+                     (for [project (-> config :projects)]
+                       [:li [:a {:href (->> project (key) (str "/"))}
+                             (->> project (val) :project-title)]
+                        [:span "&nbsp;"]
+                        (->> project (val) :project-description)])]
                     (when (and (site-admin?) (nil? reset))
                       [:div {:class "pb-3"}
                        [:a {:class "btn btn-sm btn-danger" :href "/?reset=1"
                             :data-toggle "tooltip"
                             :title "Clear branch data for all projects"}
-                        "Reset branch data"]])
-                    [:ul {:class "list-unstyled"}
-                     (for [project (-> config :projects)]
-                       [:li [:a {:href (->> project (key) (str "/"))}
-                             (->> project (val) :project-title)]
-                        [:span "&nbsp;"]
-                        (->> project (val) :project-description)])]]]]}))))
+                        "Reset branch data"]])]]]}))))
 
 (defn render-project
   "Render the home page for a project"
-  [{{:keys [project-name refresh to-delete to-really-delete to-checkout
+  [{:keys [params]
+    {:keys [project-name refresh to-delete to-really-delete to-checkout
             create invalid-name-error to-create branch-from]} :params,
     :as request}]
+  (log/debug "Processing request in render-project with params:" params)
   (let [this-url (str "/" project-name)
         project (-> config :projects (get project-name))]
     (letfn [(refname-valid? [refname]
@@ -357,7 +386,7 @@
                   ;; Create the branch, then refresh the local branch collection so that it shows up
                   ;; on the page:
                   (send-off data/local-branches data/create-local-branch project-name
-                            branch-name branch-from)
+                            branch-name branch-from request)
                   (send-off data/local-branches data/refresh-local-branches [project-name])
                   (await data/local-branches)
                   (redirect this-url))))]
@@ -419,6 +448,10 @@
           (html-response
            request
            {:title (->> project :project-title (str "DROID for "))
+            :heading [:div
+                      [:a {:href "/"} "DROID"]
+                      " / "
+                      (-> project :project-title)]
             :content [:div
                       [:p (->> project :project-description)]
 
@@ -443,7 +476,7 @@
                           [:div {:class "font-weight-bold mb-3 text-primary"}
                            "Create a new branch"]
                           [:div {:class "form-group row"}
-                           ;; Select list on available local branches to serve as the
+                           ;; Select list on available remote branches to serve as the
                            ;; branching-off point:
                            [:div {:class "col-sm-3"}
                             [:div
@@ -451,11 +484,11 @@
                               "Branch from"]]
                             [:select {:id "branch-from" :name "branch-from"
                                       :class "form-control form-control-sm"}
-                             (for [branch-name (-> @data/local-branches
-                                                   (get (keyword project-name))
-                                                   (keys)
-                                                   (#(map name %))
-                                                   (sort))]
+                             (for [branch-name (->> project-name
+                                                    (keyword)
+                                                    (get @data/remote-branches)
+                                                    (map #(get % :name))
+                                                    (sort))]
                                ;; The master branch is selected by default:
                                [:option
                                 (merge {:value branch-name} (when (= branch-name "master")
@@ -537,7 +570,7 @@
   "Given some branch data, and a new action to run, render an alert box asking the user to confirm
   that (s)he would like to kill the currently running process."
   [{:keys [branch-name project-name action] :as branch}
-   new-action]
+   {:keys [new-action] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)]
     [:div {:class "alert alert-warning"}
      [:p [:span {:class "text-monospace font-weight-bold"} action]
@@ -547,7 +580,11 @@
      [:span [:a {:class "btn btn-secondary btn-sm" :href branch-url} "No, do nothing"]]
      [:span {:class "col-sm-1"}]
      [:span [:a {:class "btn btn-danger btn-sm"
-                 :href (str branch-url "?new-action=" new-action "&force-kill=1")}
+                 :href (-> branch-url
+                           (str "?" (-> params
+                                        (dissoc :confirm-kill)
+                                        (assoc :force-kill 1)
+                                        (params-to-query-str))))}
              "Yes, go ahead"]]]))
 
 (defn- view-exists?
@@ -563,7 +600,7 @@
   "Given some branch data, and the path for a view that needs to be rebuilt, render an alert box
   asking the user to confirm that (s)he would like to kill the currently running process."
   [{:keys [branch-name project-name action] :as branch}
-   view-path]
+   {:keys [view-path] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
         view-url (str "/" project-name "/branches/" branch-name "/views/" view-path)]
     [:div {:class "alert alert-warning"}
@@ -622,41 +659,66 @@
 (defn- render-console
   "Given some branch data, and a number of parameters related to an action or a view, render
   the console on the branch page."
-  [{:keys [action start-time command exit-code console] :as branch}
+  [{:keys [branch-name project-name action start-time command exit-code console] :as branch}
    {:keys [new-action view-path confirm-update confirm-kill] :as params}]
   (letfn [(render-status-bar []
             (cond
               (and (not (nil? view-path))
                    (not (nil? confirm-kill)))
-              (prompt-to-kill-for-view branch view-path)
+              (prompt-to-kill-for-view branch params)
 
               (and (not (nil? new-action))
                    (not (nil? confirm-kill)))
-              (prompt-to-kill-for-action branch new-action)
+              (prompt-to-kill-for-action branch params)
 
               :else
-              (render-status-bar-for-action branch)))]
+              (render-status-bar-for-action branch)))
 
-    ;; Render the part of the branch corresponding to the console:
+          (render-console-text []
+            ;; Look for ANSI escape sequences in the console text. (see:
+            ;; https://en.wikipedia.org/wiki/ANSI_escape_code#Escape_sequences). If any are found,
+            ;; then launch the python program `ansi2html` in the shell to convert them all to HTML.
+            ;; Either way wrap the console text in a pre-formatted block and return it.
+            (let [escape-index (when console (->> 0x1B (char) (string/index-of console)))
+                  ansi-commands? (and escape-index (->> escape-index (inc) (nth console) (int)
+                                                        (#(and (>= % 0x40) (<= % 0x5F)))))
+                  render-pre-block (fn [arg]
+                                     [:pre {:class "bg-light p-2"} [:samp {:class "shell"} arg]])]
+              (if (and ansi-commands? (< (count console) 50000))
+                (let [process (do (log/debug "Colourizing console using ansi2html ...")
+                                  (sh/proc "bash" "-c" (str "exec ansi2html -i < console.txt")
+                                           :dir (get-temp-dir project-name branch-name)))
+                      ansi2html-exit-code (future (sh/exit-code process))
+                      colourized-console (if (not= @ansi2html-exit-code 0)
+                                           (do (log/error "Unable to colourize console.")
+                                               console)
+                                           (sh/stream-to-string process :out))]
+                  (render-pre-block colourized-console))
+                (-> console
+                    (string/replace #"\u001b\[.*?m" "")
+                    (string/replace "<" "&lt;")
+                    (string/replace ">" "&gt;")
+                    (render-pre-block)))))]
+
     [:div {:id "console"}
      (if (nil? exit-code)
        ;; If no process is running or has been run, then ask the user to kick one off:
        [:p "Press a button above to execute an action."]
-       ;; Otherwise render the info for the action, the status bar, and the literal command
-       ;; corresponding to it:
+       ;; Otherwise render the info for the action that was run last:
        (let [readable-start (->> start-time (java.time.Instant/ofEpochMilli) (str))]
          [:div
           [:p {:class "alert alert-info"} (str "Action " action " started at ")
            [:span {:class "date"} readable-start] " ("
            [:span {:class "since"} readable-start] ")"]]))
 
+     ;; The status bar and command:
      (render-status-bar)
      (if-not (empty? command)
-       [:pre [:code {:class "shell"} (str "$ " command)]]
+       [:pre {:class "bg-light p-2"} [:samp {:class "shell"} (str "$ " command)]]
        [:div])
 
-     ;; Render the contents of the console itself:
-     [:pre [:code {:class "shell"} console]]
+     ;; The actual console text:
+     (render-console-text)
 
      ;; If an action is running and the console has a large number of lines in it, render the status
      ;; bar again:
@@ -666,50 +728,253 @@
                          (count)))
          (render-status-bar)))]))
 
+(defn- render-version-control-section
+  "Render the Version Control section on the page for a branch"
+  [{:keys [branch-name project-name] :as branch}
+   {:keys [params]
+    {:keys [confirm-push get-commit-msg get-commit-amend-msg next-task pr-added]} :params
+    :as request}]
+  (let [get-last-commit-msg #(let [process (sh/proc "git" "show" "-s" "--format=%s"
+                                                    :dir (get-workspace-dir project-name
+                                                                            branch-name))
+                                   exit-code (future (sh/exit-code process))]
+                               (if-not (= 0 @exit-code)
+                                 (do (log/error "Unable to retrieve previous commit message:"
+                                                (sh/stream-to-string process :err))
+                                     nil)
+                                 (sh/stream-to-string process :out)))
+        get-commits-to-push #(let [process (sh/proc "git" "log" "--branches" "--not" "--remotes"
+                                                    "--reverse" "--format=%s"
+                                                    :dir (get-workspace-dir project-name
+                                                                            branch-name))
+                                   exit-code (future (sh/exit-code process))]
+                               (if-not (= 0 @exit-code)
+                                 (do (log/error "Unable to retrieve commit list:"
+                                                (sh/stream-to-string process :err))
+                                     nil)
+                                 (-> process
+                                     (sh/stream-to-string :out)
+                                     ((fn [output] (when (not-empty output)
+                                                     (string/split-lines output)))))))
+        this-url (str "/" project-name "/branches/" branch-name)]
+
+    [:div {:class "col-sm-6"}
+     [:h3 "Version Control"]
+     (cond
+       ;; If a commit was requested, render a dialog to get the commit message:
+       (not (nil? get-commit-msg))
+       [:div {:class "alert alert-warning m-1"}
+        [:form {:action this-url :method "get"}
+         [:div {:class "form-group row"}
+          [:div [:label {:for "commit-msg" :class "m-1 ml-3 mr-3"} "Enter a commit message"]]
+          [:div [:input {:id "commit-msg" :name "commit-msg" :type "text"}]]]
+         [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
+         [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
+
+       ;; If an amendment to the last commit was requested, render a dialog to get the new commit
+       ;; message:
+       (not (nil? get-commit-amend-msg))
+       [:div {:class "alert alert-warning m-1"}
+        [:form {:action this-url :method "get"}
+         [:div {:class "form-group row"}
+          [:div [:label {:for "commit-amend-msg" :class "m-1 ml-3 mr-3"}
+                 "Enter a new commit message"]]
+          [:div [:input {:id "commit-amend-msg" :name "commit-amend-msg" :type "text"
+                         ;; Use the previous commit message as the default value:
+                         :onClick "this.select();" :value (get-last-commit-msg)}]]]
+         [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Amend"]
+         [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
+
+       ;; If a push was requested, render a dialog showing the list of local commits that would be
+       ;; pushed, and ask the user to confirm:
+       (not (nil? confirm-push))
+       (let [commits-to-push (get-commits-to-push)]
+         (if (-> commits-to-push (count) (> 0))
+           ;; If there are commits to push, show them:
+           [:div {:class "alert alert-danger m-1"}
+            [:div {:class "font-weight-bold"} "The following commits will be pushed:"]
+            [:ol
+             (->> commits-to-push (map #(do [:li %])))]
+            [:a {:href this-url :class "btn btn-sm btn-secondary"} "Cancel"]
+            [:a {:href (str this-url "?new-action=git-push&next-task=create-pr")
+                 :class "ml-2 btn btn-sm btn-danger"} "Push commits"]]
+           ;; Otherwise tell the user that there aren't any:
+           [:div {:class "alert alert-warning"}
+            [:div {:class "mb-3"} "There are no commits to push"]
+            [:a {:href this-url :class "btn btn-sm btn-warning"} "Dismiss"]]))
+
+       ;; The request includes a "next-task" parameter which indicates that a PR should be created:
+       (and (= next-task "create-pr")
+            (-> branch :action (= "git-push"))
+            (-> branch :exit-code (deref) (= 0)))
+       (let [current-pr (->> @data/remote-branches
+                             (#(get % (keyword project-name)))
+                             (filter #(= branch-name (:name %)))
+                             (first)
+                             :pull-request)]
+         (if (nil? current-pr)
+           ;; If the current branch doesn't already have a PR associated, provide the user with
+           ;; the option to create one:
+           [:div {:class "alert alert-success m-1"}
+            [:div {:class "mb-3"} "Commits pushed successfully."]
+            [:form {:action this-url :method "get"}
+             [:div {:class "form-group row"}
+              [:div
+               [:input {:id "pr-to-add" :name "pr-to-add" :type "text" :class "ml-3 mr-2"
+                        :required true :onClick "this.select();" :value (get-last-commit-msg)}]]
+              [:button {:type "submit" :class "btn btn-sm btn-primary mr-2"}
+               "Create a pull request"]
+              [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]]]
+           ;; Otherwise display a link to the current PR:
+           [:div {:class "alert alert-success m-1"}
+            [:div {:class "mb-3"} "Commits pushed successfully. A "
+             [:a {:href current-pr} "pull request is already open"] " on this branch."]
+            [:div [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]]]))
+
+       ;; A an attempt to create a PR has been made. If pr-added is an empty string then the attempt
+       ;; was unsuccessful, otherwise it will contain the URL of the PR.
+       (not (nil? pr-added))
+       (if-not (empty? pr-added)
+         (do
+           ;; Kick off a refresh of the remote branches but don't await for it since we already have
+           ;; the URL of the new PR in pr-added:
+           (send-off data/remote-branches
+                     data/refresh-remote-branches-for-project project-name request)
+           [:div {:class "alert alert-success"}
+            [:div "PR created successfully. To view it click " [:a {:href pr-added} "here."]]
+            [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]])
+         [:div {:class "alert alert-warning"}
+          [:div "Your PR could not be created. Contact an administrator for assistance."]
+          [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]]))
+
+     ;; The git action buttons:
+     [:table {:class "table table-borderless table-sm"}
+      [:tr
+       [:td [:a {:href (str this-url "?new-action=git-status")
+                 :class "btn btn-sm btn-success btn-block"} "Status"]]
+       [:td "Show which files have changed since the last commit"]]
+      [:tr
+       [:td [:a {:href (str this-url "?new-action=git-diff")
+                 :class "btn btn-sm btn-success btn-block"} "Diff"]]
+       [:td "Show changes to tracked files since the last commit"]]
+      [:tr
+       [:td [:a {:href (str this-url "?new-action=git-fetch")
+                 :class "btn btn-sm btn-success btn-block"} "Fetch"]]
+       [:td "Fetch the latest changes from GitHub"]]
+      [:tr
+       [:td [:a {:href (str this-url "?new-action=git-pull")
+                 :class "btn btn-sm btn-warning btn-block"} "Pull"]]
+       [:td "Update this branch with the latest changes from GitHub"]]
+      [:tr
+       [:td [:a {:href (str this-url "?get-commit-msg=1")
+                 :class "btn btn-sm btn-warning btn-block"} "Commit"]]
+       [:td "Commit your changes locally"]]
+      [:tr
+       [:td [:a {:href (str this-url "?get-commit-amend-msg=1")
+                 :class "btn btn-sm btn-warning btn-block"} "Amend"]]
+       [:td "Update your last commit with new changes"]]
+      [:tr
+       [:td [:a {:href (str this-url "?confirm-push=1")
+                 :class "btn btn-sm btn-danger btn-block"} "Push"]]
+       [:td "Push your latest local commit(s) to GitHub"]]]]))
+
 (defn- render-branch-page
   "Given some branch data, and a number of parameters related to an action or a view, construct the
   page corresponding to a branch."
-  [{:keys [branch-name project-name Makefile process] :as branch}
+  [{:keys [branch-name project-name Makefile] :as branch}
    {:keys [params]
-    {:keys [new-action view-path missing-view confirm-kill confirm-update]} :params
+    {:keys [view-path missing-view confirm-update commit-msg commit-amend-msg pr-to-add]} :params
     :as request}]
-  (html-response
-   request
-   {:title (-> config :projects (get project-name) :project-title
-               (str " -- " branch-name))
-    :heading (str "DROID for "
-                  (-> config :projects (get project-name) :project-title))
-    :content [:div
-              [:p (-> config :projects (get project-name) :project-description)]
-              [:div
-               [:h2 [:a {:href (str "/" project-name)} (str "Branch: " branch-name)]]
-               [:small [:p {:class "mt-n2"}
-                        (branch-status-summary project-name branch-name)]]
+  (let [this-url (str "/" project-name "/branches/" branch-name)]
+    (cond
+      ;; A brand new commit has been requested (and confirmed):
+      (and (not (read-only? request))
+           (not (nil? commit-msg))
+           (-> commit-msg (string/trim) (not-empty)))
+      (let [encoded-commit-msg (-> commit-msg (string/replace #"\"" "'") (codec/url-encode))]
+        (log/info "User" (-> request :session :user :login) "adding local commit to branch"
+                  branch-name "in project" project-name "with commit message:" commit-msg)
+        (-> this-url
+            (str "?new-action=git-commit&new-action-param=" encoded-commit-msg)
+            (redirect)))
 
-               [:h3 "Workflow"]
-               ;; If the missing-view parameter is present, then the user with read-only access is
-               ;; trying to look at a view that doesn't exist:
-               (cond
-                 (not (nil? missing-view))
-                 (notify-missing-view branch view-path)
+      ;; An amendment to the last commit has been requested (and confirmed):
+      (and (not (read-only? request))
+           (not (nil? commit-amend-msg))
+           (-> commit-amend-msg (string/trim) (not-empty)))
+      (let [encoded-commit-amend-msg (-> commit-amend-msg
+                                         (string/replace #"\"" "'")
+                                         (codec/url-encode))]
+        (log/info "User" (-> request :session :user :login) "amending local commit to branch"
+                  branch-name "in project" project-name "with commit message:" commit-amend-msg)
+        (-> this-url
+            (str "?new-action=git-amend&new-action-param=" encoded-commit-amend-msg)
+            (redirect)))
 
-                 (not (nil? confirm-update))
-                 (prompt-to-update-view branch view-path))
+      ;; The creation of a pull request has been requested. Here we simply call the function in gh/
+      ;; and add its return value to the URL for redirection. Any problems are handled elsewhere.
+      (and (not (read-only? request))
+           (not (nil? pr-to-add)))
+      (->> pr-to-add
+           (gh/create-pr project-name branch-name
+                         (-> request :session :user :login)
+                         (-> request :oauth2/access-tokens :github :token))
+           (codec/url-encode)
+           (str this-url "?pr-added=")
+           (redirect))
 
-               ;; Render the Workflow HTML from the Makefile:
-               (or (:html Makefile)
-                   [:ul [:li "No workflow found"]])
+      ;; Otherwise process the request as normal:
+      :else
+      (html-response
+       request
+       {:title (-> config :projects (get project-name) :project-title (str " -- " branch-name))
+        :heading [:div
+                  [:a {:href "/"} "DROID"]
+                  " / "
+                  [:a {:href (str "/" project-name)} project-name]
+                  " / "
+                  branch-name]
+        :content [:div
+                  [:div
+                   [:p {:class "mt-n2"} (branch-status-summary project-name branch-name)]
 
-               [:h3 "Console"]
-               (render-console branch params)]]}))
+                   [:hr {:class "line1"}]
+
+                   [:div {:class "row"}
+                    [:div {:class "col-sm-6"}
+                     [:h3 "Workflow"]
+                     ;; If the missing-view parameter is present, then the user with read-only access
+                     ;; is trying to look at a view that doesn't exist:
+                     (cond
+                       (not (nil? missing-view))
+                       (notify-missing-view branch view-path)
+
+                       (not (nil? confirm-update))
+                       (prompt-to-update-view branch view-path))
+
+                     ;; Render the Workflow HTML from the Makefile:
+                     (or (:html Makefile)
+                         [:ul [:li "No workflow found"]])]
+
+                    ;; Render the Version Control section if the user has sufficient permission:
+                    (when-not (read-only? request)
+                      (render-version-control-section branch request))]]
+
+                  [:hr {:class "line1"}]
+
+                  [:div
+                   [:h3 "Console"]
+                   (render-console branch params)]]}))))
 
 (defn view-file
   "View a file in the workspace if it is in the list of allowed views for the branch. If the file is
   out of date, then ask whether the current version should be served or whether it should be
   rebuilt."
-  [{{:keys [project-name branch-name view-path confirm-update force-old force-update
+  [{:keys [params]
+    {:keys [project-name branch-name view-path confirm-update force-old force-update
             confirm-kill force-kill missing-view]} :params,
     :as request}]
+  (log/debug "Processing request in view-file with params:" params)
   (letfn [(up-to-date? []
             ;; Run `make -q` (in the foreground) in the shell to see if the view is up to date:
             (let [process (sh/proc "make" "-q" view-path
@@ -838,51 +1103,71 @@
 (defn hit-branch
   "Render a branch, possibly performing an action on it in the process. Note that this function will
   call the branch's agent to potentially modify the branch."
-  [{{:keys [project-name branch-name new-action confirm-kill force-kill]} :params
+  [{:keys [params]
+    {:keys [project-name branch-name new-action new-action-param confirm-kill force-kill]} :params
     :as request}]
   (letfn [(launch-process [branch]
             (log/info "Starting action" new-action "on branch" branch-name "of project"
-                      project-name "for user" (-> request :session :user :login))
-            (let [process (sh/proc "bash" "-c"
-                                   ;; `exec` is needed here to prevent the make process from
-                                   ;; detaching from the parent (since that would make it difficult
-                                   ;; to destroy later).
-                                   (str
-                                    "exec make " new-action
-                                    " > ../../temp/" branch-name "/console.txt"
-                                    " 2>&1")
-                                   :dir (get-workspace-dir project-name branch-name))]
-              ;; After spawning the process, add a pointer to it to the branch as
-              ;; well as its meta-information:
+                      project-name "for user" (-> request :session :user :login)
+                      (when new-action-param (str "with parameter " new-action-param)))
+            (let [command (if (some #(= % new-action) (->> gh/git-actions (keys) (map name)))
+                            ;; If the action is a git action then lookup its corresponding command
+                            ;; in the git-actions map. If the value retrieved is a function, then
+                            ;; pass it the appropriate parameters. Otherwise, return it as is.
+                            (-> gh/git-actions
+                                (get (keyword new-action))
+                                (#(if (function? %)
+                                    (% {:msg new-action-param, :user (-> request :session :user)})
+                                    %)))
+                            ;; Otherwise prefix it with "make ":
+                            (str "make " new-action))
+                  process (when-not (nil? command)
+                            (sh/proc "bash" "-c"
+                                     ;; `exec` is needed here to prevent the make process from
+                                     ;; detaching from the parent (since that would make it
+                                     ;; difficult to destroy later).
+                                     (str
+                                      "exec " command
+                                      " > ../../temp/" branch-name "/console.txt"
+                                      " 2>&1")
+                                     :dir (get-workspace-dir project-name branch-name)))]
+              ;; Sleep briefly:
               (Thread/sleep 1000)
-              (assoc branch
-                     :action new-action
-                     :command (str "make " new-action)
-                     :process process
-                     :start-time (System/currentTimeMillis)
-                     :cancelled? false
-                     :exit-code (future (sh/exit-code process)))))]
+              (if (nil? command)
+                ;; If the command is nil just return the branch back unchanged:
+                branch
+                ;; Otherwise add a pointer to the spawned process to the branch as
+                ;; well as the command name and other meta-information:
+                (assoc branch
+                       :action new-action
+                       :command command
+                       :process process
+                       :start-time (System/currentTimeMillis)
+                       :cancelled? false
+                       :exit-code (future (sh/exit-code process))))))]
 
+    (log/debug "Processing request in hit-branch with params:" params)
     (let [branch-key (keyword branch-name)
           project-key (keyword project-name)
           branch-agent (->> @data/local-branches project-key branch-key)
           last-exit-code (:exit-code @branch-agent)
           this-url (str "/" project-name "/branches/" branch-name)]
 
-      ;; Send off a branch refresh and then (await) for it (and for any previous jobs) to finish:
+      ;; Send off a branch refresh and then (await) for it (and for any previous modifications to
+      ;; the branch) to finish:
       (send-off branch-agent data/refresh-local-branch)
       (await branch-agent)
 
-      ;; Note that below, whenever an action is performed on a branch, we then redirect back to
-      ;; the branch page. The main reason for this is to get rid of the '?new-action=...' part of
-      ;; the URL in the browser's address bar. This is important because otherwise the user could
-      ;; then re-launch the action by mistake simply by hitting her browser's refresh button.
+      ;; If the associated process is a git action, then wait for it to finish, which is
+      ;; accomplished by dereferencing its exit code:
+      (when (->> gh/git-actions (keys) (map name) (some #(= % (:action @branch-agent))))
+        (-> @branch-agent :exit-code (deref)))
 
-      ;; Note also that below we do not call (await) after calling (send-off), because below we
+      ;; Note that below we do not call (await) after calling (send-off), because below we
       ;; always redirect back to the branch page, which results in another call to this function,
       ;; which always calls await when it starts (see above).
       (cond
-        ;; This first condition should not normally be reached, since the action buttons should all
+        ;; This first condition will not normally be hit, since the action buttons should all
         ;; be greyed out for read-only users. But this could nonetheless happen if the user tries
         ;; to manually enter the action url into the browser's address bar, so we guard against that
         ;; here:
@@ -901,7 +1186,8 @@
 
         ;; If there is no action to be performed, or the action is unrecognised, then just render
         ;; the page using the existing branch data:
-        (not-any? #(= % new-action) (->> @branch-agent :Makefile :general-actions))
+        (and (not-any? #(= % new-action) (->> @branch-agent :Makefile :general-actions))
+             (not-any? #(= % new-action) (->> gh/git-actions (keys) (map name))))
         (do
           (when-not (nil? new-action)
             (log/warn "Unrecognized action:" new-action))
@@ -914,12 +1200,22 @@
              (not (realized? last-exit-code)))
         (cond
           ;; If the force-kill parameter has been sent, then simply kill the old process and
-          ;; relaunch the new one:
+          ;; relaunch the new one. If the action is a git push, store the user credentials first
+          ;; and then remove them afterwards.
           (not (nil? force-kill))
           (do
             (send-off branch-agent kill-process (-> request :session :user))
+            (when (= new-action "git-push")
+              (send-off data/local-branches data/store-creds project-name branch-name request))
             (send-off branch-agent launch-process)
-            (redirect this-url))
+            (when (= new-action "git-push")
+              (send-off branch-agent data/remove-creds project-name branch-name))
+            (-> this-url
+                ;; Remove the force kill and new action parameters:
+                (str "?" (-> params
+                             (dissoc :force-kill :new-action :new-action-param)
+                             (params-to-query-str)))
+                (redirect)))
 
           ;; If the confirm-kill parameter has been sent, then simply render the page for the
           ;; branch. The confirm-kill flag will be recognised during rendering and a prompt
@@ -932,11 +1228,23 @@
           ;; and include the confirm-kill parameter which will be used during rendering to display
           ;; a prompt.
           :else
-          (redirect (str this-url "?new-action=" new-action "&confirm-kill=1#console")))
+          (-> this-url
+              (str "?" (-> params (assoc :confirm-kill 1) (params-to-query-str)))
+              (str "#console")
+              (redirect)))
 
         ;; If there is an action to be performed and there is no currently running process, then
-        ;; simply launch the new process:
+        ;; simply launch the new process and redirect back to the page. If the action is a git push,
+        ;; store the user credentials first and then remove them afterwards.
         :else
         (do
+          (when (= new-action "git-push")
+            (send-off data/local-branches data/store-creds project-name branch-name request))
           (send-off branch-agent launch-process)
-          (redirect this-url))))))
+          (when (= new-action "git-push")
+            (send-off branch-agent data/remove-creds project-name branch-name))
+          (-> this-url
+              ;; Remove the new action params so that the user will not be able to launch the action
+              ;; again by hitting his browser's refresh button by mistake:
+              (str "?" (-> params (dissoc :new-action :new-action-param) (params-to-query-str)))
+              (redirect)))))))
