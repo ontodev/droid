@@ -685,8 +685,7 @@
                                                         (#(and (>= % 0x40) (<= % 0x5F)))))
                   render-pre-block (fn [arg]
                                      [:pre {:class "bg-light p-2"} [:samp {:class "shell"} arg]])]
-              (if-not ansi-commands?
-                (render-pre-block console)
+              (if (and ansi-commands? (< (count console) 50000))
                 (let [process (do (log/debug "Colourizing console using ansi2html ...")
                                   (sh/proc "bash" "-c" (str "exec ansi2html -i < console.txt")
                                            :dir (get-temp-dir project-name branch-name)))
@@ -694,10 +693,13 @@
                       colourized-console (if (not= @ansi2html-exit-code 0)
                                            (do (log/error "Unable to colourize console.")
                                                console)
-                                           (->> (sh/stream-to-string process :out)
-                                                (hickory/parse-fragment)
-                                                (map hickory/as-hiccup)))]
-                  (render-pre-block colourized-console)))))]
+                                           (sh/stream-to-string process :out))]
+                  (render-pre-block colourized-console))
+                (-> console
+                    (string/replace #"\u001b\[.*?m" "")
+                    (string/replace "<" "&lt;")
+                    (string/replace ">" "&gt;")
+                    (render-pre-block)))))]
 
     [:div {:id "console"}
      (if (nil? exit-code)
