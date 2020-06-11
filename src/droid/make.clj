@@ -1,5 +1,6 @@
 (ns droid.make
   (:require [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as string]
             [markdown-to-hiccup.core :as m2h]
             [droid.dir :refer [get-workspace-dir]]
@@ -102,7 +103,7 @@
                      (flatten-to-1st-level)
                      (into #{})))
 
-              (process-makefile-html [{:keys [html file-views general-actions branch-name]
+              (process-makefile-html [{:keys [html file-views dir-views general-actions branch-name]
                                        :as makefile}]
                 ;; Recurses through the html hiccup structure and transforms any links that are
                 ;; found into either action links or view links:
@@ -116,7 +117,7 @@
                                   ;; access to.
                                   :class "btn btn-primary btn-sm action-btn"} text]
 
-                            (some #(= href %) file-views)
+                            (some #(= href %) (set/union file-views dir-views))
                             [tag {:href (str "/" project-name "/branches/" branch-name
                                              "/views/" href)} text]
 
@@ -126,7 +127,9 @@
                          (if (= (type elem) clojure.lang.PersistentVector)
                            (if (= (first elem) :a)
                              (process-link elem)
-                             (vec (process-makefile-html {:html elem, :file-views file-views,
+                             (vec (process-makefile-html {:html elem,
+                                                          :file-views file-views,
+                                                          :dir-views dir-views,
                                                           :general-actions general-actions,
                                                           :branch-name branch-name})))
                            elem))
@@ -135,7 +138,7 @@
              (extract-nested-links)
              ;; For all of the extracted links, add those that do not contain an 'authority' part
              ;; (i.e. a domain name) to the list of targets, and then also place them, as
-             ;; appropriate, into one of the general-actions or views lists:
+             ;; appropriate, into one of the general-actions, file-views, or dir-views lists:
              (map (fn [[tag {href :href} text]]
                     (when (nil? (->> href
                                      (java.net.URI.)
@@ -143,9 +146,9 @@
                                      :authority))
                       (merge
                        {:targets #{href}}
-                       (if (some #(= href %) phony-targets)
-                         {:general-actions #{href}}
-                         {:file-views #{href}})))))
+                       (cond (some #(= href %) phony-targets) {:general-actions #{href}}
+                             (string/ends-with? href "/") {:dir-views #{href}}
+                             :else {:file-views #{href}})))))
              (apply merge-with into)
              ;; Add the original html to the makefile record, and then send everything through
              ;; process-makefile-html, which will transform the view and action links accordingly:
