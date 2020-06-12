@@ -62,7 +62,7 @@
        request))))
 
 (defroutes app-routes
-  (GET "/" [] html/index)
+  (GET "/" [] html/render-index)
   (GET "/:project-name" [] html/render-project)
   (GET "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)
   (GET "/:project-name/branches/:branch-name" [] html/hit-branch)

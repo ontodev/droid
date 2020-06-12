@@ -6,6 +6,7 @@
   :dependencies [[org.clojure/clojure "1.10.1"]
                  [org.clojure/java.jdbc "0.7.11"]
                  [compojure "1.6.1"]
+                 [decorate "0.1.3"]
                  [environ "1.1.0"]
                  [hiccup "1.0.5"]
                  [http-kit "2.3.0"]

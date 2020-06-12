@@ -2,6 +2,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [clojure.test :refer [function?]]
+            [decorate.core :refer [decorate defdecorator]]
             [hiccup.page :refer [html5]]
             [me.raynes.conch.low-level :as sh]
             [droid.config :refer [config]]
@@ -281,7 +282,7 @@
               [:p "The requested resource could not be found."]]
     :status 404}))
 
-(defn index
+(defn render-index
   "Render the index page"
   [{:keys [params]
     {:keys [just-logged-out reset really-reset]} :params,
@@ -437,98 +438,90 @@
 
         ;; Otherwise just render the page
         :else
-        (do
-          ;; If the collection of remote branches is empty (which will be true if the server has
-          ;; restarted recently) then refresh it:
-          (when (and (->> project-name (keyword) (get @data/remote-branches) (empty?))
-                     (not (read-only? request)))
-            (send-off data/remote-branches
-                      data/refresh-remote-branches-for-project project-name request)
-            (await data/remote-branches))
-          (html-response
-           request
-           {:title (->> project :project-title (str "DROID for "))
-            :heading [:div
-                      [:a {:href "/"} "DROID"]
-                      " / "
-                      (-> project :project-title)]
-            :content [:div
-                      [:p (->> project :project-description)]
+        (html-response
+         request
+         {:title (->> project :project-title (str "DROID for "))
+          :heading [:div
+                    [:a {:href "/"} "DROID"]
+                    " / "
+                    (-> project :project-title)]
+          :content [:div
+                    [:p (->> project :project-description)]
 
-                      ;; Display this alert and question when to-delete parameter is present:
-                      (when (and (not (nil? to-delete))
-                                 (not (read-only? request)))
-                        [:div {:class "alert alert-danger"}
-                         "Are you sure you want to delete the branch "
-                         [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
-                         [:div {:class "pt-2"}
-                          [:a {:class "btn btn-sm btn-primary" :href this-url} "No, cancel"]
-                          [:span "&nbsp;"]
-                          [:a {:class "btn btn-sm btn-danger"
-                               :href (str this-url "?to-really-delete=" to-delete)}
-                           "Yes, continue"]]])
+                    ;; Display this alert and question when to-delete parameter is present:
+                    (when (and (not (nil? to-delete))
+                               (not (read-only? request)))
+                      [:div {:class "alert alert-danger"}
+                       "Are you sure you want to delete the branch "
+                       [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
+                       [:div {:class "pt-2"}
+                        [:a {:class "btn btn-sm btn-primary" :href this-url} "No, cancel"]
+                        [:span "&nbsp;"]
+                        [:a {:class "btn btn-sm btn-danger"
+                             :href (str this-url "?to-really-delete=" to-delete)}
+                         "Yes, continue"]]])
 
-                      ;; Display this alert and question when the create parameter is present:
-                      (when (and (not (nil? create))
-                                 (not (read-only? request)))
-                        [:div {:class "alert alert-info mt-3"}
-                         [:form {:action this-url :method "get"}
-                          [:div {:class "font-weight-bold mb-3 text-primary"}
-                           "Create a new branch"]
-                          [:div {:class "form-group row"}
-                           ;; Select list on available remote branches to serve as the
-                           ;; branching-off point:
-                           [:div {:class "col-sm-3"}
-                            [:div
-                             [:label {:for "branch-from" :class "mb-n1 text-secondary"}
-                              "Branch from"]]
-                            [:select {:id "branch-from" :name "branch-from"
-                                      :class "form-control form-control-sm"}
-                             (for [branch-name (->> project-name
-                                                    (keyword)
-                                                    (get @data/remote-branches)
-                                                    (map #(get % :name))
-                                                    (sort))]
-                               ;; The master branch is selected by default:
-                               [:option
-                                (merge {:value branch-name} (when (= branch-name "master")
-                                                              {:selected "selected"}))
-                                branch-name])]]
-                           ;; Input box for inputting the desired new branch name:
-                           [:div {:class "col-sm-3"}
-                            [:div
-                             [:label {:for "to-create" :class "mb-n1 text-secondary"}
-                              "Branch name"]]
-                            [:div
-                             [:input {:id "to-create" :name "to-create" :type "text"}]]
-                            ;; If the user previously tried to create a branch with an invalid
-                            ;; name, show an alert:
-                            (when-not (nil? invalid-name-error)
-                              [:div {:class "mb-1"}
-                               [:small {:class "text-danger"} invalid-name-error]])]
-                           ;; The create and cancel buttons:
-                           [:div {:class "col-sm-3"}
-                            [:div "&nbsp;"]
-                            [:button {:type "submit" :class "btn btn-sm btn-success mr-2"}
-                             "Create"]
-                            [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
-                             "Cancel"]]]]])
+                    ;; Display this alert and question when the create parameter is present:
+                    (when (and (not (nil? create))
+                               (not (read-only? request)))
+                      [:div {:class "alert alert-info mt-3"}
+                       [:form {:action this-url :method "get"}
+                        [:div {:class "font-weight-bold mb-3 text-primary"}
+                         "Create a new branch"]
+                        [:div {:class "form-group row"}
+                         ;; Select list on available remote branches to serve as the
+                         ;; branching-off point:
+                         [:div {:class "col-sm-3"}
+                          [:div
+                           [:label {:for "branch-from" :class "mb-n1 text-secondary"}
+                            "Branch from"]]
+                          [:select {:id "branch-from" :name "branch-from"
+                                    :class "form-control form-control-sm"}
+                           (for [branch-name (->> project-name
+                                                  (keyword)
+                                                  (get @data/remote-branches)
+                                                  (map #(get % :name))
+                                                  (sort))]
+                             ;; The master branch is selected by default:
+                             [:option
+                              (merge {:value branch-name} (when (= branch-name "master")
+                                                            {:selected "selected"}))
+                              branch-name])]]
+                         ;; Input box for inputting the desired new branch name:
+                         [:div {:class "col-sm-3"}
+                          [:div
+                           [:label {:for "to-create" :class "mb-n1 text-secondary"}
+                            "Branch name"]]
+                          [:div
+                           [:input {:id "to-create" :name "to-create" :type "text"}]]
+                          ;; If the user previously tried to create a branch with an invalid
+                          ;; name, show an alert:
+                          (when-not (nil? invalid-name-error)
+                            [:div {:class "mb-1"}
+                             [:small {:class "text-danger"} invalid-name-error]])]
+                         ;; The create and cancel buttons:
+                         [:div {:class "col-sm-3"}
+                          [:div "&nbsp;"]
+                          [:button {:type "submit" :class "btn btn-sm btn-success mr-2"}
+                           "Create"]
+                          [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
+                           "Cancel"]]]]])
 
-                      ;; The non-conditional content of the project page is here:
-                      [:h3 "Branches"]
-                      [:div {:class "pb-2"}
-                       [:a {:class "btn btn-sm btn-primary"
-                            :href (str this-url "?refresh=1")
+                    ;; The non-conditional content of the project page is here:
+                    [:h3 "Branches"]
+                    [:div {:class "pb-2"}
+                     [:a {:class "btn btn-sm btn-primary"
+                          :href (str this-url "?refresh=1")
+                          :data-toggle "tooltip"
+                          :title "Refresh available local and remote branches"}
+                      "Refresh"]
+                     (when-not (read-only? request)
+                       [:a {:class "btn btn-sm btn-success ml-2"
+                            :href (str this-url "?create=1")
                             :data-toggle "tooltip"
-                            :title "Refresh available local and remote branches"}
-                        "Refresh"]
-                       (when-not (read-only? request)
-                         [:a {:class "btn btn-sm btn-success ml-2"
-                              :href (str this-url "?create=1")
-                              :data-toggle "tooltip"
-                              :title "Create a new local branch"}
-                          "Create new"])]
-                      (->> request (read-only?) (render-project-branches project-name))]}))))))
+                            :title "Create a new local branch"}
+                        "Create new"])]
+                    (->> request (read-only?) (render-project-branches project-name))]})))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
@@ -1265,3 +1258,25 @@
               ;; again by hitting his browser's refresh button by mistake:
               (str "?" (-> params (dissoc :new-action :new-action-param) (params-to-query-str)))
               (redirect)))))))
+
+;; Decorator for accesses to branches, views, and the project page: Check to see if the remote
+;; branch list is empty, and if it is, run a refresh:
+(defdecorator refresh-remotes-when-empty
+  [f] [& args]
+  (let [[{:keys [params]
+          {:keys [project-name]} :params, {{:keys [login]} :user} :session
+          :as request}
+         & rest] args]
+    ;; If the collection of remote branches is empty then refresh it:
+    (when (and (not (read-only? request))
+               (not (nil? project-name))
+               (->> project-name (keyword) (get @data/remote-branches) (empty?)))
+      (send-off data/remote-branches
+                data/refresh-remote-branches-for-project project-name request)
+      (await data/remote-branches))
+    ;; Now we can call the function:
+    (apply f args)))
+
+(decorate render-project refresh-remotes-when-empty)
+(decorate view-file refresh-remotes-when-empty)
+(decorate hit-branch refresh-remotes-when-empty)
