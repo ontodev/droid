@@ -946,8 +946,8 @@
                    [:div {:class "row"}
                     [:div {:class "col-sm-6"}
                      [:h3 "Workflow"]
-                     ;; If the missing-view parameter is present, then the user with read-only access
-                     ;; is trying to look at a view that doesn't exist:
+                     ;; If the missing-view parameter is present, then the user with read-only
+                     ;; access is trying to look at a view that doesn't exist:
                      (cond
                        (not (nil? missing-view))
                        (notify-missing-view branch view-path)
@@ -1020,17 +1020,31 @@
           ;; Kick off a job to refresh the branch information, wait for it to complete, and then
           ;; finally retrieve the views from the branch's Makefile. Only a request to retrieve
           ;; one of these allowed views will be honoured:
-          allowed-views (do (send-off branch-agent data/refresh-local-branch)
-                            (await branch-agent)
-                            (-> @branch-agent :Makefile :views))]
-
+          [allowed-file-views
+           allowed-dir-views] (do (send-off branch-agent data/refresh-local-branch)
+                                  (await branch-agent)
+                                  (-> @branch-agent
+                                      :Makefile
+                                      ;; Generate a vector containing two hash sets for each type
+                                      ;; of view:
+                                      (#(-> (:file-views %)
+                                            (hash-set)
+                                            (vec)
+                                            (conj (:dir-views %))))))]
       ;; Note that below we do not call (await) after calling (send-off), because below we
       ;; always then redirect back to the view page, which results in another call to this function,
       ;; which always calls await when it starts (see above).
       (cond
-        ;; If the view-path isn't in the set of allowed views, then render a 404:
-        (not (some #(= view-path %) allowed-views))
+        ;; If the view-path isn't in the set of allowed file views, or isn't inside one of the
+        ;; allowed directory views, then render a 404:
+        (and (not-any? #(= view-path %) allowed-file-views)
+             (not-any? #(-> view-path (string/starts-with? %)) allowed-dir-views))
         (render-404 request)
+
+        ;; If the view is a directory, assume that the user wants a file called index.html inside
+        ;; that directory:
+        (and view-path (-> view-path (string/ends-with? "/")))
+        (redirect (-> this-url (str "index.html")))
 
         ;; If the 'missing-view' parameter is present, then render the page for the branch. It will
         ;; be handled during rendering and a notification area will be displayed on the page
