@@ -1,7 +1,6 @@
 (ns droid.data
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
-            [environ.core :refer [env]]
             [me.raynes.conch.low-level :as sh]
             [droid.command :as cmd]
             [droid.config :refer [config]]
@@ -9,21 +8,6 @@
             [droid.github :as gh]
             [droid.log :as log]
             [droid.make :as make]))
-
-(def secrets
-  "Secret IDs and passcodes, loaded from environment variables."
-  ;; Note that the env package maps an environment variable named ENV_VAR into the keyword
-  ;; :env-var, so below :github-client-id is associated with GITHUB_CLIENT_ID and similarly for
-  ;; :github-client-secret.
-  (->> [:github-client-id :github-client-secret]
-       (map #(let [val (env %)]
-               (if (nil? val)
-                 ;; Raise an error if the environment variable isn't found:
-                 (-> % (str " not set") (log/fail))
-                 ;; Otherwise return a hashmap with one entry:
-                 {% val})))
-       ;; Merge the hashmaps corresponding to each environment variable into one hashmap:
-       (apply merge)))
 
 (defn- default-agent-error-handler
   "The default error handler to use with agents"
