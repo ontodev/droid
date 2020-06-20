@@ -63,6 +63,11 @@
                  (str "=" (val %))))
        (string/join "&")))
 
+(defn- run-cgi
+  "TODO: Insert docstring here"
+  [script-path]
+  (log/info "Running executable view" script-path))
+
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session] :as request}
@@ -89,7 +94,7 @@
       {:rel "stylesheet"
        :href "//cdn.jsdelivr.net/gh/highlightjs/cdn-release@9.16.2/build/styles/default.min.css"}]
      [:title title]]
-    [:body
+    [:body {:class "bg-white"}
      [:div {:id "content" :class "container p-3"}
       (login-status request)
       [:hr {:class "line1"}]
@@ -971,144 +976,165 @@
             confirm-kill force-kill missing-view]} :params,
     :as request}]
   (log/debug "Processing request in view-file with params:" params)
-  (letfn [(up-to-date? []
-            ;; Run `make -q` (in the foreground) in the shell to see if the view is up to date:
-            (let [process (sh/proc "make" "-q" view-path
-                                   :dir (get-workspace-dir project-name branch-name))
-                  exit-code (future (sh/exit-code process))]
-              (or (= @exit-code 0) false)))
+  (let [branch-key (keyword branch-name)
+        project-key (keyword project-name)
+        branch-agent (->> @data/local-branches project-key branch-key)
+        branch-url (str "/" project-name "/branches/" branch-name)
+        this-url (str branch-url "/views/" view-path)
+        ;; Kick off a job to refresh the branch information, wait for it to complete, and then
+        ;; finally retrieve the views from the branch's Makefile. Only a request to retrieve
+        ;; one of these allowed views will be honoured:
+        [allowed-file-views
+         allowed-dir-views
+         allowed-exec-views] (do (send-off branch-agent data/refresh-local-branch)
+                                 (await branch-agent)
+                                 (-> @branch-agent
+                                     :Makefile
+                                     ;; Generate a vector containing two hash sets for each type
+                                     ;; of view:
+                                     (#(-> (:file-views %)
+                                           (hash-set)
+                                           (vec)
+                                           (conj (:dir-views %))
+                                           (conj (:exec-views %))))))
 
-          (update-view [branch]
-            ;; Run `make` (in the background) to rebuild the view, with output
-            ;; directed to the branch's console.txt file.
-            (log/info "Rebuilding view" view-path "from branch" branch-name "of project"
-                      project-name "for user" (-> request :session :user :login))
-            (let [process (sh/proc "bash" "-c"
-                                   (str "exec make " view-path
-                                        " > ../../temp/" branch-name "/console.txt "
-                                        " 2>&1")
-                                   :dir (get-workspace-dir project-name branch-name))
-                  exit-code (future (sh/exit-code process))]
-              (assoc branch
-                     :action view-path
-                     :command (str "make " view-path)
-                     :process process
-                     :start-time (System/currentTimeMillis)
-                     :cancelled? false
-                     :exit-code (future (sh/exit-code process)))))
+        ;; Run `make -q` to see if the view is up to date:
+        up-to-date? #(let [process (sh/proc "make" "-q" view-path
+                                            :dir (get-workspace-dir project-name branch-name))
+                           exit-code (future (sh/exit-code process))]
+                       (or (= @exit-code 0) false))
 
-          (deliver-view []
-            ;; Serve the view from the filesystem:
-            (-> (get-workspace-dir project-name branch-name)
-                (str view-path)
-                (file-response)
-                ;; Views must not be cached by the client browser:
-                (assoc :headers {"Cache-Control" "no-store"})))]
+        ;; Run `make` (in the background) to rebuild the view, with output directed to the branch's
+        ;; console.txt file:
+        update-view (fn [branch]
+                      (log/info "Rebuilding view" view-path "from branch" branch-name "of project"
+                                project-name "for user" (-> request :session :user :login))
+                      (let [process (sh/proc "bash" "-c"
+                                             (str "exec make " view-path
+                                                  " > ../../temp/" branch-name "/console.txt "
+                                                  " 2>&1")
+                                             :dir (get-workspace-dir project-name branch-name))
+                            exit-code (future (sh/exit-code process))]
+                        (assoc branch
+                               :action view-path
+                               :command (str "make " view-path)
+                               :process process
+                               :start-time (System/currentTimeMillis)
+                               :cancelled? false
+                               :exit-code (future (sh/exit-code process)))))
 
-    (let [branch-key (keyword branch-name)
-          project-key (keyword project-name)
-          branch-agent (->> @data/local-branches project-key branch-key)
-          branch-url (str "/" project-name "/branches/" branch-name)
-          this-url (str branch-url "/views/" view-path)
-          ;; Kick off a job to refresh the branch information, wait for it to complete, and then
-          ;; finally retrieve the views from the branch's Makefile. Only a request to retrieve
-          ;; one of these allowed views will be honoured:
-          [allowed-file-views
-           allowed-dir-views] (do (send-off branch-agent data/refresh-local-branch)
-                                  (await branch-agent)
-                                  (-> @branch-agent
-                                      :Makefile
-                                      ;; Generate a vector containing two hash sets for each type
-                                      ;; of view:
-                                      (#(-> (:file-views %)
-                                            (hash-set)
-                                            (vec)
-                                            (conj (:dir-views %))))))]
-      ;; Note that below we do not call (await) after calling (send-off), because below we
-      ;; always then redirect back to the view page, which results in another call to this function,
-      ;; which always calls await when it starts (see above).
-      (cond
-        ;; If the view-path isn't in the set of allowed file views, or isn't inside one of the
-        ;; allowed directory views, then render a 404:
-        (and (not-any? #(= view-path %) allowed-file-views)
-             (not-any? #(-> view-path (string/starts-with? %)) allowed-dir-views))
-        (render-404 request)
+        ;; Deliver an executable, possibly CGI-aware, script:
+        deliver-exec-view #(let [script-path (-> (get-workspace-dir project-name branch-name)
+                                                 (str view-path))]
+                             (cond (-> script-path (io/file) (.canExecute) (not))
+                                   (log/error view-path "is not executable")
 
-        ;; If the view is a directory, assume that the user wants a file called index.html inside
-        ;; that directory:
-        (and view-path (-> view-path (string/ends-with? "/")))
-        (redirect (-> this-url (str "index.html")))
+                                   (-> script-path (slurp) (string/starts-with? "#!") (not))
+                                   (log/error view-path "does not start with '#!'")
 
-        ;; If the 'missing-view' parameter is present, then render the page for the branch. It will
-        ;; be handled during rendering and a notification area will be displayed on the page
-        ;; informing the user (who has read-only access) that the view does not exist:
-        (not (nil? missing-view))
-        (render-branch-page @branch-agent request)
+                                   :else
+                                   (run-cgi script-path)))
 
-        ;; If the user has read-only access, then if the view exists deliver it whether or not it is
-        ;; up to date. If the view does not exist, then redirect back to the page with the
-        ;; missing-view parameter set.
-        (read-only? request)
-        (if (view-exists? @branch-agent view-path)
-          (deliver-view)
-          (redirect (-> this-url (str "?missing-view=") (str view-path))))
+        ;; Serve the view from the filesystem:
+        deliver-file-view #(-> (get-workspace-dir project-name branch-name)
+                               (str view-path)
+                               (file-response)
+                               ;; Views must not be cached by the client browser:
+                               (assoc :headers {"Cache-Control" "no-store"}))
 
-        ;; Render the current version of the view if either the 'force-old' parameter is present, or
-        ;; if the current version of the view is already up-to-date:
-        (or (not (nil? force-old))
-            (up-to-date?))
+        deliver-view (fn [] (cond
+                              (some #(= view-path %) allowed-exec-views)
+                              (deliver-exec-view)
+
+                              :else
+                              (deliver-file-view)))]
+
+    ;; Note that below we do not call (await) after calling (send-off), because below we
+    ;; always then redirect back to the view page, which results in another call to this function,
+    ;; which always calls await when it starts (see above).
+    (cond
+      ;; If the view-path isn't in the sets of allowed file and exec views, and it isn't inside
+      ;; one of the allowed directory views, then render a 404:
+      (and (not-any? #(= view-path %) allowed-file-views)
+           (not-any? #(= view-path %) allowed-exec-views)
+           (not-any? #(-> view-path (string/starts-with? %)) allowed-dir-views))
+      (render-404 request)
+
+      ;; If the view is a directory, assume that the user wants a file called index.html inside
+      ;; that directory:
+      (and view-path (-> view-path (string/ends-with? "/")))
+      (redirect (-> this-url (str "index.html")))
+
+      ;; If the 'missing-view' parameter is present, then render the page for the branch. It will
+      ;; be handled during rendering and a notification area will be displayed on the page
+      ;; informing the user (who has read-only access) that the view does not exist:
+      (not (nil? missing-view))
+      (render-branch-page @branch-agent request)
+
+      ;; If the user has read-only access, then if the view exists deliver it whether or not it is
+      ;; up to date. If the view does not exist, then redirect back to the page with the
+      ;; missing-view parameter set.
+      (read-only? request)
+      (if (view-exists? @branch-agent view-path)
         (deliver-view)
+        (redirect (-> this-url (str "?missing-view=") (str view-path))))
 
-        ;; If there is a currently running process (indicated by the presence of an unrealised
-        ;; exit code on the branch), then what needs to be done will be determined by the
-        ;; presence of further query parameters sent in the request.
-        (and (->> @branch-agent :process (nil?) (not))
-             (->> @branch-agent :exit-code (realized?) (not)))
-        (cond
-          ;; If the force-kill parameter has been sent, kill the process, update the view,
-          ;; and redirect the user back to the view again:
-          (not (nil? force-kill))
-          (do
-            (send-off branch-agent kill-process (-> request :session :user))
-            (send-off branch-agent update-view)
-            (redirect this-url))
+      ;; Render the current version of the view if either the 'force-old' parameter is present, or
+      ;; if the current version of the view is already up-to-date:
+      (or (not (nil? force-old))
+          (up-to-date?))
+      (deliver-view)
 
-          ;; If the confirm-kill parameter has been sent, then simply render the page for the
-          ;; branch. The confirm-kill flag will be recognised during rendering and a prompt
-          ;; will be displayed to request that the user confirm his action:
-          (not (nil? confirm-kill))
-          (render-branch-page @branch-agent request)
-
-          ;; If the action currently running is an update of the very view we are requesting,
-          ;; then do nothing and redirect back to the branch page:
-          (->> @branch-agent :action (= view-path))
-          (redirect branch-url)
-
-          ;; Otherwise redirect back to the page with the confirm-kill flag set:
-          :else
-          (redirect (str this-url "?confirm-kill=1#console")))
-
-        ;; If the 'force-update' parameter is present, immediately (re)build the view in the
-        ;; background and then redirect to the branch's page where the user can view the build
-        ;; process's output in the console:
-        (not (nil? force-update))
+      ;; If there is a currently running process (indicated by the presence of an unrealised
+      ;; exit code on the branch), then what needs to be done will be determined by the
+      ;; presence of further query parameters sent in the request.
+      (and (->> @branch-agent :process (nil?) (not))
+           (->> @branch-agent :exit-code (realized?) (not)))
+      (cond
+        ;; If the force-kill parameter has been sent, kill the process, update the view,
+        ;; and redirect the user back to the view again:
+        (not (nil? force-kill))
         (do
+          (send-off branch-agent kill-process (-> request :session :user))
           (send-off branch-agent update-view)
-          ;; Here we aren't (await)ing for the process to finish, but for the branch to update,
-          ;; which in this case means adding a reference to the currently running build process:
-          (await branch-agent)
-          (redirect branch-url))
+          (redirect this-url))
 
-        ;; If the 'confirm-update' parameter is present, simply render the page for the branch. The
-        ;; confirm-update flag will be recognised during rendering and a prompt will be displayed
-        ;; asking the user to confirm her action:
-        (not (nil? confirm-update))
+        ;; If the confirm-kill parameter has been sent, then simply render the page for the
+        ;; branch. The confirm-kill flag will be recognised during rendering and a prompt
+        ;; will be displayed to request that the user confirm his action:
+        (not (nil? confirm-kill))
         (render-branch-page @branch-agent request)
 
-        ;; Otherwise redirect back to this page, setting the confirm-update flag to ask the user if
-        ;; she would really like to rebuild the file:
+        ;; If the action currently running is an update of the very view we are requesting,
+        ;; then do nothing and redirect back to the branch page:
+        (->> @branch-agent :action (= view-path))
+        (redirect branch-url)
+
+        ;; Otherwise redirect back to the page with the confirm-kill flag set:
         :else
-        (redirect (str this-url "?confirm-update=1"))))))
+        (redirect (str this-url "?confirm-kill=1#console")))
+
+      ;; If the 'force-update' parameter is present, immediately (re)build the view in the
+      ;; background and then redirect to the branch's page where the user can view the build
+      ;; process's output in the console:
+      (not (nil? force-update))
+      (do
+        (send-off branch-agent update-view)
+        ;; Here we aren't (await)ing for the process to finish, but for the branch to update,
+        ;; which in this case means adding a reference to the currently running build process:
+        (await branch-agent)
+        (redirect branch-url))
+
+      ;; If the 'confirm-update' parameter is present, simply render the page for the branch. The
+      ;; confirm-update flag will be recognised during rendering and a prompt will be displayed
+      ;; asking the user to confirm her action:
+      (not (nil? confirm-update))
+      (render-branch-page @branch-agent request)
+
+      ;; Otherwise redirect back to this page, setting the confirm-update flag to ask the user if
+      ;; she would really like to rebuild the file:
+      :else
+      (redirect (str this-url "?confirm-update=1")))))
 
 (defn hit-branch
   "Render a branch, possibly performing an action on it in the process. Note that this function will
