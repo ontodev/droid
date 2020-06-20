@@ -215,13 +215,16 @@
        ;; Merge that hash-map into the hash-map for all projects:
        (merge all-branches)))
 
-(defn kill-process [{:keys [process action branch-name project-name] :as branch}
-                    {:keys [login] :as user}]
+(defn kill-process
   "Kill the running process associated with the given branch and return the branch to the caller."
+  [{:keys [process action branch-name project-name] :as branch} & [{:keys [login] :as user}]]
   (if-not (nil? process)
     (do
-      (-> (str "Cancelling process" action "on branch" branch-name "of" project-name)
-          (#(str % (when login " on behalf of" login))))
+      (-> (str "Cancelling process " action " on branch " branch-name " of " project-name)
+          (#(if login
+              (str % " on behalf of " login)
+              %))
+          (log/info))
       (sh/destroy process)
       (assoc branch :cancelled? true))
     branch))
