@@ -10,7 +10,6 @@
             [ring.middleware.session.cookie :refer [cookie-store]]
             [ring.util.response :refer [redirect]]
             [droid.config :refer [config]]
-            [droid.data :as data]
             [droid.db :as db]
             [droid.github :as gh]
             [droid.log :as log]

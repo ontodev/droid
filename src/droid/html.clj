@@ -5,8 +5,8 @@
             [decorate.core :refer [decorate defdecorator]]
             [hiccup.page :refer [html5]]
             [me.raynes.conch.low-level :as sh]
+            [droid.branches :as branches]
             [droid.config :refer [config]]
-            [droid.data :as data]
             [droid.make :as make]
             [droid.dir :refer [get-workspace-dir get-temp-dir]]
             [droid.github :as gh]
@@ -133,7 +133,7 @@
   "Given the names of a project and branch, output a summary string of the branch's commit status
   as compared with its remote."
   [project-name branch-name]
-  (let [branch-agent (-> @data/local-branches
+  (let [branch-agent (-> @branches/local-branches
                          (get (keyword project-name))
                          (get (keyword branch-name)))
 
@@ -146,7 +146,7 @@
                                        (#(str "https://github.com/" org "/" repo "/tree/" %)))}
                          remote])]
 
-    (send-off branch-agent data/refresh-local-branch)
+    (send-off branch-agent branches/refresh-local-branch)
     (await branch-agent)
     (if-not (-> @branch-agent :git-status :remote)
       [:span {:class "text-muted"} "No remote"]
@@ -163,7 +163,7 @@
   [project-name restricted-access?]
   (let [local-branch-names (->> project-name
                                 (keyword)
-                                (get @data/local-branches)
+                                (get @branches/local-branches)
                                 (keys)
                                 (map name))
 
@@ -171,7 +171,7 @@
 
         project-url (str "/" project-name)
 
-        remote-branches (->> @data/remote-branches
+        remote-branches (->> @branches/remote-branches
                              (#(get % (keyword project-name)))
                              ;; Branches with pull requests get displayed first, otherwise sort by
                              ;; name. The (juxt) function creates a sequence out of the given fields
@@ -293,8 +293,8 @@
       (and (site-admin?) (not (nil? really-reset)))
       (do
         (log/info "Site administrator" login "requested a global reset of branch data")
-        (send-off data/local-branches data/reset-all-local-branches)
-        (await data/local-branches)
+        (send-off branches/local-branches branches/reset-all-local-branches)
+        (await branches/local-branches)
         (redirect "/"))
 
       ;; Otherwise just render the page:
@@ -355,10 +355,10 @@
               ;; Creates a new branch with the given name in the given project's workspace
 
               ;; Begin by refreshing local and remote branches since we must reference them below:
-              (send-off data/local-branches data/refresh-local-branches [project-name])
-              (send-off data/remote-branches
-                        data/refresh-remote-branches-for-project project-name request)
-              (await data/local-branches data/remote-branches)
+              (send-off branches/local-branches branches/refresh-local-branches [project-name])
+              (send-off branches/remote-branches
+                        branches/refresh-remote-branches-for-project project-name request)
+              (await branches/local-branches branches/remote-branches)
 
               (cond
                 (not (refname-valid? branch-name))
@@ -369,8 +369,8 @@
                              (codec/url-encode)))
                     (redirect))
 
-                (or (data/remote-branch-exists? project-name branch-name)
-                    (data/local-branch-exists? project-name branch-name))
+                (or (branches/remote-branch-exists? project-name branch-name)
+                    (branches/local-branch-exists? project-name branch-name))
                 (-> this-url
                     (str "?create=1&invalid-name-error=")
                     (str (-> "Already exists: "
@@ -382,10 +382,10 @@
                 (do
                   ;; Create the branch, then refresh the local branch collection so that it shows up
                   ;; on the page:
-                  (send-off data/local-branches data/create-local-branch project-name
+                  (send-off branches/local-branches branches/create-local-branch project-name
                             branch-name branch-from request)
-                  (send-off data/local-branches data/refresh-local-branches [project-name])
-                  (await data/local-branches)
+                  (send-off branches/local-branches branches/refresh-local-branches [project-name])
+                  (await branches/local-branches)
                   (redirect this-url))))]
 
       ;; Perform an action based on the parameters present in the request:
@@ -400,8 +400,9 @@
         (do
           (log/info "Deletion of branch" to-really-delete "from" project-name "initiated by"
                     (-> request :session :user :login))
-          (send-off data/local-branches data/delete-local-branch project-name to-really-delete)
-          (await data/local-branches)
+          (send-off branches/local-branches branches/delete-local-branch project-name
+                    to-really-delete)
+          (await branches/local-branches)
           (redirect this-url))
 
         ;; Checkout a remote branch into the local project workspace:
@@ -410,9 +411,9 @@
         (do
           (log/info "Checkout of remote branch" to-checkout "into workspace for" project-name
                     "initiated by" (-> request :session :user :login))
-          (send-off data/local-branches
-                    data/checkout-remote-branch-to-local project-name to-checkout)
-          (await data/local-branches)
+          (send-off branches/local-branches
+                    branches/checkout-remote-branch-to-local project-name to-checkout)
+          (await branches/local-branches)
           (redirect this-url))
 
         ;; Create a new branch:
@@ -426,10 +427,10 @@
         ;; Refresh local and remote branches:
         (not (nil? refresh))
         (do
-          (send-off data/local-branches data/refresh-local-branches [project-name])
-          (send-off data/remote-branches
-                    data/refresh-remote-branches-for-project project-name request)
-          (await data/local-branches data/remote-branches)
+          (send-off branches/local-branches branches/refresh-local-branches [project-name])
+          (send-off branches/remote-branches
+                    branches/refresh-remote-branches-for-project project-name request)
+          (await branches/local-branches branches/remote-branches)
           (redirect this-url))
 
         ;; Otherwise just render the page
@@ -475,7 +476,7 @@
                                     :class "form-control form-control-sm"}
                            (for [branch-name (->> project-name
                                                   (keyword)
-                                                  (get @data/remote-branches)
+                                                  (get @branches/remote-branches)
                                                   (map #(get % :name))
                                                   (sort))]
                              ;; The master branch is selected by default:
@@ -799,7 +800,7 @@
        (and (= next-task "create-pr")
             (-> branch :action (= "git-push"))
             (-> branch :exit-code (deref) (= 0)))
-       (let [current-pr (->> @data/remote-branches
+       (let [current-pr (->> @branches/remote-branches
                              (#(get % (keyword project-name)))
                              (filter #(= branch-name (:name %)))
                              (first)
@@ -830,8 +831,8 @@
          (do
            ;; Kick off a refresh of the remote branches but don't await for it since we already have
            ;; the URL of the new PR in pr-added:
-           (send-off data/remote-branches
-                     data/refresh-remote-branches-for-project project-name request)
+           (send-off branches/remote-branches
+                     branches/refresh-remote-branches-for-project project-name request)
            [:div {:class "alert alert-success"}
             [:div "PR created successfully. To view it click " [:a {:href pr-added} "here."]]
             [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]])
@@ -969,7 +970,7 @@
   (log/debug "Processing request in view-file with params:" params)
   (let [branch-key (keyword branch-name)
         project-key (keyword project-name)
-        branch-agent (->> @data/local-branches project-key branch-key)
+        branch-agent (->> @branches/local-branches project-key branch-key)
         branch-url (str "/" project-name "/branches/" branch-name)
         this-url (str branch-url "/views/" view-path)
         ;; Kick off a job to refresh the branch information, wait for it to complete, and then
@@ -977,7 +978,7 @@
         ;; one of these allowed views will be honoured:
         [allowed-file-views
          allowed-dir-views
-         allowed-exec-views] (do (send-off branch-agent data/refresh-local-branch)
+         allowed-exec-views] (do (send-off branch-agent branches/refresh-local-branch)
                                  (await branch-agent)
                                  (-> @branch-agent
                                      :Makefile
@@ -1086,7 +1087,7 @@
         ;; and redirect the user back to the view again:
         (not (nil? force-kill))
         (do
-          (send-off branch-agent data/kill-process (-> request :session :user))
+          (send-off branch-agent branches/kill-process (-> request :session :user))
           (send-off branch-agent update-view)
           (redirect this-url))
 
@@ -1176,13 +1177,13 @@
     (log/debug "Processing request in hit-branch with params:" params)
     (let [branch-key (keyword branch-name)
           project-key (keyword project-name)
-          branch-agent (->> @data/local-branches project-key branch-key)
+          branch-agent (->> @branches/local-branches project-key branch-key)
           last-exit-code (:exit-code @branch-agent)
           this-url (str "/" project-name "/branches/" branch-name)]
 
       ;; Send off a branch refresh and then (await) for it (and for any previous modifications to
       ;; the branch) to finish:
-      (send-off branch-agent data/refresh-local-branch)
+      (send-off branch-agent branches/refresh-local-branch)
       (await branch-agent)
 
       ;; If the associated process is a git action, then wait for it to finish, which is
@@ -1208,7 +1209,7 @@
         ;; If this is a cancel action, kill the existing process and redirect to the branch page:
         (= new-action "cancel-DROID-process")
         (do
-          (send-off branch-agent data/kill-process (-> request :session :user))
+          (send-off branch-agent branches/kill-process (-> request :session :user))
           (redirect this-url))
 
         ;; If there is no action to be performed, or the action is unrecognised, then just render
@@ -1231,12 +1232,13 @@
           ;; and then remove them afterwards.
           (not (nil? force-kill))
           (do
-            (send-off branch-agent data/kill-process (-> request :session :user))
+            (send-off branch-agent branches/kill-process (-> request :session :user))
             (when (= new-action "git-push")
-              (send-off data/local-branches data/store-creds project-name branch-name request))
+              (send-off branches/local-branches branches/store-creds project-name branch-name
+                        request))
             (send-off branch-agent launch-process)
             (when (= new-action "git-push")
-              (send-off branch-agent data/remove-creds project-name branch-name))
+              (send-off branch-agent branches/remove-creds project-name branch-name))
             (-> this-url
                 ;; Remove the force kill and new action parameters:
                 (str "?" (-> params
@@ -1266,10 +1268,11 @@
         :else
         (do
           (when (= new-action "git-push")
-            (send-off data/local-branches data/store-creds project-name branch-name request))
+            (send-off branches/local-branches branches/store-creds project-name branch-name
+                      request))
           (send-off branch-agent launch-process)
           (when (= new-action "git-push")
-            (send-off branch-agent data/remove-creds project-name branch-name))
+            (send-off branch-agent branches/remove-creds project-name branch-name))
           (-> this-url
               ;; Remove the new action params so that the user will not be able to launch the action
               ;; again by hitting his browser's refresh button by mistake:
@@ -1287,10 +1290,10 @@
     ;; If the collection of remote branches is empty then refresh it:
     (when (and (not (read-only? request))
                (not (nil? project-name))
-               (->> project-name (keyword) (get @data/remote-branches) (empty?)))
-      (send-off data/remote-branches
-                data/refresh-remote-branches-for-project project-name request)
-      (await data/remote-branches))
+               (->> project-name (keyword) (get @branches/remote-branches) (empty?)))
+      (send-off branches/remote-branches
+                branches/refresh-remote-branches-for-project project-name request)
+      (await branches/remote-branches))
     ;; Now we can call the function:
     (apply f args)))
 

@@ -1,4 +1,4 @@
-(ns droid.data
+(ns droid.branches
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [me.raynes.conch.low-level :as sh]
