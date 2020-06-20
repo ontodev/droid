@@ -231,30 +231,34 @@
        ;; Merge that hash-map into the hash-map for all projects:
        (merge all-branches)))
 
+(defn kill-process [{:keys [process action branch-name project-name] :as branch}
+                    {:keys [login] :as user}]
+  "Kill the running process associated with the given branch and return the branch to the caller."
+  (if-not (nil? process)
+    (do
+      (-> (str "Cancelling process" action "on branch" branch-name "of" project-name)
+          (#(str % (when login " on behalf of" login))))
+      (sh/destroy process)
+      (assoc branch :cancelled? true))
+    branch))
+
 (defn- kill-all-managed-processes
   "Kill all processes associated with the branches managed by the server."
   [all-branches]
-  (letfn [(kill-process [{:keys [process action branch-name project-name] :as branch}]
-            (if-not (nil? process)
-              (do
-                (log/info "Cancelling process:" action "on branch" branch-name "of" project-name)
-                (sh/destroy process)
-                (assoc branch :cancelled? true))
-              branch))]
-    (->> all-branches
-         (keys)
-         (map (fn [project-key]
-                (->> all-branches
-                     project-key
-                     (vals) ;; <-- these are the branch agents
-                     (map #(send-off % kill-process))
-                     ;; After killing all the managed processes, re-merge the agents into the
-                     ;; global hash-map:
-                     (map #(hash-map (-> % (deref) :branch-name (keyword))
-                                     %))
-                     (apply merge)
-                     (hash-map project-key))))
-         (apply merge))))
+  (->> all-branches
+       (keys)
+       (map (fn [project-key]
+              (->> all-branches
+                   project-key
+                   (vals) ;; <-- these are the branch agents
+                   (map #(send-off % kill-process))
+                   ;; After killing all the managed processes, re-merge the agents into the
+                   ;; global hash-map:
+                   (map #(hash-map (-> % (deref) :branch-name (keyword))
+                                   %))
+                   (apply merge)
+                   (hash-map project-key))))
+       (apply merge)))
 
 (defn reset-all-local-branches
   "Reset all managed branches for all projects by killing all managed processes, deleting all

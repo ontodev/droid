@@ -129,15 +129,6 @@
         "  $(this).removeAttr('href');"
         "});"])])})
 
-(defn- kill-process [{:keys [process action branch-name project-name] :as branch}
-                     {:keys [login] :as user}]
-  "Kill the running process associated with the given branch and return the branch to the caller."
-  (when-not (nil? process)
-    (log/info "Cancelling action" action "on branch" branch-name "of project" project-name
-              "on behalf of user" login)
-    (sh/destroy process)
-    (assoc branch :cancelled? true)))
-
 (defn- branch-status-summary
   "Given the names of a project and branch, output a summary string of the branch's commit status
   as compared with its remote."
@@ -1095,7 +1086,7 @@
         ;; and redirect the user back to the view again:
         (not (nil? force-kill))
         (do
-          (send-off branch-agent kill-process (-> request :session :user))
+          (send-off branch-agent data/kill-process (-> request :session :user))
           (send-off branch-agent update-view)
           (redirect this-url))
 
@@ -1217,7 +1208,7 @@
         ;; If this is a cancel action, kill the existing process and redirect to the branch page:
         (= new-action "cancel-DROID-process")
         (do
-          (send-off branch-agent kill-process (-> request :session :user))
+          (send-off branch-agent data/kill-process (-> request :session :user))
           (redirect this-url))
 
         ;; If there is no action to be performed, or the action is unrecognised, then just render
@@ -1240,7 +1231,7 @@
           ;; and then remove them afterwards.
           (not (nil? force-kill))
           (do
-            (send-off branch-agent kill-process (-> request :session :user))
+            (send-off branch-agent data/kill-process (-> request :session :user))
             (when (= new-action "git-push")
               (send-off data/local-branches data/store-creds project-name branch-name request))
             (send-off branch-agent launch-process)
