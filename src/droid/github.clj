@@ -19,7 +19,7 @@
                  ;; given URL encoded commit message and given user info.
                  (let [commit-msg (codec/url-decode msg)]
                    (if (and (not (nil? commit-msg))
-                            (-> commit-msg (string/trim) (not-empty)))
+                            (not (string/blank? commit-msg)))
                      (format "git commit --all -m \"%s\" --author \"%s <%s>\""
                              commit-msg
                              (or (:name user) (:login user))
@@ -30,7 +30,7 @@
                 ;; git with the given URL encoded commit message and given user info.
                 (let [commit-msg (codec/url-decode msg)]
                   (if (and (not (nil? commit-msg))
-                           (-> commit-msg (string/trim) (not-empty)))
+                           (not (string/blank? commit-msg)))
                     (format "git commit --all --amend -m \"%s\" --author \"%s <%s>\""
                             commit-msg
                             (or (:name user) (:login user))

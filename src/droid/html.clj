@@ -4,6 +4,7 @@
             [clojure.test :refer [function?]]
             [decorate.core :refer [decorate defdecorator]]
             [hiccup.page :refer [html5]]
+            [hickory.core :as hickory]
             [me.raynes.conch.low-level :as sh]
             [droid.branches :as branches]
             [droid.config :refer [config]]
@@ -51,23 +52,6 @@
       [:nav navbar-attrs
        [:small [:a {:href "/oauth2/github"} "Login via GitHub"]]])))
 
-;; This function is useful for passing parameters through in a redirect without having to know
-;; what they are:
-(defn- params-to-query-str
-  "Given a map of parameters, construct a string suitable for use in a GET request"
-  [params]
-  (->> params
-       (map #(-> %
-                 (key)
-                 (name)
-                 (str "=" (val %))))
-       (string/join "&")))
-
-(defn- run-cgi
-  "TODO: Insert docstring here"
-  [script-path]
-  (log/info "Running executable view" script-path))
-
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session] :as request}
@@ -79,7 +63,7 @@
          heading title}}]
   {:status status
    :session session
-   :headers default-html-headers
+   :headers headers
    :body
    (html5
     [:head
@@ -94,7 +78,7 @@
       {:rel "stylesheet"
        :href "//cdn.jsdelivr.net/gh/highlightjs/cdn-release@9.16.2/build/styles/default.min.css"}]
      [:title title]]
-    [:body {:class "bg-white"}
+    [:body (when (-> config :html-body-colors) {:class (-> config :html-body-colors)})
      [:div {:id "content" :class "container p-3"}
       (login-status request)
       [:hr {:class "line1"}]
@@ -277,6 +261,129 @@
     :content [:div#contents
               [:p "The requested resource could not be found."]]
     :status 404}))
+
+(defn render-401
+  "Render the 401 - unauthorized page"
+  [request]
+  (html-response
+   request
+   {:title "401 Unauthorized &mdash; DROID"
+    :content [:div#contents
+              [:p "You are not authorized to view this page."]]
+    :status 401}))
+
+(defn- params-to-query-str
+  "Given a map of parameters, construct a string suitable for use in a GET request"
+  [params]
+  ;; This function is useful for passing parameters through in a redirect without having to know
+  ;; what they are. It is also used to prepare the query string when running a CGI program.
+  (->> params
+       (map #(-> %
+                 (key)
+                 (name)
+                 (codec/url-encode)
+                 (str "=" (-> % (val) (codec/url-encode)))))
+       (string/join "&")))
+
+;; TODO:
+;; - Implement the POST usecase.
+(defn- run-cgi
+  "Run the possibly CGI-aware script located at the given path and render its response"
+  [script-path
+   {:keys [headers params remote-addr server-name server-port]
+    {:keys [project-name branch-name]} :params,
+    {{:keys [login]} :user} :session,
+    :as request}]
+  (if (read-only? request)
+    (render-401 request)
+    (let [branch-url (str "/" project-name "/branches/" branch-name)
+          dirname (-> script-path (io/file) (.getParent))
+          basename (-> script-path (io/file) (.getName))
+          cgi-input-env {"AUTH_TYPE" ""
+                         "CONTENT_LENGTH" ""
+                         "CONTENT_TYPE" ""
+                         "GATEWAY_INTERFACE" "CGI/1.1"
+                         "PATH_INFO" ""
+                         "PATH_TRANSLATED" ""
+                         "QUERY_STRING" (-> params (params-to-query-str))
+                         "REMOTE_ADDR" remote-addr
+                         "REMOTE_HOST" remote-addr
+                         "REMOTE_IDENT" ""
+                         "REMOTE_USER" login
+                         "REQUEST_METHOD" "GET"
+                         "SCRIPT_NAME" script-path
+                         "SERVER_NAME" server-name
+                         "SERVER_PORT" (str server-port)
+                         "SERVER_PROTOCOL" "HTTP/1.1"
+                         "SERVER_SOFTWARE" "DROID/1.0"
+                         "HTTP_ACCEPT" (get headers "accept")
+                         "HTTP_ACCEPT_ENCODING" (get headers "accept-encoding")
+                         "HTTP_ACCEPT_LANGUAGE" (get headers "accept-language")
+                         "HTTP_USER_AGENT" (get headers "user-agent")}
+          process (sh/proc basename :dir dirname :env cgi-input-env)
+          timeout (-> config :cgi-timeout)
+          exit-code (future (sh/exit-code process timeout))
+          ;; We expect a blank line separating the response's header and body:
+          split-response #(->> % (string/split-lines) (partition-by string/blank?))]
+
+      (log/info "Running CGI script" script-path "for at most" timeout "seconds")
+      (cond
+        (= :timeout @exit-code)
+        (log/error "Timed out after" timeout "seconds waiting for CGI script" script-path)
+
+        (not= 0 @exit-code)
+        (let [error-msg (sh/stream-to-string process :err)]
+          (log/error "Encountered a problem while running CGI script" script-path ":" error-msg)
+          error-msg)
+
+        :else
+        (let [response-sections (-> process (sh/stream-to-string :out) (split-response))
+              ;; Every line in the header must be of the form: <something>: <something else>
+              ;; and one of the headers must be for Content-Type
+              valid-header? (and (->> (first response-sections)
+                                      (some #(re-matches #"^\s*Content-Type:\s+\S+\s*$" %)))
+                                 (->> (first response-sections)
+                                      (every? #(re-matches #"^\s*\S+:\s+\S+\s*$" %))))
+              headers (if-not valid-header?
+                        ;; If the raw header isn't valid just use the default headers defined above:
+                        default-html-headers
+                        ;; Otherwise, construct a map out of the header lines that looks like:
+                        ;; {"header1" "header1-value", "header2", "header2-value", ...}
+                        (->> (first response-sections)
+                             (map string/trim)
+                             (map #(string/split % #":\s+"))
+                             (map #(apply hash-map %))
+                             (apply merge)))]
+
+          (if valid-header?
+            ;; When the response has a valid header, the first two sections of the response will
+            ;; correspond to (1) the headers, and (2) a blank line separating the headers from the
+            ;; output proper, contained in the remaining sections of the response. In this case the
+            ;; output is parsed into hiccup and embedded into a div:
+            (->> response-sections
+                 (drop 2)
+                 (apply concat)
+                 (vec)
+                 (string/join "\n")
+                 (hickory/parse-fragment)
+                 (map hickory/as-hiccup)
+                 (into [:div])
+                 (hash-map :headers headers :content)
+                 (html-response request))
+            ;; If the response does not have a valid header, then all of it is treated as valid
+            ;; output. In this case we write this output to the console, modify the values for
+            ;; `command` and `action` in the branch, and then redirect back to the branch page:
+            (let [console-path (-> (get-temp-dir project-name branch-name) (str "/console.txt"))]
+              (->> response-sections
+                   (apply concat)
+                   (vec)
+                   (string/join "\n")
+                   (spit console-path))
+              (-> @branches/local-branches
+                  (get (keyword project-name))
+                  (get (keyword branch-name))
+                  (send #(assoc % :command basename :action basename)))
+              (redirect branch-url))))))))
 
 (defn render-index
   "Render the index page"
@@ -805,6 +912,8 @@
                              (filter #(= branch-name (:name %)))
                              (first)
                              :pull-request)]
+         ;; TODO: Add an extra condition below: You should not have the option to create a PR if the
+         ;; current branch is called "master"
          (if (nil? current-pr)
            ;; If the current branch doesn't already have a PR associated, provide the user with
            ;; the option to create one:
@@ -883,7 +992,7 @@
       ;; A brand new commit has been requested (and confirmed):
       (and (not (read-only? request))
            (not (nil? commit-msg))
-           (-> commit-msg (string/trim) (not-empty)))
+           (not (string/blank? commit-msg)))
       (let [encoded-commit-msg (-> commit-msg (string/replace #"\"" "'") (codec/url-encode))]
         (log/info "User" (-> request :session :user :login) "adding local commit to branch"
                   branch-name "in project" project-name "with commit message:" commit-msg)
@@ -894,7 +1003,7 @@
       ;; An amendment to the last commit has been requested (and confirmed):
       (and (not (read-only? request))
            (not (nil? commit-amend-msg))
-           (-> commit-amend-msg (string/trim) (not-empty)))
+           (not (string/blank? commit-amend-msg)))
       (let [encoded-commit-amend-msg (-> commit-amend-msg
                                          (string/replace #"\"" "'")
                                          (codec/url-encode))]
@@ -1019,13 +1128,13 @@
         deliver-exec-view #(let [script-path (-> (get-workspace-dir project-name branch-name)
                                                  (str view-path))]
                              (cond (-> script-path (io/file) (.canExecute) (not))
-                                   (log/error view-path "is not executable")
+                                   (log/error script-path "is not executable")
 
                                    (-> script-path (slurp) (string/starts-with? "#!") (not))
-                                   (log/error view-path "does not start with '#!'")
+                                   (log/error script-path "does not start with '#!'")
 
                                    :else
-                                   (run-cgi script-path)))
+                                   (run-cgi script-path request)))
 
         ;; Serve the view from the filesystem:
         deliver-file-view #(-> (get-workspace-dir project-name branch-name)
