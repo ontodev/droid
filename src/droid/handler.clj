@@ -1,6 +1,6 @@
 (ns droid.handler
   (:require [cheshire.core :as cheshire]
-            [compojure.core :refer [defroutes GET]]
+            [compojure.core :refer [defroutes GET POST]]
             [compojure.route :as route]
             [environ.core :refer [env]]
             [org.httpkit.client :as http]
@@ -80,6 +80,7 @@
   (GET "/" [] html/render-index)
   (GET "/:project-name" [] html/render-project)
   (GET "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)
+  (POST "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)
   (GET "/:project-name/branches/:branch-name" [] html/hit-branch)
   ;; all other, return 404
   (route/not-found html/render-404))

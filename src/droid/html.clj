@@ -285,12 +285,10 @@
                  (str "=" (-> % (val) (codec/url-encode)))))
        (string/join "&")))
 
-;; TODO:
-;; - Implement the POST usecase.
 (defn- run-cgi
   "Run the possibly CGI-aware script located at the given path and render its response"
   [script-path
-   {:keys [headers params remote-addr server-name server-port]
+   {:keys [request-method headers params form-params remote-addr server-name server-port]
     {:keys [project-name branch-name]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
@@ -299,39 +297,68 @@
     (let [branch-url (str "/" project-name "/branches/" branch-name)
           dirname (-> script-path (io/file) (.getParent))
           basename (-> script-path (io/file) (.getName))
-          cgi-input-env {"AUTH_TYPE" ""
-                         "CONTENT_LENGTH" ""
-                         "CONTENT_TYPE" ""
-                         "GATEWAY_INTERFACE" "CGI/1.1"
-                         "PATH_INFO" ""
-                         "PATH_TRANSLATED" ""
-                         "QUERY_STRING" (-> params (params-to-query-str))
-                         "REMOTE_ADDR" remote-addr
-                         "REMOTE_HOST" remote-addr
-                         "REMOTE_IDENT" ""
-                         "REMOTE_USER" login
-                         "REQUEST_METHOD" "GET"
-                         "SCRIPT_NAME" script-path
-                         "SERVER_NAME" server-name
-                         "SERVER_PORT" (str server-port)
-                         "SERVER_PROTOCOL" "HTTP/1.1"
-                         "SERVER_SOFTWARE" "DROID/1.0"
-                         "HTTP_ACCEPT" (get headers "accept")
-                         "HTTP_ACCEPT_ENCODING" (get headers "accept-encoding")
-                         "HTTP_ACCEPT_LANGUAGE" (get headers "accept-language")
-                         "HTTP_USER_AGENT" (get headers "user-agent")}
-          process (sh/proc basename :dir dirname :env cgi-input-env)
+          query-string (-> params (params-to-query-str))
+          cgi-input-env (-> {"AUTH_TYPE" ""
+                             "CONTENT_LENGTH" ""
+                             "CONTENT_TYPE" ""
+                             "GATEWAY_INTERFACE" "CGI/1.1"
+                             "PATH_INFO" ""
+                             "PATH_TRANSLATED" ""
+                             "QUERY_STRING" ""
+                             "REMOTE_ADDR" remote-addr
+                             "REMOTE_HOST" remote-addr
+                             "REMOTE_IDENT" ""
+                             "REMOTE_USER" login
+                             "SCRIPT_NAME" (str "/" script-path)
+                             "SERVER_NAME" server-name
+                             "SERVER_PORT" (str server-port)
+                             "SERVER_PROTOCOL" "HTTP/1.1"
+                             "SERVER_SOFTWARE" "DROID/1.0"
+                             "HTTP_ACCEPT" (get headers "accept")
+                             "HTTP_ACCEPT_ENCODING" (get headers "accept-encoding")
+                             "HTTP_ACCEPT_LANGUAGE" (get headers "accept-language")
+                             "HTTP_USER_AGENT" (get headers "user-agent")}
+                            (#(cond
+                                (= request-method :get)
+                                (merge % {"REQUEST_METHOD" "GET"
+                                          "QUERY_STRING" query-string})
+
+                                (= request-method :post)
+                                (merge % {"REQUEST_METHOD" "POST"
+                                          "CONTENT_LENGTH" (-> query-string
+                                                               (char-array)
+                                                               (count)
+                                                               (str))
+                                          "CONTENT_TYPE" "application/x-www-form-urlencoded"})
+
+                                :else
+                                (log/error "Unsupported request method:" request-method))))
+
+          ;; TODO: Change this to epoch time
+          temp-filename (str "." basename "." (rand-int 1000))
+
+          ;; TO TEST ON THE COMMAND LINE:
+          ;; export REQUEST_METHOD="POST"; export CONTENT_TYPE="application/x-www-form-urlencoded"; export CONTENT_LENGTH=16;echo "cgi-input-py=bar"|build/hobbit-script.py application/x-www-form-urlencoded
+          process (if (= request-method :get)
+                    (sh/proc basename :dir dirname :env cgi-input-env)
+                    (do (-> (str dirname "/" temp-filename) (spit query-string))
+                        ;; TODO: redirect stdout to a file first and then slurp it in:
+                        (sh/proc "bash" "-c" (str "exec " basename " < " temp-filename)
+                                 :dir dirname :env cgi-input-env)))
           timeout (-> config :cgi-timeout)
-          exit-code (future (sh/exit-code process timeout))
+          exit-code (sh/exit-code process timeout)
           ;; We expect a blank line separating the response's header and body:
           split-response #(->> % (string/split-lines) (partition-by string/blank?))]
 
+      ;; Remove the temporary file:
+      (-> (str dirname "/" temp-filename) (io/delete-file true))
+
       (log/info "Running CGI script" script-path "for at most" timeout "seconds")
       (cond
-        (= :timeout @exit-code)
+        (= :timeout exit-code)
         (log/error "Timed out after" timeout "seconds waiting for CGI script" script-path)
 
-        (not= 0 @exit-code)
+        (not= 0 exit-code)
         (let [error-msg (sh/stream-to-string process :err)]
           (log/error "Encountered a problem while running CGI script" script-path ":" error-msg)
           error-msg)
@@ -1063,6 +1090,20 @@
                       (render-version-control-section branch request))]]
 
                   [:hr {:class "line1"}]
+
+                  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+                  [:form {:action "/for-testing-with-droid/branches/master/views/build/hobbit-script.sh"
+                          :method "post"}
+                   [:label {:for "cgi-input-sh" :class "mb-n1 text-secondary"} "Bash"]
+                   [:input {:type "text" :name "cgi-input-sh"}]
+                   [:input {:type "submit" :value "Submit"}]]
+
+                  [:form {:action "/for-testing-with-droid/branches/master/views/build/hobbit-script.py"
+                          :method "post"}
+                   [:label {:for "cgi-input-py" :class "mb-n1 text-secondary"} "Python"]
+                   [:input {:type "text" :name "cgi-input-py"}]
+                   [:input {:type "submit" :value "Submit"}]]
+                  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
                   [:div
                    [:h3 "Console"]
