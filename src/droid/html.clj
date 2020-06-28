@@ -292,7 +292,6 @@
     {:keys [project-name branch-name]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
-  ;; TODO: MAKE SURE THAT THIS DOES NOT BREAK THE "ONE SCRIPT RUNNING AT A TIME" PARADIGM.
   (if (read-only? request)
     (render-401 request)
     (let [branch-url (str "/" project-name "/branches/" branch-name)
@@ -334,7 +333,7 @@
 
                                 :else
                                 (log/error "Unsupported request method:" request-method))))
-          ;; Input and output to a CGI script is from/to a temporary file:
+          ;; We will send input and output from/to CGI scripts via temporary files:
           tmp-infile (str "." basename ".in." (System/currentTimeMillis))
           tmp-outfile (str "." basename ".out." (System/currentTimeMillis))
           ;; Note: To test a script on the command line, do:
@@ -349,16 +348,16 @@
                                  (str "exec " basename " < " tmp-infile " > " tmp-outfile)
                                  :dir dirname :env cgi-input-env)))
           timeout (-> config :cgi-timeout)
-          exit-code (sh/exit-code process timeout)
+          exit-code (future (sh/exit-code process timeout))
           ;; We expect a blank line separating the response's header and body:
           split-response #(->> % (string/split-lines) (partition-by string/blank?))]
 
       (log/info "Running CGI script" script-path "for at most" timeout "seconds")
       (cond
-        (= :timeout exit-code)
+        (= :timeout @exit-code)
         (log/error "Timed out after" timeout "seconds waiting for CGI script" script-path)
 
-        (not= 0 exit-code)
+        (not= 0 @exit-code)
         (let [error-msg (sh/stream-to-string process :err)]
           (log/error "Encountered a problem while running CGI script" script-path ":" error-msg)
           error-msg)
@@ -733,14 +732,16 @@
         view-url (str "/" project-name "/branches/" branch-name "/views/" view-path)]
     [:div {:class "alert alert-warning"}
      [:p [:span {:class "text-monospace font-weight-bold"} action]
-      " is still not complete. You must cancel it before updating "
+      " is still not complete. You must cancel it before updating or running "
       [:span {:class "text-monospace font-weight-bold"} view-path]
       ". Do you really want to do this?"]
      [:span [:a {:class "btn btn-secondary btn-sm" :href branch-url} "No, do nothing"]]
      [:span {:class "col-sm-1"}]
      [:span [:a {:class "btn btn-danger btn-sm" :href (str view-url "?force-kill=1")}
              "Yes, go ahead"]]
-     (when (view-exists? branch view-path)
+     ;; If the view exists and it is not executable, provide the option to view a stale version:
+     (when (and (->> branch :Makefile :exec-views (not-any? #(= view-path %)))
+                (view-exists? branch view-path))
        [:span
         [:span {:class "col-sm-1"}]
         [:span [:a {:class "btn btn-warning btn-sm" :href (str view-url "?force-old=1")}
@@ -750,7 +751,7 @@
   "Given some branch data, and the path for a view that needs to be rebuilt, render an alert box
   asking the user to confirm that (s)he would really like to rebuild the view."
   [{:keys [branch-name project-name action] :as branch}
-   view-path]
+   {:keys [view-path] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
         view-url (str "/" project-name "/branches/" branch-name "/views/" view-path)]
     [:div
@@ -765,7 +766,17 @@
       (when (view-exists? branch view-path)
         [:span
          [:span {:class "col-sm-1"}]
-         [:span [:a {:class "btn btn-warning btn-sm" :href (str view-url "?force-old=1")}
+         [:span [:a (-> {:class "btn btn-warning btn-sm"}
+                        (#(if (->> branch :Makefile :exec-views (not-any? (fn [v] (= view-path v))))
+                            ;; If this isn't an executable view simply add the force-old flag to the
+                            ;; query string:
+                            (assoc % :href (str view-url "?force-old=1"))
+                            ;; Otherwise we need to pass the original parameters through:
+                            (assoc % :href (-> view-url
+                                               (str "?" (-> params
+                                                            (dissoc :confirm-update)
+                                                            (assoc :force-old 1)
+                                                            (params-to-query-str))))))))
                  "View the stale version"]]])]]))
 
 (defn- notify-missing-view
@@ -1083,7 +1094,7 @@
                        (notify-missing-view branch view-path)
 
                        (not (nil? confirm-update))
-                       (prompt-to-update-view branch view-path))
+                       (prompt-to-update-view branch params))
 
                      ;; Render the Workflow HTML from the Makefile:
                      (or (:html Makefile)
@@ -1136,8 +1147,7 @@
                                  (await branch-agent)
                                  (-> @branch-agent
                                      :Makefile
-                                     ;; Generate a vector containing two hash sets for each type
-                                     ;; of view:
+                                     ;; Generate a vector of hash sets for each type of view:
                                      (#(-> (:file-views %)
                                            (hash-set)
                                            (vec)
@@ -1186,14 +1196,7 @@
                                (str view-path)
                                (file-response)
                                ;; Views must not be cached by the client browser:
-                               (assoc :headers {"Cache-Control" "no-store"}))
-
-        deliver-view (fn [] (cond
-                              (some #(= view-path %) allowed-exec-views)
-                              (deliver-exec-view)
-
-                              :else
-                              (deliver-file-view)))]
+                               (assoc :headers {"Cache-Control" "no-store"}))]
 
     ;; Note that below we do not call (await) after calling (send-off), because below we
     ;; always then redirect back to the view page, which results in another call to this function,
@@ -1217,19 +1220,26 @@
       (not (nil? missing-view))
       (render-branch-page @branch-agent request)
 
-      ;; If the user has read-only access, then if the view exists deliver it whether or not it is
-      ;; up to date. If the view does not exist, then redirect back to the page with the
-      ;; missing-view parameter set.
+      ;; If the user has read-only access, then send him to Unauthorized if the view is an
+      ;; executable. Otherwise, if the view exists deliver it whether or not it is stale. If the
+      ;; view does not exist, redirect back to this page with the missing-view parameter set.
       (read-only? request)
-      (if (view-exists? @branch-agent view-path)
-        (deliver-view)
+      (cond
+        (some #(= view-path %) allowed-exec-views)
+        (render-401 request)
+
+        (view-exists? @branch-agent view-path)
+        (deliver-file-view)
+
+        :else
         (redirect (-> this-url (str "?missing-view=") (str view-path))))
 
-      ;; Render the current version of the view if either the 'force-old' parameter is present, or
-      ;; if the current version of the view is already up-to-date:
-      (or (not (nil? force-old))
-          (up-to-date?))
-      (deliver-view)
+      ;; If the view isn't an executable, then render the current version of the view if either the
+      ;; 'force-old' parameter is present, or if the view is already up-to-date:
+      (and (not-any? #(= view-path %) allowed-exec-views)
+           (or (not (nil? force-old))
+               (up-to-date?)))
+      (deliver-file-view)
 
       ;; If there is a currently running process (indicated by the presence of an unrealised
       ;; exit code on the branch), then what needs to be done will be determined by the
@@ -1242,8 +1252,7 @@
         (not (nil? force-kill))
         (do
           (send-off branch-agent branches/kill-process (-> request :session :user))
-          (send-off branch-agent update-view)
-          (redirect this-url))
+          (redirect branch-url))
 
         ;; If the confirm-kill parameter has been sent, then simply render the page for the
         ;; branch. The confirm-kill flag will be recognised during rendering and a prompt
@@ -1259,6 +1268,13 @@
         ;; Otherwise redirect back to the page with the confirm-kill flag set:
         :else
         (redirect (str this-url "?confirm-kill=1#console")))
+
+      ;; If the view is an executable, then render the current version of the view if either the
+      ;; 'force-old' parameter is present, or if the view is already up-to-date:
+      (and (some #(= view-path %) allowed-exec-views)
+           (or (not (nil? force-old))
+               (up-to-date?)))
+      (deliver-exec-view)
 
       ;; If the 'force-update' parameter is present, immediately (re)build the view in the
       ;; background and then redirect to the branch's page where the user can view the build
@@ -1278,9 +1294,11 @@
       (render-branch-page @branch-agent request)
 
       ;; Otherwise redirect back to this page, setting the confirm-update flag to ask the user if
-      ;; she would really like to rebuild the file:
+      ;; she would really like to rebuild the file. We pass any existing parameters through since
+      ;; they will be needed if this is an executable view:
       :else
-      (redirect (str this-url "?confirm-update=1")))))
+      (redirect
+       (-> this-url (str "?" (-> params (assoc :confirm-update 1) (params-to-query-str))))))))
 
 (defn hit-branch
   "Render a branch, possibly performing an action on it in the process. Note that this function will
@@ -1313,8 +1331,7 @@
                                       " > ../../temp/" branch-name "/console.txt"
                                       " 2>&1")
                                      :dir (get-workspace-dir project-name branch-name)))]
-              ;; Sleep briefly:
-              (Thread/sleep 1000)
+
               (if (nil? command)
                 ;; If the command is nil just return the branch back unchanged:
                 branch
