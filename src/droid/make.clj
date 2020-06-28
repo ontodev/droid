@@ -104,30 +104,37 @@
                      (flatten-to-1st-level)
                      (into #{})))
 
+              (normalize-exec-view [href]
+                ;; Executable views are prefixed in the Makefile by "./" and in general have query
+                ;; parameters appended to them; e.g., "./build/view.py?param1=a&param2=b". When
+                ;; recording an executable view in the map for the makefile, we normalize it by
+                ;; removing any such prefix and/or suffix. At the same time we want to preserve
+                ;; these in the actual HTML that gets rendered on the branch page. This function
+                ;; translates a non-normalized view into a normalized version.
+                (-> href (string/replace #"^\./" "") (string/replace #"\?.+$" "")))
+
               (process-makefile-html [{:keys [html file-views dir-views exec-views general-actions
                                               branch-name]
                                        :as makefile}]
                 ;; Recurses through the html hiccup structure and transforms any links that are
                 ;; found into either action links or view links:
                 (letfn [(process-link [[tag {href :href} text :as link]]
-                          ;; Executable views are prefixed by "./"; it's convenient to define
-                          ;; a variable with this prefix removed:
-                          (let [norm-href (string/replace href #"^\./" "")]
-                            (cond
-                              (some #(= norm-href %) general-actions)
-                              [tag {:href (str "/" project-name "/branches/" branch-name
-                                               "?new-action=" norm-href)
-                                    ;; The 'action-btn' class is a custom one to identify action
-                                    ;; buttons which we will later want to conditionally restrict
-                                    ;; access to.
-                                    :class "btn btn-primary btn-sm action-btn"} text]
+                          (cond
+                            (some #(= href %) general-actions)
+                            [tag {:href (str "/" project-name "/branches/" branch-name
+                                             "?new-action=" href)
+                                  ;; The 'action-btn' class is a custom one to identify action
+                                  ;; buttons which we will later want to conditionally restrict
+                                  ;; access to.
+                                  :class "btn btn-primary btn-sm action-btn"} text]
 
-                              (some #(= norm-href %) (set/union file-views dir-views exec-views))
-                              [tag {:href (str "/" project-name "/branches/" branch-name
-                                               "/views/" norm-href)} text]
+                            (or (some #(= href %) (set/union file-views dir-views))
+                                (some #(-> href (normalize-exec-view) (= %)) exec-views))
+                            [tag {:href (str "/" project-name "/branches/" branch-name
+                                             "/views/" href)} text]
 
-                              :else
-                              [tag {:href norm-href} text])))]
+                            :else
+                            [tag {:href href} text]))]
                   (->> (for [elem html]
                          (if (= (type elem) clojure.lang.PersistentVector)
                            (if (= (first elem) :a)
@@ -160,9 +167,8 @@
                          (string/ends-with? href "/")
                          {:dir-views #{href}}
 
-                         ;; Executable views begin with "./"; this is ignored when saving it:
                          (string/starts-with? href "./")
-                         {:exec-views #{(string/replace href #"^\./" "")}}
+                         {:exec-views #{(normalize-exec-view href)}}
 
                          :else
                          {:file-views #{href}})))))

@@ -292,6 +292,7 @@
     {:keys [project-name branch-name]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
+  ;; TODO: MAKE SURE THAT THIS DOES NOT BREAK THE "ONE SCRIPT RUNNING AT A TIME" PARADIGM.
   (if (read-only? request)
     (render-401 request)
     (let [branch-url (str "/" project-name "/branches/" branch-name)
@@ -314,10 +315,10 @@
                              "SERVER_PORT" (str server-port)
                              "SERVER_PROTOCOL" "HTTP/1.1"
                              "SERVER_SOFTWARE" "DROID/1.0"
-                             "HTTP_ACCEPT" (get headers "accept")
-                             "HTTP_ACCEPT_ENCODING" (get headers "accept-encoding")
-                             "HTTP_ACCEPT_LANGUAGE" (get headers "accept-language")
-                             "HTTP_USER_AGENT" (get headers "user-agent")}
+                             "HTTP_ACCEPT" (get headers "accept" "")
+                             "HTTP_ACCEPT_ENCODING" (get headers "accept-encoding" "")
+                             "HTTP_ACCEPT_LANGUAGE" (get headers "accept-language" "")
+                             "HTTP_USER_AGENT" (get headers "user-agent" "")}
                             (#(cond
                                 (= request-method :get)
                                 (merge % {"REQUEST_METHOD" "GET"
@@ -333,25 +334,24 @@
 
                                 :else
                                 (log/error "Unsupported request method:" request-method))))
-
-          ;; TODO: Change this to epoch time
-          temp-filename (str "." basename "." (rand-int 1000))
-
-          ;; TO TEST ON THE COMMAND LINE:
-          ;; export REQUEST_METHOD="POST"; export CONTENT_TYPE="application/x-www-form-urlencoded"; export CONTENT_LENGTH=16;echo "cgi-input-py=bar"|build/hobbit-script.py application/x-www-form-urlencoded
+          ;; Input and output to a CGI script is from/to a temporary file:
+          tmp-infile (str "." basename ".in." (System/currentTimeMillis))
+          tmp-outfile (str "." basename ".out." (System/currentTimeMillis))
+          ;; Note: To test a script on the command line, do:
+          ;; export REQUEST_METHOD="POST"; \
+          ;;   export CONTENT_TYPE="application/x-www-form-urlencoded"; \
+          ;;   export CONTENT_LENGTH=16;echo "cgi-input-py=bar" | build/hobbit-script.py
           process (if (= request-method :get)
-                    (sh/proc basename :dir dirname :env cgi-input-env)
-                    (do (-> (str dirname "/" temp-filename) (spit query-string))
-                        ;; TODO: redirect stdout to a file first and then slurp it in:
-                        (sh/proc "bash" "-c" (str "exec " basename " < " temp-filename)
+                    (sh/proc "bash" "-c" (str "exec " basename " > " tmp-outfile)
+                             :dir dirname :env cgi-input-env)
+                    (do (-> (str dirname "/" tmp-infile) (spit query-string))
+                        (sh/proc "bash" "-c"
+                                 (str "exec " basename " < " tmp-infile " > " tmp-outfile)
                                  :dir dirname :env cgi-input-env)))
           timeout (-> config :cgi-timeout)
           exit-code (sh/exit-code process timeout)
           ;; We expect a blank line separating the response's header and body:
           split-response #(->> % (string/split-lines) (partition-by string/blank?))]
-
-      ;; Remove the temporary file:
-      (-> (str dirname "/" temp-filename) (io/delete-file true))
 
       (log/info "Running CGI script" script-path "for at most" timeout "seconds")
       (cond
@@ -364,7 +364,7 @@
           error-msg)
 
         :else
-        (let [response-sections (-> process (sh/stream-to-string :out) (split-response))
+        (let [response-sections (-> (str dirname "/" tmp-outfile) (slurp) (split-response))
               ;; Every line in the header must be of the form: <something>: <something else>
               ;; and one of the headers must be for Content-Type
               valid-header? (and (->> (first response-sections)
@@ -381,6 +381,10 @@
                              (map #(string/split % #":\s+"))
                              (map #(apply hash-map %))
                              (apply merge)))]
+
+          ;; Remove the temporary files:
+          (-> (str dirname "/" tmp-infile) (io/delete-file true))
+          (-> (str dirname "/" tmp-outfile) (io/delete-file true))
 
           (if valid-header?
             ;; When the response has a valid header, the first two sections of the response will
