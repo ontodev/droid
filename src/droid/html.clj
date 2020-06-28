@@ -103,6 +103,17 @@
                    "$('.since').each(function() {" ; replace GMT dates with friendly time period
                    "  $(this).text(moment($(this).text()).fromNow());"
                    "});")]
+     [:script
+      "$(window).on('beforeunload', function(){"
+      "  $('*').css(\"cursor\", \"wait\");"
+      "  $(\"body\").append('<div id=\"overlay\""
+      "                           style=\"background-color:rgba(0, 0, 0, 0.3);"
+      "                                   position:absolute;"
+      "                                   top:0;"
+      "                                   left:0;"
+      "                                   height:100%;"
+      "                                   width:100%;"
+      "                                   z-index:999\"></div>');});"]
 
      ;; If the user has read-only access, run the following jQuery script to disable any action
      ;; buttons on the page:
