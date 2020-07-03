@@ -107,7 +107,7 @@
       "$(window).on('beforeunload', function(){"
       "  $('*').css(\"cursor\", \"wait\");"
       "  $(\"body\").append('<div id=\"overlay\""
-      "                           style=\"background-color:rgba(0, 0, 0, 0.3);"
+      "                           style=\"background-color:rgba(0, 0, 0, 0.2);"
       "                                   position:absolute;"
       "                                   top:0;"
       "                                   left:0;"
@@ -352,11 +352,11 @@
           ;;   export CONTENT_TYPE="application/x-www-form-urlencoded"; \
           ;;   export CONTENT_LENGTH=16;echo "cgi-input-py=bar" | build/hobbit-script.py
           process (if (= request-method :get)
-                    (sh/proc "bash" "-c" (str "exec " basename " > " tmp-outfile)
+                    (sh/proc "bash" "-c" (str "exec ./" basename " > " tmp-outfile)
                              :dir dirname :env cgi-input-env)
                     (do (-> (str dirname "/" tmp-infile) (spit query-string))
                         (sh/proc "bash" "-c"
-                                 (str "exec " basename " < " tmp-infile " > " tmp-outfile)
+                                 (str "exec ./" basename " < " tmp-infile " > " tmp-outfile)
                                  :dir dirname :env cgi-input-env)))
           timeout (-> config :cgi-timeout)
           exit-code (future (sh/exit-code process timeout))
@@ -1116,20 +1116,6 @@
                       (render-version-control-section branch request))]]
 
                   [:hr {:class "line1"}]
-
-                  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-                  [:form {:action "/for-testing-with-droid/branches/master/views/build/hobbit-script.sh"
-                          :method "post"}
-                   [:label {:for "cgi-input-sh" :class "mb-n1 text-secondary"} "Bash"]
-                   [:input {:type "text" :name "cgi-input-sh"}]
-                   [:input {:type "submit" :value "Submit"}]]
-
-                  [:form {:action "/for-testing-with-droid/branches/master/views/build/hobbit-script.py"
-                          :method "post"}
-                   [:label {:for "cgi-input-py" :class "mb-n1 text-secondary"} "Python"]
-                   [:input {:type "text" :name "cgi-input-py"}]
-                   [:input {:type "submit" :value "Submit"}]]
-                  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
                   [:div
                    [:h3 "Console"]
