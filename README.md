@@ -77,7 +77,8 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
                          :test #{"user1" "user2"}
                          :prod #{"user1" "user2"}}
  :cgi-timeout 60000
- :html-body-colors "bg-white"}
+ :log-file "droid.log"
+:html-body-colors "bg-white"}
 ```
 
 where:
@@ -88,6 +89,7 @@ where:
 - `:secure-site` is either true or false and indicates whether the server will use https or http.
 - `:site-admin-github-ids` is a hash-set of github userids who are considered site administrators.
 - `:cgi-timeout` is the maximum number of milliseconds that a CGI script is allowed to run.
+- `:log-file` is the file (relative to DROID's root directory) where the log will be written to. If it is nil then log is written to STDERR.
 - `:html-body-colors` is a valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color) to use for DROID's pages.
 
 If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.

@@ -9,10 +9,8 @@
             [droid.log :as log]
             [droid.make :as make]))
 
-(defn- default-agent-error-handler
+(def default-agent-error-handler
   "The default error handler to use with agents"
-  []
-  ;; TODO: Errors are being swallowed. Why?
   (fn [the-agent exception]
     (log/error (.getMessage exception))))
 

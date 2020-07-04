@@ -96,8 +96,6 @@
      [:script {:src "https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
                :integrity "sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
                :crossorigin "anonymous"}]
-     ;; Simulate synchronous mode
-     [:script {:src "http://malsup.github.io/jquery.blockUI.js"}]
      ;; Handy time and date library:
      [:script {:src "https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.24.0/moment.min.js"}]
      ;; For highlighting code:
@@ -112,18 +110,20 @@
                    "  $(this).text(moment($(this).text()).fromNow());"
                    "});")]
 
-     ;; When unloading a page, block the UI until a new page is loaded, or after two seconds,
-     ;; whichever comes first (the two second limit is because if the server delivers a file
-     ;; response, the previous page will never actually finish unloading).
+     ;; When unloading a page, show a progress cursor until the new page gets loaded, or after ten
+     ;; seconds, whichever comes first. The ten second limit is needed because when the browser
+     ;; happens to open a download dialog (which may happen for some view mime types), the
+     ;; 'unloading' will never actually complete.
      [:script
       "window.addEventListener('beforeunload', (event) => {"
-      "  $.blockUI({"
-      "    message: '',"
-      "    overlayCSS: {"
-      "      backgroundColor: '#f5f5f5'"
-      "    }"
-      "  });"
-      "  setTimeout($.unblockUI, 2000);"
+      "  $('*').css('cursor', 'progress');"
+      "  setTimeout("
+      "    function() {"
+      "      if (document.readyState === 'complete') {"
+      "        $('*').css('cursor', '');"
+      "      }"
+      "    },"
+      "  10000);"
       "});"]
 
      ;; If the user has read-only access, run the following jQuery script to disable any action
@@ -976,11 +976,14 @@
                              (filter #(= branch-name (:name %)))
                              (first)
                              :pull-request)]
-         ;; TODO: Add an extra condition below: You should not have the option to create a PR if the
-         ;; current branch is called "master"
-         (if (nil? current-pr)
+         (cond
+           ;; If this is the master branch, then PRs aren't relevant:
+           (= branch-name "master")
+           [:div]
+
            ;; If the current branch doesn't already have a PR associated, provide the user with
            ;; the option to create one:
+           (nil? current-pr)
            [:div {:class "alert alert-success m-1"}
             [:div {:class "mb-3"} "Commits pushed successfully."]
             [:form {:action this-url :method "get"}
@@ -991,7 +994,9 @@
               [:button {:type "submit" :class "btn btn-sm btn-primary mr-2"}
                "Create a pull request"]
               [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]]]
+
            ;; Otherwise display a link to the current PR:
+           :else
            [:div {:class "alert alert-success m-1"}
             [:div {:class "mb-3"} "Commits pushed successfully. A "
              [:a {:href current-pr} "pull request is already open"] " on this branch."]

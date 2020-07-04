@@ -16,7 +16,8 @@
     (< given-level config-level)))
 
 (defn- log
-  "Log the message represented by the given words to stderr, preceeded by the date and time."
+  "Log the message represented by the given words preceeded by the date and time. If a log file is
+  defined in the config, write the message to it, otherwise write it to stderr."
   [first-word & other-words]
   (let [now (-> "yyyy-MM-dd HH:mm:ss.SSSZ"
                 (java.text.SimpleDateFormat.)
@@ -24,8 +25,12 @@
         message (->> other-words
                      (clojure.string/join " ")
                      (str first-word " "))]
-    (binding [*out* *err*]
-      (println now "-" message))))
+    (if (:log-file config)
+      (spit (:log-file config)
+            (str now "-" message "\n")
+            :append true)
+      (binding [*out* *err*]
+        (println now "-" message)))))
 
 (defn debug
   [first-word & other-words]
