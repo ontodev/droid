@@ -84,36 +84,47 @@
       [:hr {:class "line1"}]
       [:h1 heading]
       content]
-     ;; Optional JavaScript. jQuery first, then Popper.js, then Bootstrap JS.
-     [:script {:src "https://code.jquery.com/jquery-3.4.1.slim.min.js"
-               :integrity "sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n"
-               :crossorigin "anonymous"}]
+     ;; jQuery (required for some Bootstrap features):
+     [:script {:src "https://code.jquery.com/jquery-3.4.1.min.js"}]
+               ;;:integrity "sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n"
+               ;;:crossorigin "anonymous"}]
+     ;; Popper (required for some Bootstrap features):
      [:script {:src "https://cdn.jsdelivr.net/npm/popper.js@1.16.0/dist/umd/popper.min.js"
                :integrity "sha384-Q6E9RHvbIyZFJoft+2mJbHaEWldlvI9IOYy5n3zV9zzTtmI3UksdQRVvoxMfooAo"
                :crossorigin "anonymous"}]
+     ;; Bootstrap:
      [:script {:src "https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/js/bootstrap.min.js"
                :integrity "sha384-wfSDF2E50Y2D1uUdj0O3uMBJnjuUD4Ih7YwaYd1iqfktj0Uod8GCExl3Og8ifwB6"
                :crossorigin "anonymous"}]
+     ;; Simulate synchronous mode
+     [:script {:src "http://malsup.github.io/jquery.blockUI.js"}]
+     ;; Handy time and date library:
      [:script {:src "https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.24.0/moment.min.js"}]
+     ;; For highlighting code:
      [:script {:src "//cdn.jsdelivr.net/gh/highlightjs/cdn-release@9.16.2/build/highlight.min.js"}]
-     [:script (str "hljs.initHighlightingOnLoad();" ; highlight code
-                   "$('.date').each(function() {" ; replace GMT dates with local dates
+     ;; Highlight code at load time, replace GMT dates with local dates, and replace GMT dates with
+     ;; friendly time period:
+     [:script (str "hljs.initHighlightingOnLoad();"
+                   "$('.date').each(function() {"
                    "  $(this).text(moment($(this).text()).format('YYYY-MM-DD hh:mm:ss'));"
                    "});"
-                   "$('.since').each(function() {" ; replace GMT dates with friendly time period
+                   "$('.since').each(function() {"
                    "  $(this).text(moment($(this).text()).fromNow());"
                    "});")]
+
+     ;; When unloading a page, block the UI until a new page is loaded, or after two seconds,
+     ;; whichever comes first (the two second limit is because if the server delivers a file
+     ;; response, the previous page will never actually finish unloading).
      [:script
-      "$(window).on('beforeunload', function(){"
-      "  $('*').css(\"cursor\", \"wait\");"
-      "  $(\"body\").append('<div id=\"overlay\""
-      "                           style=\"background-color:rgba(0, 0, 0, 0.2);"
-      "                                   position:absolute;"
-      "                                   top:0;"
-      "                                   left:0;"
-      "                                   height:100%;"
-      "                                   width:100%;"
-      "                                   z-index:999\"></div>');});"]
+      "window.addEventListener('beforeunload', (event) => {"
+      "  $.blockUI({"
+      "    message: '',"
+      "    overlayCSS: {"
+      "      backgroundColor: '#f5f5f5'"
+      "    }"
+      "  });"
+      "  setTimeout($.unblockUI, 2000);"
+      "});"]
 
      ;; If the user has read-only access, run the following jQuery script to disable any action
      ;; buttons on the page:
