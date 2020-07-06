@@ -452,6 +452,11 @@
       (and (site-admin?) (not (nil? really-reset)))
       (do
         (log/info "Site administrator" login "requested a global reset of branch data")
+        ;; We refresh the local branches before resetting to make sure that the metadata has been
+        ;; persisted to the database:
+        (log/debug "Refreshing local branches before reset")
+        (send-off branches/local-branches
+                  branches/refresh-local-branches (-> config :projects (keys)))
         (send-off branches/local-branches branches/reset-all-local-branches)
         (await branches/local-branches)
         (redirect "/"))
@@ -681,19 +686,20 @@
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
-  [{:keys [branch-name project-name run-time exit-code cancelled? console] :as branch}]
+  [{:keys [branch-name project-name run-time exit-code cancelled console] :as branch}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)]
     (cond
       ;; The last process was cancelled:
-      cancelled?
+      cancelled
       [:p {:class "alert alert-warning"} "Process cancelled"]
 
       ;; No process is running (or has run):
       (nil? exit-code)
       (if-not (empty? console)
         ;; If there is console output display a warning, otherwise nothing:
-        [:p {:class "alert alert-warning"} (str "Status of last command unknown (server restart?). "
-                                                "Its output is displayed in the console below.")]
+        [:p {:class "alert alert-warning"}
+         "Exit status of last command unknown. The server may have restarted before it could "
+         "complete."]
         [:div])
 
       ;; A process is still running:
@@ -1189,7 +1195,7 @@
                                :command (str "make " view-path)
                                :process process
                                :start-time (System/currentTimeMillis)
-                               :cancelled? false
+                               :cancelled false
                                :exit-code (future (sh/exit-code process)))))
 
         ;; Deliver an executable, possibly CGI-aware, script:
@@ -1355,7 +1361,7 @@
                        :command command
                        :process process
                        :start-time (System/currentTimeMillis)
-                       :cancelled? false
+                       :cancelled false
                        :exit-code (future (sh/exit-code process))))))]
 
     (log/debug "Processing request in hit-branch with params:" params)

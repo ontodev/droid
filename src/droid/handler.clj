@@ -103,7 +103,7 @@
          :redirect-uri     "/oauth2/github/callback"
          :landing-uri      "/"}})
       (wrap-session
-       {:store db/store})
+       {:store db/session-store})
       (wrap-defaults
        (let [op-env (:op-env config)
              secure-site? (-> config
