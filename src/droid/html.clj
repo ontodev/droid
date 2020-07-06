@@ -452,11 +452,6 @@
       (and (site-admin?) (not (nil? really-reset)))
       (do
         (log/info "Site administrator" login "requested a global reset of branch data")
-        ;; We refresh the local branches before resetting to make sure that the metadata has been
-        ;; persisted to the database:
-        (log/debug "Refreshing local branches before reset")
-        (send-off branches/local-branches
-                  branches/refresh-local-branches (-> config :projects (keys)))
         (send-off branches/local-branches branches/reset-all-local-branches)
         (await branches/local-branches)
         (redirect "/"))
@@ -697,9 +692,8 @@
       (nil? exit-code)
       (if-not (empty? console)
         ;; If there is console output display a warning, otherwise nothing:
-        [:p {:class "alert alert-warning"}
-         "Exit status of last command unknown. The server may have restarted before it could "
-         "complete."]
+        [:p {:class "alert alert-warning"} (str "Status of last command unknown (server restart?). "
+                                                "Its output is displayed in the console below.")]
         [:div])
 
       ;; A process is still running:
