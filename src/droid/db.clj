@@ -67,9 +67,9 @@
    "CREATE TABLE metadata_store (
       project_name VARCHAR(64) NOT NULL,
       branch_name VARCHAR(64) NOT NULL,
-      action VARCHAR(64) DEFAULT NULL,
+      action VARCHAR(1024) DEFAULT NULL,
       cancelled BOOLEAN DEFAULT FALSE,
-      command VARCHAR(64) DEFAULT NULL,
+      command VARCHAR(1024) DEFAULT NULL,
       exit_code SMALLINT DEFAULT NULL,
       start_time BIGINT DEFAULT NULL,
       PRIMARY KEY (project_name, branch_name))")

@@ -937,7 +937,7 @@
         [:form {:action this-url :method "get"}
          [:div {:class "form-group row"}
           [:div [:label {:for "commit-msg" :class "m-1 ml-3 mr-3"} "Enter a commit message"]]
-          [:div [:input {:id "commit-msg" :name "commit-msg" :type "text"}]]]
+          [:div [:input {:id "commit-msg" :name "commit-msg" :type "text" :maxlength "500"}]]]
          [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Commit"]
          [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
 
@@ -951,7 +951,7 @@
                  "Enter a new commit message"]]
           [:div [:input {:id "commit-amend-msg" :name "commit-amend-msg" :type "text"
                          ;; Use the previous commit message as the default value:
-                         :onClick "this.select();" :value (get-last-commit-msg)}]]]
+                         :maxlength "500" :onClick "this.select();" :value (get-last-commit-msg)}]]]
          [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Amend"]
          [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
 
