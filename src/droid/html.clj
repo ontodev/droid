@@ -13,6 +13,7 @@
             [droid.github :as gh]
             [droid.log :as log]
             [ring.util.codec :as codec]
+            [ring.util.http-status :as status]
             [ring.util.response :refer [file-response redirect]]))
 
 (def default-html-headers
@@ -135,6 +136,45 @@
         "  $(this).removeAttr('href');"
         "});"])])})
 
+(defn render-4xx
+  "Render a page displaying an error message"
+  [request status-code error-msg]
+  (html-response
+   request
+   {:title (-> status-code
+               (str " " (-> status-code (status/get-name)))
+               (str " &mdash; DROID"))
+    :content [:div#contents
+              [:p error-msg]
+              [:p (let [referer (-> request :headers (get "referer"))]
+                    (if referer
+                      [:a {:href referer} "Back to previous page"]
+                      [:a {:href "/"} "Back to DROID's home page"]))]]
+    :status status-code}))
+
+(defn render-404
+  "Render the 404 - not found page"
+  [request]
+  (render-4xx request 404 "The requested resource could not be found."))
+
+(defn render-401
+  "Render the 401 - unauthorized page"
+  [request]
+  (render-4xx request 401 "You are not authorized to view this page."))
+
+(defn- params-to-query-str
+  "Given a map of parameters, construct a string suitable for use in a GET request"
+  [params]
+  ;; This function is useful for passing parameters through in a redirect without having to know
+  ;; what they are. It is also used to prepare the query string when running a CGI program.
+  (->> params
+       (map #(-> %
+                 (key)
+                 (name)
+                 (codec/url-encode)
+                 (str "=" (-> % (val) (codec/url-encode)))))
+       (string/join "&")))
+
 (defn- branch-status-summary
   "Given the names of a project and branch, output a summary string of the branch's commit status
   as compared with its remote."
@@ -155,7 +195,7 @@
     (send-off branch-agent branches/refresh-local-branch)
     (await branch-agent)
     (if-not (-> @branch-agent :git-status :remote)
-      [:span {:class "text-muted"} "No remote"]
+      [:span {:class "text-muted"} "No remote found"]
       [:span
        (str (-> @branch-agent :git-status :ahead) " ahead, "
             (-> @branch-agent :git-status :behind) " behind ")
@@ -274,39 +314,6 @@
                   (not-any? #(= (:name remote-branch) %) local-branch-names))
          (render-remote-branch-row remote-branch)))]))
 
-(defn render-404
-  "Render the 404 - not found page"
-  [request]
-  (html-response
-   request
-   {:title "404 Page Not Found &mdash; DROID"
-    :content [:div#contents
-              [:p "The requested resource could not be found."]]
-    :status 404}))
-
-(defn render-401
-  "Render the 401 - unauthorized page"
-  [request]
-  (html-response
-   request
-   {:title "401 Unauthorized &mdash; DROID"
-    :content [:div#contents
-              [:p "You are not authorized to view this page."]]
-    :status 401}))
-
-(defn- params-to-query-str
-  "Given a map of parameters, construct a string suitable for use in a GET request"
-  [params]
-  ;; This function is useful for passing parameters through in a redirect without having to know
-  ;; what they are. It is also used to prepare the query string when running a CGI program.
-  (->> params
-       (map #(-> %
-                 (key)
-                 (name)
-                 (codec/url-encode)
-                 (str "=" (-> % (val) (codec/url-encode)))))
-       (string/join "&")))
-
 (defn- run-cgi
   "Run the possibly CGI-aware script located at the given path and render its response"
   [script-path
@@ -362,13 +369,13 @@
           ;; export REQUEST_METHOD="POST"; \
           ;;   export CONTENT_TYPE="application/x-www-form-urlencoded"; \
           ;;   export CONTENT_LENGTH=16;echo "cgi-input-py=bar" | build/hobbit-script.py
-          process (if (= request-method :get)
-                    (sh/proc "bash" "-c" (str "exec ./" basename " > " tmp-outfile)
-                             :dir dirname :env cgi-input-env)
+          process (if (= request-method :post)
                     (do (-> (str dirname "/" tmp-infile) (spit query-string))
                         (sh/proc "bash" "-c"
                                  (str "exec ./" basename " < " tmp-infile " > " tmp-outfile)
-                                 :dir dirname :env cgi-input-env)))
+                                 :dir dirname :env cgi-input-env))
+                    (sh/proc "bash" "-c" (str "exec ./" basename " > " tmp-outfile)
+                             :dir dirname :env cgi-input-env))
           timeout (-> config :cgi-timeout)
           exit-code (future (sh/exit-code process timeout))
           ;; We expect a blank line separating the response's header and body:
@@ -377,12 +384,16 @@
       (log/info "Running CGI script" script-path "for at most" timeout "seconds")
       (cond
         (= :timeout @exit-code)
-        (log/error "Timed out after" timeout "seconds waiting for CGI script" script-path)
+        (let [error-msg (str "Timed out after " timeout "s waiting for CGI script: " script-path)]
+          (log/error error-msg)
+          (render-4xx request 408 error-msg))
 
         (not= 0 @exit-code)
-        (let [error-msg (sh/stream-to-string process :err)]
-          (log/error "Encountered a problem while running CGI script" script-path ":" error-msg)
-          error-msg)
+        (let [error-output (sh/stream-to-string process :err)
+              error-msg (format "CGI script '%s' returned non-zero exit-code: %d. %s"
+                                script-path @exit-code (when error-output error-output))]
+          (log/error error-msg)
+          (render-4xx request 400 error-msg))
 
         :else
         (let [response-sections (-> (str dirname "/" tmp-outfile) (slurp) (split-response))
@@ -1202,10 +1213,14 @@
         deliver-exec-view #(let [script-path (-> (get-workspace-dir project-name branch-name)
                                                  (str view-path))]
                              (cond (-> script-path (io/file) (.canExecute) (not))
-                                   (log/error script-path "is not executable")
+                                   (let [error-msg (str script-path " is not executable")]
+                                     (log/error error-msg)
+                                     (render-4xx request 400 error-msg))
 
                                    (-> script-path (slurp) (string/starts-with? "#!") (not))
-                                   (log/error script-path "does not start with '#!'")
+                                   (let [error-msg (str script-path " does not start with '#!'")]
+                                     (log/error error-msg)
+                                     (render-4xx request 400 error-msg))
 
                                    :else
                                    (run-cgi script-path request)))
@@ -1368,24 +1383,29 @@
     (let [branch-key (keyword branch-name)
           project-key (keyword project-name)
           branch-agent (->> @branches/local-branches project-key branch-key)
-          last-exit-code (:exit-code @branch-agent)
+          last-exit-code (when branch-agent (:exit-code @branch-agent))
           this-url (str "/" project-name "/branches/" branch-name)]
 
-      ;; Send off a branch refresh and then (await) for it (and for any previous modifications to
-      ;; the branch) to finish:
-      (send-off branch-agent branches/refresh-local-branch)
-      (await branch-agent)
+      (when branch-agent
+        ;; Send off a branch refresh and then (await) for it (and for any previous modifications to
+        ;; the branch) to finish:
+        (send-off branch-agent branches/refresh-local-branch)
+        (await branch-agent)
 
-      ;; If the associated process is a git action, then wait for it to finish, which is
-      ;; accomplished by dereferencing its exit code:
-      (when (->> gh/git-actions (keys) (map name) (some #(= % (:action @branch-agent))))
-        (-> @branch-agent :exit-code (deref)))
+        ;; If the associated process is a git action, then wait for it to finish, which is
+        ;; accomplished by dereferencing its exit code:
+        (when (->> gh/git-actions (keys) (map name) (some #(= % (:action @branch-agent))))
+          (-> @branch-agent :exit-code (deref))))
 
       ;; Note that below we do not call (await) after calling (send-off), because below we
       ;; always redirect back to the branch page, which results in another call to this function,
       ;; which always calls await when it starts (see above).
       (cond
-        ;; This first condition will not normally be hit, since the action buttons should all
+        ;; The given branch does not exist:
+        (nil? branch-agent)
+        (render-404 request)
+
+        ;; This condition will not normally be hit, since the action buttons should all
         ;; be greyed out for read-only users. But this could nonetheless happen if the user tries
         ;; to manually enter the action url into the browser's address bar, so we guard against that
         ;; here:
