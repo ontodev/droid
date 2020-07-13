@@ -1,7 +1,6 @@
-(ns droid.data
+(ns droid.branches
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
-            [environ.core :refer [env]]
             [me.raynes.conch.low-level :as sh]
             [droid.command :as cmd]
             [droid.config :refer [config]]
@@ -10,25 +9,8 @@
             [droid.log :as log]
             [droid.make :as make]))
 
-(def secrets
-  "Secret IDs and passcodes, loaded from environment variables."
-  ;; Note that the env package maps an environment variable named ENV_VAR into the keyword
-  ;; :env-var, so below :github-client-id is associated with GITHUB_CLIENT_ID and similarly for
-  ;; :github-client-secret.
-  (->> [:github-client-id :github-client-secret]
-       (map #(let [val (env %)]
-               (if (nil? val)
-                 ;; Raise an error if the environment variable isn't found:
-                 (-> % (str " not set") (log/fail))
-                 ;; Otherwise return a hashmap with one entry:
-                 {% val})))
-       ;; Merge the hashmaps corresponding to each environment variable into one hashmap:
-       (apply merge)))
-
-(defn- default-agent-error-handler
+(def default-agent-error-handler
   "The default error handler to use with agents"
-  []
-  ;; TODO: Errors are being swallowed. Why?
   (fn [the-agent exception]
     (log/error (.getMessage exception))))
 
@@ -231,30 +213,37 @@
        ;; Merge that hash-map into the hash-map for all projects:
        (merge all-branches)))
 
+(defn kill-process
+  "Kill the running process associated with the given branch and return the branch to the caller."
+  [{:keys [process action branch-name project-name] :as branch} & [{:keys [login] :as user}]]
+  (if-not (nil? process)
+    (do
+      (-> (str "Cancelling process " action " on branch " branch-name " of " project-name)
+          (#(if login
+              (str % " on behalf of " login)
+              %))
+          (log/info))
+      (sh/destroy process)
+      (assoc branch :cancelled? true))
+    branch))
+
 (defn- kill-all-managed-processes
   "Kill all processes associated with the branches managed by the server."
   [all-branches]
-  (letfn [(kill-process [{:keys [process action branch-name project-name] :as branch}]
-            (if-not (nil? process)
-              (do
-                (log/info "Cancelling process:" action "on branch" branch-name "of" project-name)
-                (sh/destroy process)
-                (assoc branch :cancelled? true))
-              branch))]
-    (->> all-branches
-         (keys)
-         (map (fn [project-key]
-                (->> all-branches
-                     project-key
-                     (vals) ;; <-- these are the branch agents
-                     (map #(send-off % kill-process))
-                     ;; After killing all the managed processes, re-merge the agents into the
-                     ;; global hash-map:
-                     (map #(hash-map (-> % (deref) :branch-name (keyword))
-                                     %))
-                     (apply merge)
-                     (hash-map project-key))))
-         (apply merge))))
+  (->> all-branches
+       (keys)
+       (map (fn [project-key]
+              (->> all-branches
+                   project-key
+                   (vals) ;; <-- these are the branch agents
+                   (map #(send-off % kill-process))
+                   ;; After killing all the managed processes, re-merge the agents into the
+                   ;; global hash-map:
+                   (map #(hash-map (-> % (deref) :branch-name (keyword))
+                                   %))
+                   (apply merge)
+                   (hash-map project-key))))
+       (apply merge)))
 
 (defn reset-all-local-branches
   "Reset all managed branches for all projects by killing all managed processes, deleting all

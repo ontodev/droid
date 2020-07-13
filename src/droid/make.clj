@@ -76,7 +76,8 @@
   (1) The original markdown; (2) the original phony target list; (3) the original branch name;
   (4) a list of all targets; (5) a list of those targets which represent general actions; (6) a list
   of those targets which represent file views; (7) a list of those targets which represent directory
-  views; (8) a html representation (in the form of a hiccup structure) of the markdown."
+  views; (8) a list of those targets that represent executable views; (9) a html representation (in
+  the form of a hiccup structure) of the markdown."
   [{:keys [markdown phony-targets project-name branch-name] :as makefile}]
   (when markdown
     (let [html (->> markdown (m2h/md->hiccup) (m2h/component))]
@@ -103,7 +104,17 @@
                      (flatten-to-1st-level)
                      (into #{})))
 
-              (process-makefile-html [{:keys [html file-views dir-views general-actions branch-name]
+              (normalize-exec-view [href]
+                ;; Executable views are prefixed in the Makefile by "./" and in general have query
+                ;; parameters appended to them; e.g., "./build/view.py?param1=a&param2=b". When
+                ;; recording an executable view in the map for the makefile, we normalize it by
+                ;; removing any such prefix and/or suffix. At the same time we want to preserve
+                ;; these in the actual HTML that gets rendered on the branch page. This function
+                ;; translates a non-normalized view into a normalized version.
+                (-> href (string/replace #"^\./" "") (string/replace #"\?.+$" "")))
+
+              (process-makefile-html [{:keys [html file-views dir-views exec-views general-actions
+                                              branch-name]
                                        :as makefile}]
                 ;; Recurses through the html hiccup structure and transforms any links that are
                 ;; found into either action links or view links:
@@ -117,7 +128,8 @@
                                   ;; access to.
                                   :class "btn btn-primary btn-sm action-btn"} text]
 
-                            (some #(= href %) (set/union file-views dir-views))
+                            (or (some #(= href %) (set/union file-views dir-views))
+                                (some #(-> href (normalize-exec-view) (= %)) exec-views))
                             [tag {:href (str "/" project-name "/branches/" branch-name
                                              "/views/" href)} text]
 
@@ -130,6 +142,7 @@
                              (vec (process-makefile-html {:html elem,
                                                           :file-views file-views,
                                                           :dir-views dir-views,
+                                                          :exec-views exec-views
                                                           :general-actions general-actions,
                                                           :branch-name branch-name})))
                            elem))
@@ -138,7 +151,8 @@
              (extract-nested-links)
              ;; For all of the extracted links, add those that do not contain an 'authority' part
              ;; (i.e. a domain name) to the list of targets, and then also place them, as
-             ;; appropriate, into one of the general-actions, file-views, or dir-views lists:
+             ;; appropriate, into one of the general-actions, file-views, dir-views, or exec-views
+             ;; lists:
              (map (fn [[tag {href :href} text]]
                     (when (nil? (->> href
                                      (java.net.URI.)
@@ -146,9 +160,18 @@
                                      :authority))
                       (merge
                        {:targets #{href}}
-                       (cond (some #(= href %) phony-targets) {:general-actions #{href}}
-                             (string/ends-with? href "/") {:dir-views #{href}}
-                             :else {:file-views #{href}})))))
+                       (cond
+                         (some #(= href %) phony-targets)
+                         {:general-actions #{href}}
+
+                         (string/ends-with? href "/")
+                         {:dir-views #{href}}
+
+                         (string/starts-with? href "./")
+                         {:exec-views #{(normalize-exec-view href)}}
+
+                         :else
+                         {:file-views #{href}})))))
              (apply merge-with into)
              ;; Add the original html to the makefile record, and then send everything through
              ;; process-makefile-html, which will transform the view and action links accordingly:

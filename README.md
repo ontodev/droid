@@ -73,10 +73,12 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
  :server-port {:dev 8000 :test 8001 :prod 8002}
  :log-level {:dev :info :test :info :prod :warn}
  :secure-site {:dev true :test true :prod true}
- :site-admin-github-ids
- {:dev #{"user1" "user2"}
-  :test #{"user1" "user2"}
-  :prod #{"user1" "user2"}}}
+ :site-admin-github-ids {:dev #{"user1" "user2"}
+                         :test #{"user1" "user2"}
+                         :prod #{"user1" "user2"}}
+ :cgi-timeout 60000
+ :log-file "droid.log"
+:html-body-colors "bg-white"}
 ```
 
 where:
@@ -84,6 +86,11 @@ where:
 - `:op-env` should be one of `:dev`, `:test`, `:prod`
 - `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`
 - `:server-port` is the port that the server will listen on.
+- `:secure-site` is either true or false and indicates whether the server will use https or http.
+- `:site-admin-github-ids` is a hash-set of github userids who are considered site administrators.
+- `:cgi-timeout` is the maximum number of milliseconds that a CGI script is allowed to run.
+- `:log-file` is the file (relative to DROID's root directory) where the log will be written to. If it is nil then log is written to STDERR.
+- `:html-body-colors` is a valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color) to use for DROID's pages.
 
 If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
 

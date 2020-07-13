@@ -1,19 +1,34 @@
 (ns droid.handler
-  (:require [compojure.core :refer [defroutes GET]]
+  (:require [cheshire.core :as cheshire]
+            [compojure.core :refer [defroutes GET POST]]
             [compojure.route :as route]
+            [environ.core :refer [env]]
+            [org.httpkit.client :as http]
             [ring.middleware.defaults :refer [secure-site-defaults site-defaults wrap-defaults]]
             [ring.middleware.oauth2 :refer [wrap-oauth2]]
             [ring.middleware.session :refer [wrap-session]]
             [ring.middleware.session.cookie :refer [cookie-store]]
             [ring.util.response :refer [redirect]]
-            [org.httpkit.client :as http]
-            [cheshire.core :as cheshire]
             [droid.config :refer [config]]
-            [droid.data :as data]
             [droid.db :as db]
             [droid.github :as gh]
             [droid.log :as log]
             [droid.html :as html]))
+
+(def secrets
+  "Secret IDs and passcodes, loaded from environment variables."
+  ;; Note that the env package maps an environment variable named ENV_VAR into the keyword
+  ;; :env-var, so below :github-client-id is associated with GITHUB_CLIENT_ID and similarly for
+  ;; :github-client-secret.
+  (->> [:github-client-id :github-client-secret]
+       (map #(let [val (env %)]
+               (if (nil? val)
+                 ;; Raise an error if the environment variable isn't found:
+                 (-> % (str " not set") (log/fail))
+                 ;; Otherwise return a hashmap with one entry:
+                 {% val})))
+       ;; Merge the hashmaps corresponding to each environment variable into one hashmap:
+       (apply merge)))
 
 (defn- wrap-authenticated
   "If the request is to logout, then reset the session and redirect to the index page. Otherwise,
@@ -62,9 +77,10 @@
        request))))
 
 (defroutes app-routes
-  (GET "/" [] html/index)
+  (GET "/" [] html/render-index)
   (GET "/:project-name" [] html/render-project)
   (GET "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)
+  (POST "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)
   (GET "/:project-name/branches/:branch-name" [] html/hit-branch)
   ;; all other, return 404
   (route/not-found html/render-404))
@@ -79,8 +95,8 @@
        {:github
         {:authorize-uri    "https://github.com/login/oauth/authorize"
          :access-token-uri "https://github.com/login/oauth/access_token"
-         :client-id        (:github-client-id data/secrets)
-         :client-secret    (:github-client-secret data/secrets)
+         :client-id        (:github-client-id secrets)
+         :client-secret    (:github-client-secret secrets)
          :basic-auth?      true
          :scopes           ["user:email public_repo"]
          :launch-uri       "/oauth2/github"
@@ -97,7 +113,7 @@
              (assoc :proxy true)
              (assoc-in [:security :anti-forgery] false)
              (assoc-in [:session :cookie-attrs :same-site] :lax)
-             (assoc-in [:session :store] (cookie-store {:key (:cookie-store-key data/secrets)})))))))
+             (assoc-in [:session :store] (cookie-store {:key (:cookie-store-key secrets)})))))))
 
 (def app
   "The web app"
