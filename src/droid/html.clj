@@ -6,15 +6,16 @@
             [hiccup.page :refer [html5]]
             [hickory.core :as hickory]
             [me.raynes.conch.low-level :as sh]
+            [ring.util.codec :as codec]
+            [ring.util.http-status :as status]
+            [ring.util.response :refer [file-response redirect]]
             [droid.branches :as branches]
-            [droid.config :refer [config]]
-            [droid.make :as make]
+            [droid.config :refer [get-config]]
+            [droid.command :refer [run-command]]
             [droid.dir :refer [get-workspace-dir get-temp-dir]]
             [droid.github :as gh]
             [droid.log :as log]
-            [ring.util.codec :as codec]
-            [ring.util.http-status :as status]
-            [ring.util.response :refer [file-response redirect]]))
+            [droid.make :as make]))
 
 (def default-html-headers
   {"Content-Type" "text/html"})
@@ -31,7 +32,7 @@
     (or (nil? login)
         (and (not= this-project-permissions "write")
              (not= this-project-permissions "admin")
-             (not-any? #(= login %) (-> config :site-admin-github-ids (get (:op-env config))))))))
+             (not-any? #(= login %) (get-config :site-admin-github-ids))))))
 
 (defn- login-status
   "Render the user's login status."
@@ -79,7 +80,7 @@
       {:rel "stylesheet"
        :href "//cdn.jsdelivr.net/gh/highlightjs/cdn-release@9.16.2/build/styles/default.min.css"}]
      [:title title]]
-    [:body (when (-> config :html-body-colors) {:class (-> config :html-body-colors)})
+    [:body (when (get-config :html-body-colors) {:class (get-config :html-body-colors)})
      [:div {:id "content" :class "container p-3"}
       (login-status request)
       [:hr {:class "line1"}]
@@ -183,7 +184,8 @@
                          (get (keyword project-name))
                          (get (keyword branch-name)))
 
-        [org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+        [org repo] (-> :projects (get-config) (get project-name) :github-coordinates
+                       (string/split #"/"))
 
         render-remote (fn [remote]
                         [:a {:href (-> remote
@@ -213,7 +215,8 @@
                                 (keys)
                                 (map name))
 
-        [org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+        [org repo] (-> :projects (get-config) (get project-name) :github-coordinates
+                       (string/split #"/"))
 
         project-url (str "/" project-name)
 
@@ -369,15 +372,19 @@
           ;; export REQUEST_METHOD="POST"; \
           ;;   export CONTENT_TYPE="application/x-www-form-urlencoded"; \
           ;;   export CONTENT_LENGTH=16;echo "cgi-input-py=bar" | build/hobbit-script.py
-          process (if (= request-method :post)
-                    (do (-> (str dirname "/" tmp-infile) (spit query-string))
-                        (sh/proc "bash" "-c"
-                                 (str "exec ./" basename " < " tmp-infile " > " tmp-outfile)
-                                 :dir dirname :env cgi-input-env))
-                    (sh/proc "bash" "-c" (str "exec ./" basename " > " tmp-outfile)
-                             :dir dirname :env cgi-input-env))
-          timeout (-> config :cgi-timeout)
-          exit-code (future (sh/exit-code process timeout))
+          timeout (get-config :cgi-timeout)
+          [process
+           exit-code] (if (= request-method :post)
+                        (do (-> (str dirname "/" tmp-infile) (spit query-string))
+                            (run-command
+                             ["bash" "-c"
+                              (str "exec ./" basename " < " tmp-infile " > " tmp-outfile)
+                              :dir dirname :env cgi-input-env]
+                             timeout))
+                        (run-command
+                         ["bash" "-c" (str "exec ./" basename " > " tmp-outfile)
+                          :dir dirname :env cgi-input-env]
+                         timeout))
           ;; We expect a blank line separating the response's header and body:
           split-response #(->> % (string/split-lines) (partition-by string/blank?))]
 
@@ -456,7 +463,7 @@
     :as request}]
   (log/debug "Processing request in index with params:" params)
   (letfn [(site-admin? []
-            (some #(= login %) (-> config :site-admin-github-ids (get (:op-env config)))))]
+            (some #(= login %) (get-config :site-admin-github-ids)))]
     (cond
       ;; If the user is a site-admin and has confirmed a reset action, do it now and redirect back
       ;; to this page:
@@ -467,7 +474,7 @@
         ;; persisted to the database:
         (log/debug "Refreshing local branches before reset")
         (send-off branches/local-branches
-                  branches/refresh-local-branches (-> config :projects (keys)))
+                  branches/refresh-local-branches (-> :projects (get-config) (keys)))
         (send-off branches/local-branches branches/reset-all-local-branches)
         (await branches/local-branches)
         (redirect "/"))
@@ -499,7 +506,7 @@
                    [:div
                     [:h3 "Available Projects"]
                     [:ul {:class ""}
-                     (for [project (-> config :projects)]
+                     (for [project (get-config :projects)]
                        [:li [:a {:href (->> project (key) (str "/"))}
                              (->> project (val) :project-title)]
                         [:span "&nbsp;"]
@@ -519,11 +526,11 @@
     :as request}]
   (log/debug "Processing request in render-project with params:" params)
   (let [this-url (str "/" project-name)
-        project (-> config :projects (get project-name))]
+        project (-> :projects (get-config) (get project-name))]
     (letfn [(refname-valid? [refname]
               ;; Uses git's command line interface to determine whether the given refname is legal.
-              (let [process (sh/proc "git" "check-ref-format" "--allow-onelevel" refname)
-                    exit-code (future (sh/exit-code process))]
+              (let [[process
+                     exit-code] (run-command ["git" "check-ref-format" "--allow-onelevel" refname])]
                 (or (= @exit-code 0) false)))
 
             (create-branch [project-name branch-name]
@@ -864,12 +871,13 @@
                   render-pre-block (fn [arg]
                                      [:pre {:class "bg-light p-2"} [:samp {:class "shell"} arg]])]
               (if ansi-commands?
-                (let [process (do (log/debug "Colourizing console using ansi2html ...")
-                                  (sh/proc "bash" "-c"
-                                           (str "exec ansi2html -i < console.txt > console.html")
-                                           :dir pwd))
-                      ansi2html-exit-code (future (sh/exit-code process))
-                      colourized-console (if (not= @ansi2html-exit-code 0)
+                (let [[process
+                       a2h-exit-code] (do (log/debug "Colourizing console using ansi2html ...")
+                                          (run-command
+                                           ["bash" "-c"
+                                            (str "exec ansi2html -i < console.txt > console.html")
+                                            :dir pwd]))
+                      colourized-console (if (not= @a2h-exit-code 0)
                                            (do (log/error "Unable to colourize console.")
                                                console)
                                            (slurp (str pwd "console.html")))]
@@ -915,20 +923,21 @@
    {:keys [params]
     {:keys [confirm-push get-commit-msg get-commit-amend-msg next-task pr-added]} :params
     :as request}]
-  (let [get-last-commit-msg #(let [process (sh/proc "git" "show" "-s" "--format=%s"
-                                                    :dir (get-workspace-dir project-name
-                                                                            branch-name))
-                                   exit-code (future (sh/exit-code process))]
+  (let [get-last-commit-msg #(let [[process exit-code]
+                                   (run-command ["git" "show" "-s" "--format=%s"
+                                                 :dir (get-workspace-dir project-name
+                                                                         branch-name)])]
                                (if-not (= 0 @exit-code)
                                  (do (log/error "Unable to retrieve previous commit message:"
                                                 (sh/stream-to-string process :err))
                                      nil)
                                  (sh/stream-to-string process :out)))
-        get-commits-to-push #(let [process (sh/proc "git" "log" "--branches" "--not" "--remotes"
-                                                    "--reverse" "--format=%s"
-                                                    :dir (get-workspace-dir project-name
-                                                                            branch-name))
-                                   exit-code (future (sh/exit-code process))]
+
+        get-commits-to-push #(let [[process exit-code]
+                                   (run-command ["git" "log" "--branches" "--not" "--remotes"
+                                                 "--reverse" "--format=%s"
+                                                 :dir (get-workspace-dir project-name
+                                                                         branch-name)])]
                                (if-not (= 0 @exit-code)
                                  (do (log/error "Unable to retrieve commit list:"
                                                 (sh/stream-to-string process :err))
@@ -1115,7 +1124,8 @@
       :else
       (html-response
        request
-       {:title (-> config :projects (get project-name) :project-title (str " -- " branch-name))
+       {:title (-> :projects (get-config) (get project-name) :project-title
+                   (str " -- " branch-name))
         :heading [:div
                   [:a {:href "/"} "DROID"]
                   " / "
@@ -1185,9 +1195,9 @@
                                            (conj (:exec-views %))))))
 
         ;; Run `make -q` to see if the view is up to date:
-        up-to-date? #(let [process (sh/proc "make" "-q" view-path
-                                            :dir (get-workspace-dir project-name branch-name))
-                           exit-code (future (sh/exit-code process))]
+        up-to-date? #(let [[process exit-code] (run-command ["make" "-q" view-path
+                                                             :dir (get-workspace-dir project-name
+                                                                                     branch-name)])]
                        (or (= @exit-code 0) false))
 
         ;; Run `make` (in the background) to rebuild the view, with output directed to the branch's
@@ -1195,12 +1205,12 @@
         update-view (fn [branch]
                       (log/info "Rebuilding view" view-path "from branch" branch-name "of project"
                                 project-name "for user" (-> request :session :user :login))
-                      (let [process (sh/proc "bash" "-c"
-                                             (str "exec make " view-path
-                                                  " > ../../temp/" branch-name "/console.txt "
-                                                  " 2>&1")
-                                             :dir (get-workspace-dir project-name branch-name))
-                            exit-code (future (sh/exit-code process))]
+                      (let [[process exit-code]
+                            (run-command ["bash" "-c"
+                                          (str "exec make " view-path
+                                               " > ../../temp/" branch-name "/console.txt "
+                                               " 2>&1")
+                                          :dir (get-workspace-dir project-name branch-name)])]
                         (assoc branch
                                :action view-path
                                :command (str "make " view-path)
@@ -1355,17 +1365,17 @@
                                     %)))
                             ;; Otherwise prefix it with "make ":
                             (str "make " new-action))
-                  process (when-not (nil? command)
-                            (sh/proc "bash" "-c"
-                                     ;; `exec` is needed here to prevent the make process from
-                                     ;; detaching from the parent (since that would make it
-                                     ;; difficult to destroy later).
-                                     (str
-                                      "exec " command
-                                      " > ../../temp/" branch-name "/console.txt"
-                                      " 2>&1")
-                                     :dir (get-workspace-dir project-name branch-name)))]
-
+                  [process exit-code] (when-not (nil? command)
+                                        (run-command
+                                         ["bash" "-c"
+                                          ;; `exec` is needed here to prevent the make process from
+                                          ;; detaching from the parent (since that would make it
+                                          ;; difficult to destroy later).
+                                          (str
+                                           "exec " command
+                                           " > ../../temp/" branch-name "/console.txt"
+                                           " 2>&1")
+                                          :dir (get-workspace-dir project-name branch-name)]))]
               (if (nil? command)
                 ;; If the command is nil just return the branch back unchanged:
                 branch
@@ -1377,7 +1387,7 @@
                        :process process
                        :start-time (System/currentTimeMillis)
                        :cancelled false
-                       :exit-code (future (sh/exit-code process))))))]
+                       :exit-code exit-code))))]
 
     (log/debug "Processing request in hit-branch with params:" params)
     (let [branch-key (keyword branch-name)
@@ -1394,7 +1404,8 @@
 
         ;; If the associated process is a git action, then wait for it to finish, which is
         ;; accomplished by dereferencing its exit code:
-        (when (->> gh/git-actions (keys) (map name) (some #(= % (:action @branch-agent))))
+        (when (and (->> gh/git-actions (keys) (map name) (some #(= % (:action @branch-agent))))
+                   (-> @branch-agent :exit-code))
           (-> @branch-agent :exit-code (deref))))
 
       ;; Note that below we do not call (await) after calling (send-off), because below we

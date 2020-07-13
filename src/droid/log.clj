@@ -1,5 +1,5 @@
 (ns droid.log
-  (:require [droid.config :refer [config]]))
+  (:require [droid.config :refer [get-config]]))
 
 (def log-levels {:debug 0 :info 1 :warn 2 :warning 2 :error 3 :fatal 4})
 
@@ -7,10 +7,8 @@
   "Given a keword representing the log-level, check to see whether the application configuration
   requires it to be screened out."
   [log-level]
-  (let [op-env (:op-env config)
-        config-level (->> config
-                          :log-level
-                          op-env
+  (let [config-level (->> :log-level
+                          (get-config)
                           (get log-levels))
         given-level (log-level log-levels)]
     (< given-level config-level)))
@@ -25,8 +23,8 @@
         message (->> other-words
                      (clojure.string/join " ")
                      (str first-word " "))]
-    (if (:log-file config)
-      (spit (:log-file config)
+    (if (get-config :log-file)
+      (spit (get-config :log-file)
             (str now "-" message "\n")
             :append true)
       (binding [*out* *err*]
@@ -67,5 +65,5 @@
   development mode."
   [errorstr]
   (fatal errorstr)
-  (when-not (= (:op-env config) :dev)
+  (when-not (= (get-config :op-env) :dev)
     (System/exit 1)))

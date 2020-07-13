@@ -1,6 +1,6 @@
 (ns droid.core
   (:require [org.httpkit.server :refer [run-server]]
-            [droid.config :refer [config]]
+            [droid.config :refer [get-config]]
             [droid.handler :as handler]
             [droid.log :as log])
   (:gen-class))
@@ -11,9 +11,6 @@
   #'handler/app)
 
 (defn -main []
-  (let [op-env (:op-env config)
-        port (-> config
-                 :server-port
-                 (get op-env))]
+  (let [port (get-config :server-port)]
     (log/info (str "Starting HTTP server on port " port "."))
     (run-server (wrap-app) {:port port})))

@@ -4,7 +4,7 @@
             [tentacles.core :refer [api-call]]
             [tentacles.pulls :refer [create-pull pulls]]
             [tentacles.repos :refer [branches]]
-            [droid.config :refer [config]]
+            [droid.config :refer [get-config]]
             [droid.log :as log]))
 
 (def git-actions
@@ -44,8 +44,8 @@
   (let [to-branch "master"]
     (log/info "Creating PR" (str "\"" pr-to-add "\"") "for user" (str login ":") "Merging"
               from-branch "to" to-branch "in project" project-name)
-    (let [response (-> config
-                       :projects
+    (let [response (-> :projects
+                       (get-config)
                        (get project-name)
                        (get :github-coordinates)
                        (string/split #"/")
@@ -62,8 +62,8 @@
   "Given a GitHub login and an OAuth2 token, returns a hash-map specifying the user's permissions
   for every project managed by the server instance."
   [login token]
-  (->> config
-       :projects
+  (->> :projects
+       (get-config)
        (map (fn [project]
               ;; Corresponding to each managed project is a mapping from a keywordized project
               ;; name to the user's GitHub permissions on that project, which can be one of:
@@ -91,8 +91,8 @@
   "Call the GitHub API to get the list of remote branches for the given project, using the given
   login and token for authentication."
   [project-name login token]
-  (let [[org repo] (-> config
-                       :projects
+  (let [[org repo] (-> :projects
+                       (get-config)
                        (get project-name)
                        :github-coordinates
                        (string/split #"/"))

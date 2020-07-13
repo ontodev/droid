@@ -2,8 +2,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [me.raynes.conch.low-level :as sh]
-            [droid.command :as cmd]
-            [droid.config :refer [config]]
+            [droid.command :refer [run-command run-commands]]
+            [droid.config :refer [get-config]]
             [droid.db :as db]
             [droid.dir :refer [get-workspace-dir get-temp-dir]]
             [droid.github :as gh]
@@ -14,8 +14,8 @@
   "The default error handler to use with agents"
   (fn [the-agent exception]
     (log/error (.getMessage exception))
-    (when (and (->> config :op-env (= :dev))
-               (->> config :log-level (#(get % (:op-env config))) (= :debug)))
+    (when (and (->> :op-env (get-config) (= :dev))
+               (->> :log-level (get-config) (= :debug)))
       (.printStackTrace exception))))
 
 (defn- delete-recursively
@@ -111,9 +111,9 @@
                                  (boolean))}))]
     (let [branch-workspace-dir (get-workspace-dir project-name branch-name)
           branch-temp-dir (get-temp-dir project-name branch-name)
-          git-status (let [process (sh/proc "git" "status" "--short" "--branch" "--porcelain"
-                                            :dir (get-workspace-dir project-name branch-name))
-                           exit-code (future (sh/exit-code process))]
+          git-status (let [[process exit-code]
+                           (run-command ["git" "status" "--short" "--branch" "--porcelain"
+                                         :dir (get-workspace-dir project-name branch-name)])]
                        (if (= @exit-code 0)
                          (parse-git-status (sh/stream-to-string process :out))
                          (do
@@ -276,10 +276,10 @@
   (log/info "Killing all managed processes ...")
   (kill-all-managed-processes all-branches)
   (log/info "Deleting all temporary branch data ...")
-  (doseq [project-name (-> config :projects (keys))]
+  (doseq [project-name (-> :projects (get-config) (keys))]
     (-> project-name (get-temp-dir) (delete-recursively)))
   (log/info "Reinitializing local branches ...")
-  (refresh-local-branches {} (-> config :projects (keys))))
+  (refresh-local-branches {} (-> :projects (get-config) (keys))))
 
 (defn delete-local-branch
   "Deletes the given branch of the given project from the given managed server branches,
@@ -301,7 +301,8 @@
   [all-branches project-name branch-name
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens}]
-  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+  (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
+                       (string/split #"/"))
         url (str "https://" login ":" token "@github.com/" org "/" repo)]
     (log/debug "Storing github credentials for" project-name "/" branch-name)
     (-> project-name (get-workspace-dir) (str branch-name "/.git-credentials") (spit url))
@@ -319,22 +320,23 @@
 (defn checkout-remote-branch-to-local
   "Checkout a remote GitHub branch into the local workspace."
   [all-branches project-name branch-name]
-  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+  (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
+                       (string/split #"/"))
         cloned-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
     ;; Clone the remote branch and configure it to use colours. If there is an error, then log it,
     ;; remove the newly created branch directory if it exists, and return the branch collection
     ;; back unchanged. Otherwise refresh the local branches for the project, which should pick up
     ;; the newly cloned directory:
     (try
-      (cmd/run-commands [["git" "clone" "--branch" branch-name
-                          (str "https://github.com/" org "/" repo) branch-name
-                          :dir (get-workspace-dir project-name)]
-                         ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
-                          :dir cloned-branch-dir]
-                         ["bash" "-c" (str "exec git config credential.helper "
-                                           "'store --file=.git-credentials'")
-                          :dir cloned-branch-dir]
-                         ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]])
+      (run-commands [["git" "clone" "--branch" branch-name
+                      (str "https://github.com/" org "/" repo) branch-name
+                      :dir (get-workspace-dir project-name)]
+                     ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                      :dir cloned-branch-dir]
+                     ["bash" "-c" (str "exec git config credential.helper "
+                                       "'store --file=.git-credentials'")
+                      :dir cloned-branch-dir]
+                     ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]])
       (catch Exception e
         (log/error (.getMessage e))
         (delete-recursively cloned-branch-dir)
@@ -349,7 +351,8 @@
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens
     :as request}]
-  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+  (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
+                       (string/split #"/"))
         new-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
     ;; Clone the base branch from upstream, then locally checkout to a new branch, and push the
     ;; new branch to upstream. If there is an error in any of these commands, then log it, remove
@@ -357,18 +360,18 @@
     ;; unchanged. Otherwise, initialize the new branch and merge it into the branch collection to
     ;; return.
     (try
-      (cmd/run-commands [["git" "clone" "--branch" base-branch-name
-                          (str "https://github.com/" org "/" repo) branch-name
-                          :dir (get-workspace-dir project-name)]
-                         ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
-                          :dir new-branch-dir]])
+      (run-commands [["git" "clone" "--branch" base-branch-name
+                      (str "https://github.com/" org "/" repo) branch-name
+                      :dir (get-workspace-dir project-name)]
+                     ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                      :dir new-branch-dir]])
       (store-creds all-branches project-name branch-name request)
-      (cmd/run-commands [["bash" "-c" (str "exec git config credential.helper "
-                                           "'store --file=.git-credentials'")
-                          :dir new-branch-dir]
-                         ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
-                         ["git" "checkout" "-b" branch-name :dir new-branch-dir]
-                         ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]])
+      (run-commands [["bash" "-c" (str "exec git config credential.helper "
+                                       "'store --file=.git-credentials'")
+                      :dir new-branch-dir]
+                     ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
+                     ["git" "checkout" "-b" branch-name :dir new-branch-dir]
+                     ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]])
       (remove-creds all-branches project-name branch-name)
       (catch Exception e
         (log/error (.getMessage e))
@@ -379,8 +382,8 @@
 (def local-branches
   "An agent to handle access to the hashmap that contains info on all of the branches managed by the
   server instance."
-  (-> config
-      :projects
+  (-> :projects
+      (get-config)
       (keys)
       (#(refresh-local-branches {} %))
       (agent :error-mode :continue :error-handler default-agent-error-handler)))
