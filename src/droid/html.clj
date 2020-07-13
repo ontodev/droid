@@ -12,7 +12,7 @@
             [droid.branches :as branches]
             [droid.config :refer [get-config]]
             [droid.command :refer [run-command]]
-            [droid.dir :refer [get-workspace-dir get-temp-dir]]
+            [droid.fileutils :refer [get-workspace-dir get-temp-dir]]
             [droid.github :as gh]
             [droid.log :as log]
             [droid.make :as make]))

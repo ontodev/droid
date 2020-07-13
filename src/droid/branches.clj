@@ -2,42 +2,15 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [me.raynes.conch.low-level :as sh]
+            [droid.agent :refer [default-agent-error-handler]]
             [droid.command :refer [run-command run-commands]]
             [droid.config :refer [get-config]]
             [droid.db :as db]
-            [droid.dir :refer [get-workspace-dir get-temp-dir]]
+            [droid.fileutils :refer [delete-recursively recreate-dir-if-not-exists
+                                     get-workspace-dir get-temp-dir]]
             [droid.github :as gh]
             [droid.log :as log]
             [droid.make :as make]))
-
-(def default-agent-error-handler
-  "The default error handler to use with agents"
-  (fn [the-agent exception]
-    (log/error (.getMessage exception))
-    (when (and (->> :op-env (get-config) (= :dev))
-               (->> :log-level (get-config) (= :debug)))
-      (.printStackTrace exception))))
-
-(defn- delete-recursively
-  "Delete all files and directories recursively under and including topname."
-  [topname]
-  (let [filenames (->> topname (io/file) (.list))]
-    (doseq [filename filenames]
-      (let [path (str topname "/" filename)]
-        (if (-> path (io/file) (.isDirectory))
-          (delete-recursively path)
-          (io/delete-file path true)))))
-  (io/delete-file topname true)
-  (log/debug "Deleted" topname))
-
-(defn- recreate-dir-if-not-exists
-  "If the given directory doesn't exist or it isn't a directory, recreate it."
-  [dirname]
-  (when-not (-> dirname (io/file) (.isDirectory))
-    (log/debug "(Re)creating directory:" dirname)
-    ;; By setting silent mode to true, the command won't complain if the file doesn't exist:
-    (io/delete-file dirname true)
-    (.mkdir (io/file dirname))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Code related to remote branches (i.e., branches available via GitHub)
