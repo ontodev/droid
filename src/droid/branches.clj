@@ -4,6 +4,7 @@
             [me.raynes.conch.low-level :as sh]
             [droid.command :as cmd]
             [droid.config :refer [config]]
+            [droid.db :as db]
             [droid.dir :refer [get-workspace-dir get-temp-dir]]
             [droid.github :as gh]
             [droid.log :as log]
@@ -12,7 +13,10 @@
 (def default-agent-error-handler
   "The default error handler to use with agents"
   (fn [the-agent exception]
-    (log/error (.getMessage exception))))
+    (log/error (.getMessage exception))
+    (when (and (->> config :op-env (= :dev))
+               (->> config :log-level (#(get % (:op-env config))) (= :debug)))
+      (.printStackTrace exception))))
 
 (defn- delete-recursively
   "Delete all files and directories recursively under and including topname."
@@ -143,9 +147,19 @@
               (assoc % :run-time (->> branch :start-time (- (System/currentTimeMillis))))
               %))))))
 
+(defn- branch-metadata-watcher
+  "A watcher for a branch agent that persists the state of the agent's branch whenever it changes."
+  [watcher-key branch-agent old-branch new-branch]
+  (when-not (= old-branch new-branch)
+    (-> "Persisting branch metadata for branch '%s' of project '%s' to the metadata database."
+        (format (:branch-name new-branch) (:project-name new-branch))
+        (log/debug))
+    (db/persist-branch-metadata new-branch)))
+
 (defn- initialize-branch
   "Given the names of a project and branch, create the branch's temporary directory and console, and
-  initialize and return an agent that will be used to manage access to the branch's resources."
+  initialize and return a hashmap with an entry corresponding to an agent that will be used to
+  manage access to the branch's resources."
   [project-name branch-name]
   (let [project-temp-dir (get-temp-dir project-name)]
     ;; If a subdirectory with the given branch name doesn't exist in the temp dir,
@@ -157,19 +171,29 @@
       (-> project-temp-dir (str branch-name) (io/file) (.mkdir))
       (-> project-temp-dir (str branch-name "/console.txt") (spit nil)))
 
-    ;; Create a hashmap entry mapping the branch name to the contents of its
-    ;; corresponding workspace directory. These contents are represented by a hashmap
-    ;; mapping a keywordized version of each filename/directory to a further hashmap
-    ;; representing that file/directory. In addition to entries corresponding to
-    ;; files and directories, a number of entries for meta-content are also present;
-    ;; initially this is just the branch-name and project-name, for convenience.
-    ;; The hashmap representing the branch as a whole is encapsulated inside an
-    ;; agent, which will be used to serialise updates to the branch info.
-    (-> branch-name
-        (keyword)
-        (hash-map (agent {:project-name project-name, :branch-name branch-name}
-                         :error-mode :continue
-                         :error-handler default-agent-error-handler)))))
+    ;; Create a hashmap entry mapping the keywordized version of the branch name to a "branch",
+    ;; i.e., the contents of its corresponding workspace directory. These contents are represented
+    ;; by a hashmap mapping a keywordized version of each filename/directory to a further hashmap
+    ;; representing that file/directory. In addition to entries corresponding to files and
+    ;; directories, a number of entries for meta-content are also present.
+    ;;
+    ;; The hashmap representing the branch is encapsulated inside an agent, which will be used to
+    ;; serialise updates to the branch. To each agent is assigned a watcher, which will persist the
+    ;; state of the branch, whenever it changes, to the metadata database.
+    ;;
+    ;; If there is an record corresponding to the branch in the metadata database, this is used to
+    ;; initialize the branch, otherwise it is initialized with the branch-name and project-name.
+    ;; Other branch info will be added later.
+    (let [branch-agent (agent (or (db/get-persisted-branch-metadata project-name branch-name)
+                                  {:project-name project-name, :branch-name branch-name})
+                              :error-mode :continue
+                              :error-handler default-agent-error-handler)]
+      ;; The keyword identifying the watcher is composed of its project and branch names joined by
+      ;; a '-'. This can be used if the watcher needs to be removed via `remove-watch` later.
+      (-> (str project-name "-" branch-name)
+          (keyword)
+          (#(add-watch branch-agent % branch-metadata-watcher))
+          (#(hash-map (keyword branch-name) %))))))
 
 (defn- refresh-local-branches-for-project
   "Returns a hashmap containing information about the contents and status of every local branch
@@ -224,7 +248,7 @@
               %))
           (log/info))
       (sh/destroy process)
-      (assoc branch :cancelled? true))
+      (assoc branch :cancelled true))
     branch))
 
 (defn- kill-all-managed-processes

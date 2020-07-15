@@ -14,6 +14,7 @@
                  [jdbc-ring-session "1.3"]
                  [markdown-to-hiccup "0.6.2"]
                  [me.raynes/conch "0.8.0"]
+                 [metosin/ring-http-response "0.9.1"]
                  [com.h2database/h2 "1.4.200"]
                  [ring/ring-defaults "0.3.2"]
                  [ring-oauth2 "0.1.4"]
