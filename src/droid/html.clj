@@ -1511,6 +1511,7 @@
     ;; If the collection of remote branches is empty then refresh it:
     (when (and (not (read-only? request))
                (not (nil? project-name))
+               (->> project-name (keyword) (get @branches/remote-branches) (nil?) (not))
                (->> project-name (keyword) (get @branches/remote-branches) (empty?)))
       (send-off branches/remote-branches
                 branches/refresh-remote-branches-for-project project-name request)
