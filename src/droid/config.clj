@@ -7,32 +7,25 @@
    ;; Application settings (should be one of :dev, :test, :prod)
    :op-env :dev
 
-   :server-port {:dev 8090
-                 :test 8090
-                 :prod 8090}
+   :server-port {:dev 8090, :test 8090, :prod 8090}
 
    ;; Should be one of :debug, :info, :warn, :error, :fatal
-   :log-level {:dev :debug
-               :test :info
-               :prod :info}
+   :log-level {:dev :debug, :test :info, :prod :info}
 
    ;; false for http, true for https
-   :secure-site {:dev false
-                 :test true
-                 :prod true}
+   :secure-site {:dev false, :test true, :prod true}
 
    ;; List of userids that are considered site administrators:
-   :site-admin-github-ids {:dev #{""}
-                           :test #{""}
-                           :prod #{""}}
+   :site-admin-github-ids {:dev #{""}, :test #{""}, :prod #{""}}
 
    ;; Time in milliseconds to wait for a CGI script to finish:
-   :cgi-timeout {:dev 60000
-                 :test 60000
-                 :prod 60000}
+   :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
 
    ;; File to write logging output to. If nil, stderr is used:
    :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
+
+   ;; The image to use for docker containers:
+   :docker-image {:dev "debian", :test "debian", :prod "debian"}
 
    ;; Bootstrap colors to use for background and text in <body>
    :html-body-colors "bg-white"})

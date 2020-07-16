@@ -76,8 +76,9 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
  :site-admin-github-ids {:dev #{"user1" "user2"}
                          :test #{"user1" "user2"}
                          :prod #{"user1" "user2"}}
- :cgi-timeout 60000
- :log-file "droid.log"
+ :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
+ :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
+ :docker-image {:dev "debian", :test "debian", :prod "debian"}
  :html-body-colors "bg-white"}
 ```
 
