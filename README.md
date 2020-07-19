@@ -64,7 +64,11 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
  {"project1" {:project-title "PROJECT1"
               :project-welcome "welcome message" 
               :project-description "description"
-              :github-coordinates "github-org/repository-1"}
+              :github-coordinates "github-org/repository-1"
+              :docker-config {:active? true
+                              :image "debian"
+                              :work-dir "/"
+                              :shell-command "bash"}}
   "project2" {:project-title "PROJECT2"
               :project-welcome "welcome message"
               :project-description "description"
@@ -84,6 +88,7 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
 
 where:
 
+- `:docker-config` is optional. If included it must specify: (1) `:active?`: whether or not to actually use docker's container service when running commands in the project's branches; (2) `:image`: the name of the docker image to use; (3) `:work-dir` the working directory to use when executing a command in a container; (4) `:shell-command` the program name of the shell to be used when running commands.
 - `:op-env` should be one of `:dev`, `:test`, `:prod`
   - If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
 - `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`

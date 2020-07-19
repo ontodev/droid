@@ -9,6 +9,8 @@
 
 ;; TODO: Need to delete a container when its branch is deleted, and need to gracefully shut down, deleting all containers.
 
+;; TODO: Need to pass in the environment when execing a container.
+
 ;; To debug in Leiningen:
 ;; (use '[me.raynes.conch.low-level :as sh])
 ;; (let [[process exit-code] (run-command ["ls" "-l"] nil (-> @droid.branches/local-branches :for-testing-with-droid :master (deref)))] (-> (sh/stream-to-string process :out) (println)))
@@ -16,7 +18,9 @@
   "Retrieves the container ID corresponding to the given branch if it exists, or if it doesn't
   exist then create one and start it and return the newly created container ID."
   [{:keys [branch-name project-name Dockerfile] :as branch}]
-  (let [throw-exception (fn [process summary]
+  (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
+
+        throw-exception (fn [process summary]
                           (-> summary
                               (str ": " (sh/stream-to-string process :err))
                               (Exception.)
@@ -24,18 +28,19 @@
 
         create-container (fn [container-name]
                            ;; Creates a docker container encapsulating a bash shell:
-                           (log/debug "Creating container for" container-name)
+                           (log/debug "Creating container for" container-name "with docker config:"
+                                      docker-config)
                            (let [root-dir (.getCanonicalPath (clojure.java.io/file "."))
                                  ws-dir (get-workspace-dir project-name branch-name)
                                  tmp-dir (get-temp-dir project-name branch-name)
                                  process (sh/proc
                                           "docker" "create" "--interactive" "--tty"
                                           "--name" container-name
-                                          "--workdir" "/"
+                                          "--workdir" (:work-dir docker-config)
                                           "--volume" (str root-dir "/" ws-dir ":/" ws-dir)
                                           "--volume" (str root-dir "/" tmp-dir ":/" tmp-dir)
-                                          (get-config :docker-image)
-                                          "bash")
+                                          (:image docker-config)
+                                          (:shell-command docker-config))
                                  exit-code (future (sh/exit-code process))]
                              (when-not (= @exit-code 0)
                                (throw-exception process "Error while creating container"))
@@ -69,7 +74,7 @@
 
     ;; If the branch has a Dockerfile then return either its existing container's ID, or create one,
     ;; start it, and return its container ID:
-    (when Dockerfile
+    (when (:active? docker-config)
       (let [container-name (-> project-name (str "-" branch-name))]
         (or (get-container container-name)
             (->> container-name (create-container) (start-container)))))))
@@ -80,7 +85,7 @@
   arguments that will be sent to (me.raynes.conch.low-level/proc). If `timeout` has been specified,
   then the command will run for no more than the specified number of milliseconds."
   [command & [timeout branch]]
-  (let [container-id (container-for branch)
+  (let [container-id (when-not (nil? branch) (container-for branch))
         process (if container-id
                   (do (log/debug "Running" (->> command (string/join " ")) "in container"
                                  container-id)
