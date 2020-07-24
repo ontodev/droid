@@ -24,9 +24,6 @@
    ;; File to write logging output to. If nil, stderr is used:
    :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
 
-   ;; The image to use for docker containers:
-   :docker-image {:dev "debian", :test "debian", :prod "debian"}
-
    ;; Bootstrap colors to use for background and text in <body>
    :html-body-colors "bg-white"})
 

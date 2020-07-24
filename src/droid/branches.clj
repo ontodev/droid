@@ -3,7 +3,7 @@
             [clojure.string :as string]
             [me.raynes.conch.low-level :as sh]
             [droid.agent :refer [default-agent-error-handler]]
-            [droid.command :refer [run-command run-commands]]
+            [droid.command :as cmd]
             [droid.config :refer [get-config]]
             [droid.db :as db]
             [droid.fileutils :refer [delete-recursively recreate-dir-if-not-exists
@@ -85,8 +85,9 @@
     (let [branch-workspace-dir (get-workspace-dir project-name branch-name)
           branch-temp-dir (get-temp-dir project-name branch-name)
           git-status (let [[process exit-code]
-                           (run-command ["git" "status" "--short" "--branch" "--porcelain"
-                                         :dir (get-workspace-dir project-name branch-name)])]
+                           (cmd/run-command ["git" "status" "--short" "--branch" "--porcelain"
+                                             :dir (get-workspace-dir project-name branch-name)]
+                                            nil branch)]
                        (if (= @exit-code 0)
                          (parse-git-status (sh/stream-to-string process :out))
                          (do
@@ -301,15 +302,15 @@
     ;; back unchanged. Otherwise refresh the local branches for the project, which should pick up
     ;; the newly cloned directory:
     (try
-      (run-commands [["git" "clone" "--branch" branch-name
-                      (str "https://github.com/" org "/" repo) branch-name
-                      :dir (get-workspace-dir project-name)]
-                     ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
-                      :dir cloned-branch-dir]
-                     ["bash" "-c" (str "exec git config credential.helper "
-                                       "'store --file=.git-credentials'")
-                      :dir cloned-branch-dir]
-                     ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]])
+      (cmd/run-commands [["git" "clone" "--branch" branch-name
+                          (str "https://github.com/" org "/" repo) branch-name
+                          :dir (get-workspace-dir project-name)]
+                         ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                          :dir cloned-branch-dir]
+                         ["bash" "-c" (str "exec git config credential.helper "
+                                           "'store --file=.git-credentials'")
+                          :dir cloned-branch-dir]
+                         ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]])
       (catch Exception e
         (log/error (.getMessage e))
         (delete-recursively cloned-branch-dir)
@@ -333,18 +334,18 @@
     ;; unchanged. Otherwise, initialize the new branch and merge it into the branch collection to
     ;; return.
     (try
-      (run-commands [["git" "clone" "--branch" base-branch-name
-                      (str "https://github.com/" org "/" repo) branch-name
-                      :dir (get-workspace-dir project-name)]
-                     ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
-                      :dir new-branch-dir]])
+      (cmd/run-commands [["git" "clone" "--branch" base-branch-name
+                          (str "https://github.com/" org "/" repo) branch-name
+                          :dir (get-workspace-dir project-name)]
+                         ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                          :dir new-branch-dir]])
       (store-creds all-branches project-name branch-name request)
-      (run-commands [["bash" "-c" (str "exec git config credential.helper "
-                                       "'store --file=.git-credentials'")
-                      :dir new-branch-dir]
-                     ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
-                     ["git" "checkout" "-b" branch-name :dir new-branch-dir]
-                     ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]])
+      (cmd/run-commands [["bash" "-c" (str "exec git config credential.helper "
+                                           "'store --file=.git-credentials'")
+                          :dir new-branch-dir]
+                         ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
+                         ["git" "checkout" "-b" branch-name :dir new-branch-dir]
+                         ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]])
       (remove-creds all-branches project-name branch-name)
       (catch Exception e
         (log/error (.getMessage e))
@@ -360,6 +361,11 @@
       (keys)
       (#(refresh-local-branches {} %))
       (agent :error-mode :continue :error-handler default-agent-error-handler)))
+
+;; Build the container images (for branches that have been configured to use them) that will be
+;; used to isolate the commands run on a branch:
+(doseq [project-name (->> @local-branches (keys) (map name))]
+  (cmd/rebuild-container-image nil project-name))
 
 (defn local-branch-exists?
   "Checks whether the given branch name exists among the local branches associated with the
