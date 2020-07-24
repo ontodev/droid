@@ -259,6 +259,7 @@
   "Deletes the given branch of the given project from the given managed server branches,
   and deletes the workspace and temporary directories for the branch in the filesystem."
   [all-branches project-name branch-name]
+  (cmd/remove-container project-name branch-name)
   (-> project-name (get-workspace-dir) (str "/" branch-name) (delete-recursively))
   (-> project-name (get-temp-dir) (str "/" branch-name) (delete-recursively))
   (-> all-branches
@@ -362,11 +363,6 @@
       (#(refresh-local-branches {} %))
       (agent :error-mode :continue :error-handler default-agent-error-handler)))
 
-;; Build the container images (for branches that have been configured to use them) that will be
-;; used to isolate the commands run on a branch:
-(doseq [project-name (->> @local-branches (keys) (map name))]
-  (cmd/rebuild-container-image nil project-name))
-
 (defn local-branch-exists?
   "Checks whether the given branch name exists among the local branches associated with the
   given project name."
@@ -376,3 +372,15 @@
        (get @local-branches)
        (keys)
        (some #(= branch-name (name %)))))
+
+(defn remove-local-branch-containers
+  "Remove all containers associated with managed branches."
+  []
+  (doseq [project-name (-> :projects (get-config) (keys))]
+    (doseq [branch-name (-> @local-branches (get (keyword project-name)) (keys) (#(map name %)))]
+      (cmd/remove-container project-name branch-name))))
+
+;; Build the container images (for branches that have been configured to use them) that will be
+;; used to isolate the commands run on a branch:
+(doseq [project-name (->> @local-branches (keys) (map name))]
+  (cmd/rebuild-container-image nil project-name))

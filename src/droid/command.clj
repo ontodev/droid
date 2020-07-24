@@ -16,34 +16,55 @@
   "Given a project name, if the project has been configured to use docker, and if the master
   branch of the project has been checked out locally and contains a Dockerfile, then build
   the image according to the instructions in the Dockerfile. The first argument,
-  `dummy-agent-content`, exists to make it possible to serialize calls to this function through
+  `_`, exists to make it possible to serialize calls to this function through
   an agent, but is otherwise unused."
-  [dummy-agent-content project-name]
+  [_ project-name]
   (let [ws-dir (get-workspace-dir project-name)
-        docker-config (-> :projects (get-config) (get project-name) :docker-config)]
-    (cond
-      (not (:active? docker-config))
+        docker-config (-> :projects (get-config) (get project-name) :docker-config)
+        find-dockerfile-path (fn []
+                               (if (and (-> ws-dir (str "/master") (io/file) (.exists))
+                                        (-> ws-dir (str "/master/Dockerfile") (io/file) (.exists)))
+                                 ;; If there is a master branch that contains a Dockerfile, return
+                                 ;; the filesystem path for that branch:
+                                 (-> ws-dir (str "/master"))
+                                 ;; Otherwise, find another branch with a Dockerfile in it, and
+                                 ;; return the filesystem path for that branch:
+                                 (do (log/debug "No master branch in project:"
+                                                project-name "; looking for another branch")
+                                     (->> ws-dir
+                                          (io/file)
+                                          (file-seq)
+                                          (filter #(and (.isFile %)
+                                                        (= (.getName %) "Dockerfile")))
+                                          (map #(-> % (.getParent)))
+                                          (first)))))]
+    (if (not (:active? docker-config))
       (log/info "Docker configuration is inactive for project:" project-name)
+      (let [dockerfile-path (find-dockerfile-path)]
+        (if (nil? dockerfile-path)
+          (log/info "No Dockerfile in any of the branches for project:" project-name)
+          (let [process (sh/proc "docker" "build" "--tag" (:image docker-config) "."
+                                 :dir dockerfile-path)
+                ;; Redirect process's stdout to our stdout:
+                output (future (sh/stream-to-out process :out))
+                exit-code (future (sh/exit-code process))]
+            (log/info "Building docker image" (:image docker-config) "using Dockerfile from"
+                      dockerfile-path)
+            (when-not (= @exit-code 0)
+              (throw (Exception. (str "Error while building image: "
+                                      (sh/stream-to-string process :err)))))
+            (log/info "Docker image built for" (:image docker-config))))))))
 
-      ;; TODO: If there is no master branch, then look for any other local branch and use it instead
-      (-> ws-dir (str "/master") (io/file) (.exists) (not))
-      (log/warn "No master branch exists for project:" project-name "; not building docker image")
-
-      (-> ws-dir (str "/master/Dockerfile") (io/file) (.exists) (not))
-      (log/warn "No Dockerfile on master branch of project:" project-name
-                "; not building docker image")
-
-      :else
-      (let [process (sh/proc "docker" "build" "--tag" (:image docker-config) "."
-                             :dir (str ws-dir "/master"))
-            ;; Redirect process's stdout to our stdout:
-            output (future (sh/stream-to-out process :out))
-            exit-code (future (sh/exit-code process))]
-        (log/info "Building docker image" (:image docker-config) "...")
-        (when-not (= @exit-code 0)
-          (throw (Exception. (str "Error while building image: "
-                                  (sh/stream-to-string process :err)))))
-        (log/info "Docker image built for" (:image docker-config))))))
+(defn remove-container
+  "Given a project and branch name, remove the corresponding container."
+  [project-name branch-name]
+  (let [process (sh/proc "docker" "rm" "-f" (-> project-name (str "-" branch-name)))
+        exit-code (sh/exit-code process)]
+    (let [error-msg (sh/stream-to-string process :err)]
+      (if-not (= exit-code 0)
+        (when-not (re-find #"No such container" error-msg)
+          (throw (Exception. (str "Error removing image: " error-msg))))
+        (log/info "Removed docker container for branch:" branch-name "in project:" project-name)))))
 
 (defn- container-for
   "Retrieves the container ID corresponding to the given branch if it exists, or if it doesn't
@@ -125,24 +146,14 @@
                                (->> :log-level (get-config) (= :debug)))
                       (.printStackTrace e)))))))))
 
-
-;; TODO: Need to delete a container when its branch is deleted, and need to gracefully shut down, deleting all containers.
-
-;; TODO: Remove this comment:
-;; To debug this in Leiningen:
-;; (use '[me.raynes.conch.low-level :as sh])
-;; (let [branch (->> @local-branches :for-testing-with-droid :master (deref)) [process exit-code] (run-command ["ls" "-l" :dir "projects/for-testing-with-droid/workspace/master" :env {"fass" "shoal", "crick" "reed"}] nil branch)] (-> (sh/stream-to-string process :out) (println)))
-;; or:
-;; (let [branch (->> @local-branches :for-testing-with-droid :master (deref)) [process exit-code] (run-command ["bash" "-c" "exec echo $fass" :dir "projects/for-testing-with-droid/workspace/master" :env {"fass" "shoal", "crick" "reed"}] nil branch)] (-> (sh/stream-to-string process :out) (println)))
-
-
 (defn run-command
   "Run the given command, then return a vector containing (1) the process that was created, and (2)
   its exit code wrapped in a future. Note that `command` must be a vector representing the function
   arguments that will be sent to (me.raynes.conch.low-level/proc). If `timeout` has been specified,
   then the command will run for no more than the specified number of milliseconds."
   [command & [timeout {:keys [project-name] :as branch}]]
-  (log/debug "Request to run command:" command "with timeout:" (or timeout "none"))
+  (log/debug "Request to run command:" (->> command (filter string?) (string/join " "))
+             "with timeout:" (or timeout "none"))
   (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
         container-id (container-for branch)
         get-option-value (fn [option-keyword]
@@ -167,15 +178,15 @@
                          (apply concat)
                          (vec)))
         process (if container-id
-                  (do (->> command
+                  (do (log/debug "Running" (->> command (filter string?) (string/join " "))
+                                 "in container" container-id)
+                      (->> command
                            (into [container-id])
                            (into (parse-env))
                            (into ["docker" "exec" "--workdir" (get-work-dir)])
-                           (#(do (log/debug "Running" (->> % (string/join " ")) "in container"
-                                            container-id)
-                                 %))
                            (apply sh/proc)))
-                  (do (log/debug "Running" (->> command (string/join " ")) "without a container")
+                  (do (log/debug "Running" (->> command (filter string?) (string/join " "))
+                                 "without a container")
                       (apply sh/proc command)))
         exit-code (-> process
                       (#(if timeout
