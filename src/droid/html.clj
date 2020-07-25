@@ -369,8 +369,10 @@
                                 :else
                                 (log/error "Unsupported request method:" request-method))))
           ;; We will send input and output from/to CGI scripts via temporary files:
-          tmp-infile (str "." basename ".in." (System/currentTimeMillis))
-          tmp-outfile (str "." basename ".out." (System/currentTimeMillis))
+          tmp-infile (str (get-temp-dir project-name branch-name)
+                          "/" basename ".in." (System/currentTimeMillis))
+          tmp-outfile (str (get-temp-dir project-name branch-name)
+                           "/" basename ".out." (System/currentTimeMillis))
           ;; Note: To test a script on the command line, do:
           ;; export REQUEST_METHOD="POST"; \
           ;;   export CONTENT_TYPE="application/x-www-form-urlencoded"; \
@@ -378,7 +380,7 @@
           timeout (get-config :cgi-timeout)
           [process
            exit-code] (if (= request-method :post)
-                        (do (-> (str dirname "/" tmp-infile) (spit query-string))
+                        (do (spit tmp-infile query-string)
                             (cmd/run-command
                              ["bash" "-c"
                               (str "exec ./" basename " < " tmp-infile " > " tmp-outfile)
@@ -406,7 +408,7 @@
           (render-4xx request 400 error-msg))
 
         :else
-        (let [response-sections (-> (str dirname "/" tmp-outfile) (slurp) (split-response))
+        (let [response-sections (-> (slurp tmp-outfile) (split-response))
               ;; Every line in the header must be of the form: <something>: <something else>
               ;; and one of the headers must be for Content-Type
               valid-header? (and (->> (first response-sections)
@@ -425,8 +427,8 @@
                              (apply merge)))]
 
           ;; Remove the temporary files:
-          (-> (str dirname "/" tmp-infile) (io/delete-file true))
-          (-> (str dirname "/" tmp-outfile) (io/delete-file true))
+          (io/delete-file tmp-infile true)
+          (io/delete-file tmp-outfile true)
 
           (if valid-header?
             ;; When the response has a valid header, the first two sections of the response will
@@ -901,8 +903,8 @@
                       colourized-console (if (not= @a2h-exit-code 0)
                                            (do (log/error "Unable to colourize console.")
                                                console)
-                                           (slurp (str pwd "console.html")))]
-                  (io/delete-file (str pwd "console.html"))
+                                           (slurp (str pwd "/console.html")))]
+                  (io/delete-file (str pwd "/console.html"))
                   (render-pre-block colourized-console))
                 (-> console
                     (string/replace #"\u001b\[.*?m" "")
@@ -1232,8 +1234,8 @@
                       (let [[process exit-code]
                             (cmd/run-command ["bash" "-c"
                                               (str "exec make " view-path
-                                                   " > ../../temp/" branch-name "/console.txt "
-                                                   " 2>&1")
+                                                   " > " (get-temp-dir project-name branch-name)
+                                                   "/console.txt 2>&1")
                                               :dir (get-workspace-dir project-name branch-name)]
                                              nil branch)]
                         (assoc branch
@@ -1246,8 +1248,8 @@
 
         ;; Deliver an executable, possibly CGI-aware, script:
         deliver-exec-view #(let [script-path (-> (get-workspace-dir project-name branch-name)
-                                                 (str view-path))]
-                             (cond (-> script-path (io/file) (.canExecute) (not))
+                                                 (str "/" view-path))]
+                             (cond (not (cmd/executable? script-path @branch-agent))
                                    (let [error-msg (str script-path " is not executable")]
                                      (log/error error-msg)
                                      (render-4xx request 400 error-msg))
@@ -1262,7 +1264,7 @@
 
         ;; Serve the view from the filesystem:
         deliver-file-view #(-> (get-workspace-dir project-name branch-name)
-                               (str view-path)
+                               (str "/" view-path)
                                (file-response)
                                ;; Views must not be cached by the client browser:
                                (assoc :headers {"Cache-Control" "no-store"}))]
@@ -1398,8 +1400,8 @@
                                           ;; difficult to destroy later).
                                           (str
                                            "exec " command
-                                           " > ../../temp/" branch-name "/console.txt"
-                                           " 2>&1")
+                                           " > " (get-temp-dir project-name branch-name)
+                                           "/console.txt 2>&1")
                                           :dir (get-workspace-dir project-name branch-name)]
                                          nil branch))]
               (if (nil? command)

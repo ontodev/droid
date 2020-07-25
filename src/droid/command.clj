@@ -82,15 +82,14 @@
                            ;; Creates a docker container encapsulating a bash shell:
                            (log/debug "Creating container for" container-name "with docker config:"
                                       docker-config)
-                           (let [root-dir (.getCanonicalPath (clojure.java.io/file "."))
-                                 ws-dir (get-workspace-dir project-name branch-name)
-                                 tmp-dir (get-temp-dir project-name branch-name)
+                           (let [ws-dir (-> (get-workspace-dir project-name branch-name) (str "/"))
+                                 tmp-dir (-> (get-temp-dir project-name branch-name) (str "/"))
                                  process (sh/proc
                                           "docker" "create" "--interactive" "--tty"
                                           "--name" container-name
                                           "--workdir" (:work-dir docker-config)
-                                          "--volume" (str root-dir "/" ws-dir ":/" ws-dir)
-                                          "--volume" (str root-dir "/" tmp-dir ":/" tmp-dir)
+                                          "--volume" (str ws-dir ":" (:work-dir docker-config))
+                                          "--volume" (str tmp-dir ":" (:temp-dir docker-config))
                                           (:image docker-config)
                                           (:shell-command docker-config))
                                  exit-code (future (sh/exit-code process))]
@@ -146,12 +145,43 @@
                                (->> :log-level (get-config) (= :debug)))
                       (.printStackTrace e)))))))))
 
+(defn local-to-docker
+  "Given a command, a project name, and a branch name, replace the local workspace and temp
+  directories, wherever they appear in the command, with the docker workspace and temp directories,
+  respectively, that have been configured for the project."
+  [project-name branch-name command]
+  (let [local-work-dir (get-workspace-dir project-name branch-name)
+        local-tmp-dir (get-temp-dir project-name branch-name)
+        docker-config (-> :projects (get-config) (get project-name) :docker-config)
+        docker-work-dir (:work-dir docker-config)
+        docker-tmp-dir (:temp-dir docker-config)
+        make-switch #(if-not (string? %)
+                       %
+                       (-> %
+                           (string/replace (re-pattern local-work-dir) docker-work-dir)
+                           (string/replace (re-pattern local-tmp-dir) docker-tmp-dir)))]
+    (cond
+      ;; If the command is a single string, then make the substitution in it and return the result:
+      (string? command)
+      (make-switch command)
+
+      ;; If the command is a collection, then for every item in it, if it is a string and it does
+      ;; not have a keyword immediately preceding it in the collection, make the substitution. If
+      ;; it does have a keyword preceding it, the substitution will possibly happen later.
+      (coll? command)
+      (->> command
+           (map-indexed (fn [index value]
+                          (if (and (-> index (#(nth command % nil)) (string?))
+                                   (-> index (dec) (#(nth command % nil)) (keyword?) (not)))
+                            (make-switch value)
+                            value)))))))
+
 (defn run-command
   "Run the given command, then return a vector containing (1) the process that was created, and (2)
   its exit code wrapped in a future. Note that `command` must be a vector representing the function
   arguments that will be sent to (me.raynes.conch.low-level/proc). If `timeout` has been specified,
   then the command will run for no more than the specified number of milliseconds."
-  [command & [timeout {:keys [project-name] :as branch}]]
+  [command & [timeout {:keys [project-name branch-name] :as branch}]]
   (log/debug "Request to run command:" (->> command (filter string?) (string/join " "))
              "with timeout:" (or timeout "none"))
   (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
@@ -162,9 +192,6 @@
                            (let [keyword-index (.indexOf command option-keyword)]
                              (when (and (>= keyword-index 0) (< (inc keyword-index) (count command)))
                                (nth command (inc keyword-index)))))
-        get-work-dir #(->> (or (get-option-value :dir)
-                               (:work-dir docker-config))
-                           (str "/"))
         parse-env (fn []
                     ;; If the `command` vector contains an environment, e.g.,
                     ;;   [... :env {:VAR1 "var1-value" :VAR2 "var2-value" ...} ...]
@@ -177,13 +204,19 @@
                          (map #(into ["-e"] [%]))
                          (apply concat)
                          (vec)))
+        get-work-dir #(->> (or (get-option-value :dir)
+                               (:work-dir docker-config))
+                           (str "/"))
         process (if container-id
                   (do (log/debug "Running" (->> command (filter string?) (string/join " "))
                                  "in container" container-id)
                       (->> command
+                           (local-to-docker project-name branch-name)
                            (into [container-id])
                            (into (parse-env))
-                           (into ["docker" "exec" "--workdir" (get-work-dir)])
+                           (into ["docker" "exec" "--workdir"
+                                  (->> (get-work-dir)
+                                       (local-to-docker project-name branch-name))])
                            (apply sh/proc)))
                   (do (log/debug "Running" (->> command (filter string?) (string/join " "))
                                  "without a container")
@@ -206,3 +239,14 @@
             (str (sh/stream-to-string process :err))
             (Exception.)
             (throw))))))
+
+(defn executable?
+  "Determine whether the given script-path is executable. If a branch is provided and the branch has
+  a container, then check whether the script is executable in that container, otherwise check if it
+  is executable from the server's point of view."
+  [script-path & [{:keys [project-name branch-name] :as branch}]]
+  (let [container-id (container-for branch)]
+    (if-not container-id
+      (-> script-path (io/file) (.canExecute))
+      (let [[process exit-code] (run-command ["test" "-x" script-path] nil branch)]
+        (or (= @exit-code 0) false)))))

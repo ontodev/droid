@@ -138,12 +138,12 @@
   (let [project-temp-dir (get-temp-dir project-name)]
     ;; If a subdirectory with the given branch name doesn't exist in the temp dir,
     ;; recreate it:
-    (-> project-temp-dir (str branch-name) (recreate-dir-if-not-exists))
+    (-> project-temp-dir (str "/" branch-name) (recreate-dir-if-not-exists))
     ;; If the console.txt file doesn't already exist in the branch's temp dir, then initialize an
     ;; empty one:
-    (when-not (-> project-temp-dir (str branch-name "/console.txt") (io/file) (.isFile))
-      (-> project-temp-dir (str branch-name) (io/file) (.mkdir))
-      (-> project-temp-dir (str branch-name "/console.txt") (spit nil)))
+    (when-not (-> project-temp-dir (str "/" branch-name "/console.txt") (io/file) (.isFile))
+      (-> project-temp-dir (str "/" branch-name) (io/file) (.mkdir))
+      (-> project-temp-dir (str "/" branch-name "/console.txt") (spit nil)))
 
     ;; Create a hashmap entry mapping the keywordized version of the branch name to a "branch",
     ;; i.e., the contents of its corresponding workspace directory. These contents are represented
@@ -185,7 +185,7 @@
     ;; Each sub-directory of the workspace represents a branch with the same name.
     (let [branch-names (->> project-workspace-dir (io/file) (.list))]
       (->> branch-names
-           (map #(when (-> project-workspace-dir (str %) (io/file) (.isDirectory))
+           (map #(when (-> project-workspace-dir (str "/" %) (io/file) (.isDirectory))
                    (let [branch-key (keyword %)
                          branch-agent (branch-key current-branches)]
                      (if (nil? branch-agent)
@@ -280,7 +280,7 @@
                        (string/split #"/"))
         url (str "https://" login ":" token "@github.com/" org "/" repo)]
     (log/debug "Storing github credentials for" project-name "/" branch-name)
-    (-> project-name (get-workspace-dir) (str branch-name "/.git-credentials") (spit url))
+    (-> project-name (get-workspace-dir) (str "/" branch-name "/.git-credentials") (spit url))
     all-branches))
 
 (defn remove-creds
@@ -289,7 +289,8 @@
   function through an agent, but it is simply passed through without modification."
   [all-branches project-name branch-name]
   (log/debug "Removing github credentials from" project-name "/" branch-name)
-  (-> project-name (get-workspace-dir) (str branch-name "/.git-credentials") (io/delete-file true))
+  (-> project-name (get-workspace-dir) (str "/" branch-name "/.git-credentials")
+      (io/delete-file true))
   all-branches)
 
 (defn checkout-remote-branch-to-local
@@ -297,7 +298,7 @@
   [all-branches project-name branch-name]
   (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
                        (string/split #"/"))
-        cloned-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
+        cloned-branch-dir (-> project-name (get-workspace-dir) (str "/" branch-name))]
     ;; Clone the remote branch and configure it to use colours. If there is an error, then log it,
     ;; remove the newly created branch directory if it exists, and return the branch collection
     ;; back unchanged. Otherwise refresh the local branches for the project, which should pick up
@@ -328,7 +329,7 @@
     :as request}]
   (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
                        (string/split #"/"))
-        new-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
+        new-branch-dir (-> project-name (get-workspace-dir) (str "/" branch-name))]
     ;; Clone the base branch from upstream, then locally checkout to a new branch, and push the
     ;; new branch to upstream. If there is an error in any of these commands, then log it, remove
     ;; the newly created branch directory (if it exists), and return the branch collection
