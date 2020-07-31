@@ -67,8 +67,10 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
               :github-coordinates "github-org/repository-1"
               :docker-config {:active? true
                               :image "debian"
-                              :work-dir "/"
-                              :shell-command "bash"}}
+                              :work-dir "/workspace/"
+                              :temp-dir "/tmp/droid/"
+                              :shell-command "bash"
+                              :env {"ENV_VAR_1" "env_var_1_value"}}}
   "project2" {:project-title "PROJECT2"
               :project-welcome "welcome message"
               :project-description "description"

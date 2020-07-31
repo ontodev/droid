@@ -186,34 +186,50 @@
              "with timeout:" (or timeout "none"))
   (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
         container-id (container-for branch)
+        ;; Looks in `command` (a vector of strings that has been passed to the outer function) for
+        ;; the given keyword, and once it is found, returns the next item in the vector:
         get-option-value (fn [option-keyword]
-                           ;; Looks in `command` (a vector of strings) for the given keyword, and
-                           ;; once it is found, returns the next item in the vector.
                            (let [keyword-index (.indexOf command option-keyword)]
                              (when (and (>= keyword-index 0) (< (inc keyword-index) (count command)))
                                (nth command (inc keyword-index)))))
-        parse-env (fn []
-                    ;; If the `command` vector contains an environment, e.g.,
-                    ;;   [... :env {:VAR1 "var1-value" :VAR2 "var2-value" ...} ...]
-                    ;; then for each environment variable, generate command-line arguments like:
-                    ;;   -e VAR1 -e VAR2 -e VAR3 ...
-                    ;; We don't need to specify the values of these arguments because docker reads
-                    ;; them from the environment of its caller, which includes them.
-                    (->> (get-option-value :env)
-                         (map #(key %))
-                         (map #(into ["-e"] [%]))
-                         (apply concat)
-                         (vec)))
+        ;; Supplements `command` with extra information from the docker configuration for the given
+        ;; project:
+        get-docker-cmd-base (fn []
+                              (let [env-map (or (get-option-value :env) {})
+                                    supplemented-env-map (->> docker-config :env (merge env-map))]
+                                (if (empty? env-map)
+                                  (->> command
+                                       (remove #(= :env %))
+                                       (vec)
+                                       (#(into % [:env supplemented-env-map])))
+                                  (->> command
+                                       (map (fn [item]
+                                              (if (= item env-map)
+                                                supplemented-env-map
+                                                item)))))))
+        ;; For each key in the environment map, {:VAR1 "var1-value" :VAR2 "var2-value" ...},
+        ;; generate command-line arguments for docker like:
+        ;;   -e VAR1 -e VAR2 -e VAR3 ...
+        ;; (we don't need to specify the values of these variables because sh/proc will make those
+        ;; available to the docker container through the environment map):
+        env-map-to-cli-opts (fn [env-map]
+                              (->> env-map
+                                   (map #(key %))
+                                   (map #(into ["-e"] [%]))
+                                   (apply concat)
+                                   (vec)))
+        ;; Get the working dir from `command`, defaulting to whatever is in the docker config:
         get-work-dir #(->> (or (get-option-value :dir)
                                (:work-dir docker-config))
                            (str "/"))
         process (if container-id
                   (do (log/debug "Running" (->> command (filter string?) (string/join " "))
                                  "in container" container-id)
-                      (->> command
+                      (->> (get-docker-cmd-base)
                            (local-to-docker project-name branch-name)
                            (into [container-id])
-                           (into (parse-env))
+                           (into (-> docker-config :env (env-map-to-cli-opts)))
+                           (into (-> (get-option-value :env) (env-map-to-cli-opts)))
                            (into ["docker" "exec" "--workdir"
                                   (->> (get-work-dir)
                                        (local-to-docker project-name branch-name))])
