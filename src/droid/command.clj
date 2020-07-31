@@ -40,20 +40,22 @@
                                           (first)))))]
     (if (not (:active? docker-config))
       (log/info "Docker configuration is inactive for project:" project-name)
-      (let [dockerfile-path (find-dockerfile-path)]
-        (if (nil? dockerfile-path)
-          (log/info "No Dockerfile in any of the branches for project:" project-name)
-          (let [process (sh/proc "docker" "build" "--tag" (:image docker-config) "."
-                                 :dir dockerfile-path)
-                ;; Redirect process's stdout to our stdout:
-                output (future (sh/stream-to-out process :out))
-                exit-code (future (sh/exit-code process))]
-            (log/info "Building docker image" (:image docker-config) "using Dockerfile from"
-                      dockerfile-path)
-            (when-not (= @exit-code 0)
-              (throw (Exception. (str "Error while building image: "
-                                      (sh/stream-to-string process :err)))))
-            (log/info "Docker image built for" (:image docker-config))))))))
+      (let [dockerfile-path (find-dockerfile-path)
+            command (if dockerfile-path
+                      ["docker" "build" "--tag" (:image docker-config) "." :dir dockerfile-path]
+                      ["docker" "pull" (:image docker-config)])
+            process (apply sh/proc command)
+            ;; Redirect process's stdout to our stdout:
+            output (future (sh/stream-to-out process :out))
+            exit-code (future (sh/exit-code process))]
+        (if dockerfile-path
+          (log/info "Building docker image" (:image docker-config) "using Dockerfile from"
+                    dockerfile-path)
+          (log/info "Retrieving docker image" (:image docker-config)))
+        (when-not (= @exit-code 0)
+          (throw (Exception. (str "Error while building/retrieving image: "
+                                  (sh/stream-to-string process :err)))))
+        (log/info "Docker image built for" (:image docker-config))))))
 
 (defn remove-container
   "Given a project and branch name, remove the corresponding container."
