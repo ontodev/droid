@@ -87,8 +87,7 @@
                                  process (sh/proc
                                           "docker" "create" "--interactive" "--tty"
                                           "--name" container-name
-                                          "--workdir" (:work-dir docker-config)
-                                          "--volume" (str ws-dir ":" (:work-dir docker-config))
+                                          "--volume" (str ws-dir ":" (:workspace-dir docker-config))
                                           "--volume" (str tmp-dir ":" (:temp-dir docker-config))
                                           (:image docker-config)
                                           (:shell-command docker-config))
@@ -150,15 +149,15 @@
   directories, wherever they appear in the command, with the docker workspace and temp directories,
   respectively, that have been configured for the project."
   [project-name branch-name command]
-  (let [local-work-dir (get-workspace-dir project-name branch-name)
+  (let [local-workspace-dir (get-workspace-dir project-name branch-name)
         local-tmp-dir (get-temp-dir project-name branch-name)
         docker-config (-> :projects (get-config) (get project-name) :docker-config)
-        docker-work-dir (:work-dir docker-config)
+        docker-workspace-dir (:workspace-dir docker-config)
         docker-tmp-dir (:temp-dir docker-config)
         make-switch #(if-not (string? %)
                        %
                        (-> %
-                           (string/replace (re-pattern local-work-dir) docker-work-dir)
+                           (string/replace (re-pattern local-workspace-dir) docker-workspace-dir)
                            (string/replace (re-pattern local-tmp-dir) docker-tmp-dir)))]
     (cond
       ;; If the command is a single string, then make the substitution in it and return the result:
@@ -219,9 +218,9 @@
                                    (apply concat)
                                    (vec)))
         ;; Get the working dir from `command`, defaulting to whatever is in the docker config:
-        get-work-dir #(->> (or (get-option-value :dir)
-                               (:work-dir docker-config))
-                           (str "/"))
+        get-working-dir #(->> (or (get-option-value :dir)
+                                  (:default-working-dir docker-config))
+                              (str "/"))
         process (if container-id
                   (do (log/debug "Running" (->> command (filter string?) (string/join " "))
                                  "in container" container-id)
@@ -231,7 +230,7 @@
                            (into (-> docker-config :env (env-map-to-cli-opts)))
                            (into (-> (get-option-value :env) (env-map-to-cli-opts)))
                            (into ["docker" "exec" "--workdir"
-                                  (->> (get-work-dir)
+                                  (->> (get-working-dir)
                                        (local-to-docker project-name branch-name))])
                            (apply sh/proc)))
                   (do (log/debug "Running" (->> command (filter string?) (string/join " "))

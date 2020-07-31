@@ -67,8 +67,9 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
               :github-coordinates "github-org/repository-1"
               :docker-config {:active? true
                               :image "debian"
-                              :work-dir "/workspace/"
+                              :workspace-dir "/workspace/"
                               :temp-dir "/tmp/droid/"
+                              :default-working-dir "/workspace/"
                               :shell-command "bash"
                               :env {"ENV_VAR_1" "env_var_1_value"}}}
   "project2" {:project-title "PROJECT2"
@@ -89,7 +90,7 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
 
 where:
 
-- `:docker-config` is optional. If included it must specify: (1) `:active?`: whether or not to actually use docker's container service when running commands in the project's branches; (2) `:image`: the name of the docker image to use; (3) `:work-dir` the working directory to use when executing a command in a container; (4) `:shell-command` the program name of the shell to be used when running commands.
+- `:docker-config` is optional. If included it must specify: (1) `:active?`: whether or not to actually use docker's container service when running commands in the project's branches; (2) `:image`: the name of the docker image to use; (3) `:workspace-dir`: the directory to map the server's local workspace directory for a branch to in the container; (4) `:temp-dir`: the directory to map the server's local temp directory for branch to in the container; (5) `:default-working-dir`: the directory relative to which DROID commands should be run by default within the container if not otherwise specified; (6) `:shell-command`: the program name of the shell to be used when running commands; (7) `:env`: extra environment variables to pass to a container when invoking it.
 - `:op-env` should be one of `:dev`, `:test`, `:prod`
   - If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
 - `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`
