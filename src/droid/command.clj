@@ -159,6 +159,8 @@
                        (-> %
                            (string/replace (re-pattern local-workspace-dir) docker-workspace-dir)
                            (string/replace (re-pattern local-tmp-dir) docker-tmp-dir)))]
+    (log/debug "Mapping" local-workspace-dir "to" docker-workspace-dir "and" local-tmp-dir "to"
+               docker-tmp-dir "in container.")
     (cond
       ;; If the command is a single string, then make the substitution in it and return the result:
       (string? command)
