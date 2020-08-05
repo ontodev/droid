@@ -64,7 +64,14 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
  {"project1" {:project-title "PROJECT1"
               :project-welcome "welcome message" 
               :project-description "description"
-              :github-coordinates "github-org/repository-1"}
+              :github-coordinates "github-org/repository-1"
+              :docker-config {:active? true
+                              :image "debian"
+                              :workspace-dir "/workspace/"
+                              :temp-dir "/tmp/droid/"
+                              :default-working-dir "/workspace/"
+                              :shell-command "bash"
+                              :env {"ENV_VAR_1" "env_var_1_value"}}}
   "project2" {:project-title "PROJECT2"
               :project-welcome "welcome message"
               :project-description "description"
@@ -76,14 +83,16 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
  :site-admin-github-ids {:dev #{"user1" "user2"}
                          :test #{"user1" "user2"}
                          :prod #{"user1" "user2"}}
- :cgi-timeout 60000
- :log-file "droid.log"
-:html-body-colors "bg-white"}
+ :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
+ :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
+ :html-body-colors "bg-white"}
 ```
 
 where:
 
+- `:docker-config` is optional. If included it must specify: (1) `:active?`: whether or not to actually use docker's container service when running commands in the project's branches; (2) `:image`: the name of the docker image to use; (3) `:workspace-dir`: the directory to map the server's local workspace directory for a branch to in the container; (4) `:temp-dir`: the directory to map the server's local temp directory for branch to in the container; (5) `:default-working-dir`: the directory relative to which DROID commands should be run by default within the container if not otherwise specified; (6) `:shell-command`: the program name of the shell to be used when running commands; (7) `:env`: extra environment variables to pass to a container when invoking it.
 - `:op-env` should be one of `:dev`, `:test`, `:prod`
+  - If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
 - `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`
 - `:server-port` is the port that the server will listen on.
 - `:secure-site` is either true or false and indicates whether the server will use https or http.
@@ -91,8 +100,6 @@ where:
 - `:cgi-timeout` is the maximum number of milliseconds that a CGI script is allowed to run.
 - `:log-file` is the file (relative to DROID's root directory) where the log will be written to. If it is nil then log is written to STDERR.
 - `:html-body-colors` is a valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color) to use for DROID's pages.
-
-If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
 
 ## `projects/` directory
 

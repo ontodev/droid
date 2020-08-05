@@ -19,6 +19,10 @@
                  [ring/ring-defaults "0.3.2"]
                  [ring-oauth2 "0.1.4"]
                  [tentacles "0.5.1"]]
+  ;; Increase the timeout value when loading the repl via Leiningen. We need this in a dev setting
+  ;; because it is possible that we will have to build multiple docker images at startup and this
+  ;; may take awhile. The default is 600000 (10 minutes), which we increase here:
+  :repl-options {:timeout 600000}
   :plugins [[lein-ring "0.12.5"]]
   :ring {:handler droid.handler/app}
   :main ^:skip-aot droid.core

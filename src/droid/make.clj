@@ -3,7 +3,7 @@
             [clojure.set :as set]
             [clojure.string :as string]
             [markdown-to-hiccup.core :as m2h]
-            [droid.dir :refer [get-workspace-dir]]
+            [droid.fileutils :refer [get-workspace-dir]]
             [droid.log :as log]))
 
 (defn- get-markdown-and-phonies

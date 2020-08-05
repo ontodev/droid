@@ -9,7 +9,7 @@
             [ring.middleware.session :refer [wrap-session]]
             [ring.middleware.session.cookie :refer [cookie-store]]
             [ring.util.response :refer [redirect]]
-            [droid.config :refer [config]]
+            [droid.config :refer [get-config]]
             [droid.db :as db]
             [droid.github :as gh]
             [droid.log :as log]
@@ -105,10 +105,7 @@
       (wrap-session
        {:store db/session-store})
       (wrap-defaults
-       (let [op-env (:op-env config)
-             secure-site? (-> config
-                              :secure-site
-                              (get op-env))]
+       (let [secure-site? (get-config :secure-site)]
          (-> (if secure-site? secure-site-defaults site-defaults)
              (assoc :proxy true)
              (assoc-in [:security :anti-forgery] false)

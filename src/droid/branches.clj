@@ -2,42 +2,15 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]
             [me.raynes.conch.low-level :as sh]
+            [droid.agent :refer [default-agent-error-handler]]
             [droid.command :as cmd]
-            [droid.config :refer [config]]
+            [droid.config :refer [get-config]]
             [droid.db :as db]
-            [droid.dir :refer [get-workspace-dir get-temp-dir]]
+            [droid.fileutils :refer [delete-recursively recreate-dir-if-not-exists
+                                     get-workspace-dir get-temp-dir]]
             [droid.github :as gh]
             [droid.log :as log]
             [droid.make :as make]))
-
-(def default-agent-error-handler
-  "The default error handler to use with agents"
-  (fn [the-agent exception]
-    (log/error (.getMessage exception))
-    (when (and (->> config :op-env (= :dev))
-               (->> config :log-level (#(get % (:op-env config))) (= :debug)))
-      (.printStackTrace exception))))
-
-(defn- delete-recursively
-  "Delete all files and directories recursively under and including topname."
-  [topname]
-  (let [filenames (->> topname (io/file) (.list))]
-    (doseq [filename filenames]
-      (let [path (str topname "/" filename)]
-        (if (-> path (io/file) (.isDirectory))
-          (delete-recursively path)
-          (io/delete-file path true)))))
-  (io/delete-file topname true)
-  (log/debug "Deleted" topname))
-
-(defn- recreate-dir-if-not-exists
-  "If the given directory doesn't exist or it isn't a directory, recreate it."
-  [dirname]
-  (when-not (-> dirname (io/file) (.isDirectory))
-    (log/debug "(Re)creating directory:" dirname)
-    ;; By setting silent mode to true, the command won't complain if the file doesn't exist:
-    (io/delete-file dirname true)
-    (.mkdir (io/file dirname))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Code related to remote branches (i.e., branches available via GitHub)
@@ -111,9 +84,10 @@
                                  (boolean))}))]
     (let [branch-workspace-dir (get-workspace-dir project-name branch-name)
           branch-temp-dir (get-temp-dir project-name branch-name)
-          git-status (let [process (sh/proc "git" "status" "--short" "--branch" "--porcelain"
-                                            :dir (get-workspace-dir project-name branch-name))
-                           exit-code (future (sh/exit-code process))]
+          git-status (let [[process exit-code]
+                           (cmd/run-command ["git" "status" "--short" "--branch" "--porcelain"
+                                             :dir (get-workspace-dir project-name branch-name)]
+                                            nil branch)]
                        (if (= @exit-code 0)
                          (parse-git-status (sh/stream-to-string process :out))
                          (do
@@ -164,12 +138,12 @@
   (let [project-temp-dir (get-temp-dir project-name)]
     ;; If a subdirectory with the given branch name doesn't exist in the temp dir,
     ;; recreate it:
-    (-> project-temp-dir (str branch-name) (recreate-dir-if-not-exists))
+    (-> project-temp-dir (str "/" branch-name) (recreate-dir-if-not-exists))
     ;; If the console.txt file doesn't already exist in the branch's temp dir, then initialize an
     ;; empty one:
-    (when-not (-> project-temp-dir (str branch-name "/console.txt") (io/file) (.isFile))
-      (-> project-temp-dir (str branch-name) (io/file) (.mkdir))
-      (-> project-temp-dir (str branch-name "/console.txt") (spit nil)))
+    (when-not (-> project-temp-dir (str "/" branch-name "/console.txt") (io/file) (.isFile))
+      (-> project-temp-dir (str "/" branch-name) (io/file) (.mkdir))
+      (-> project-temp-dir (str "/" branch-name "/console.txt") (spit nil)))
 
     ;; Create a hashmap entry mapping the keywordized version of the branch name to a "branch",
     ;; i.e., the contents of its corresponding workspace directory. These contents are represented
@@ -211,7 +185,7 @@
     ;; Each sub-directory of the workspace represents a branch with the same name.
     (let [branch-names (->> project-workspace-dir (io/file) (.list))]
       (->> branch-names
-           (map #(when (-> project-workspace-dir (str %) (io/file) (.isDirectory))
+           (map #(when (-> project-workspace-dir (str "/" %) (io/file) (.isDirectory))
                    (let [branch-key (keyword %)
                          branch-agent (branch-key current-branches)]
                      (if (nil? branch-agent)
@@ -276,15 +250,16 @@
   (log/info "Killing all managed processes ...")
   (kill-all-managed-processes all-branches)
   (log/info "Deleting all temporary branch data ...")
-  (doseq [project-name (-> config :projects (keys))]
+  (doseq [project-name (-> :projects (get-config) (keys))]
     (-> project-name (get-temp-dir) (delete-recursively)))
   (log/info "Reinitializing local branches ...")
-  (refresh-local-branches {} (-> config :projects (keys))))
+  (refresh-local-branches {} (-> :projects (get-config) (keys))))
 
 (defn delete-local-branch
   "Deletes the given branch of the given project from the given managed server branches,
   and deletes the workspace and temporary directories for the branch in the filesystem."
   [all-branches project-name branch-name]
+  (cmd/remove-container project-name branch-name)
   (-> project-name (get-workspace-dir) (str "/" branch-name) (delete-recursively))
   (-> project-name (get-temp-dir) (str "/" branch-name) (delete-recursively))
   (-> all-branches
@@ -301,10 +276,11 @@
   [all-branches project-name branch-name
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens}]
-  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
+  (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
+                       (string/split #"/"))
         url (str "https://" login ":" token "@github.com/" org "/" repo)]
     (log/debug "Storing github credentials for" project-name "/" branch-name)
-    (-> project-name (get-workspace-dir) (str branch-name "/.git-credentials") (spit url))
+    (-> project-name (get-workspace-dir) (str "/" branch-name "/.git-credentials") (spit url))
     all-branches))
 
 (defn remove-creds
@@ -313,14 +289,16 @@
   function through an agent, but it is simply passed through without modification."
   [all-branches project-name branch-name]
   (log/debug "Removing github credentials from" project-name "/" branch-name)
-  (-> project-name (get-workspace-dir) (str branch-name "/.git-credentials") (io/delete-file true))
+  (-> project-name (get-workspace-dir) (str "/" branch-name "/.git-credentials")
+      (io/delete-file true))
   all-branches)
 
 (defn checkout-remote-branch-to-local
   "Checkout a remote GitHub branch into the local workspace."
   [all-branches project-name branch-name]
-  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
-        cloned-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
+  (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
+                       (string/split #"/"))
+        cloned-branch-dir (-> project-name (get-workspace-dir) (str "/" branch-name))]
     ;; Clone the remote branch and configure it to use colours. If there is an error, then log it,
     ;; remove the newly created branch directory if it exists, and return the branch collection
     ;; back unchanged. Otherwise refresh the local branches for the project, which should pick up
@@ -349,8 +327,9 @@
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens
     :as request}]
-  (let [[org repo] (-> config :projects (get project-name) :github-coordinates (string/split #"/"))
-        new-branch-dir (-> project-name (get-workspace-dir) (str branch-name))]
+  (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
+                       (string/split #"/"))
+        new-branch-dir (-> project-name (get-workspace-dir) (str "/" branch-name))]
     ;; Clone the base branch from upstream, then locally checkout to a new branch, and push the
     ;; new branch to upstream. If there is an error in any of these commands, then log it, remove
     ;; the newly created branch directory (if it exists), and return the branch collection
@@ -379,8 +358,8 @@
 (def local-branches
   "An agent to handle access to the hashmap that contains info on all of the branches managed by the
   server instance."
-  (-> config
-      :projects
+  (-> :projects
+      (get-config)
       (keys)
       (#(refresh-local-branches {} %))
       (agent :error-mode :continue :error-handler default-agent-error-handler)))
@@ -394,3 +373,15 @@
        (get @local-branches)
        (keys)
        (some #(= branch-name (name %)))))
+
+(defn remove-local-branch-containers
+  "Remove all containers associated with managed branches."
+  []
+  (doseq [project-name (-> :projects (get-config) (keys))]
+    (doseq [branch-name (-> @local-branches (get (keyword project-name)) (keys) (#(map name %)))]
+      (cmd/remove-container project-name branch-name))))
+
+;; Build the container images (for branches that have been configured to use them) that will be
+;; used to isolate the commands run on a branch:
+(doseq [project-name (->> @local-branches (keys) (map name))]
+  (cmd/rebuild-container-image nil project-name))
