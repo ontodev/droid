@@ -1486,6 +1486,8 @@
               (send-off branches/local-branches branches/store-creds project-name branch-name
                         request))
             (send-off branch-agent launch-process)
+            ;; TODO: this sleep should not be needed; figure out how to do without it:
+            (Thread/sleep 3000)
             (when (= new-action "git-push")
               (send-off branch-agent branches/remove-creds project-name branch-name))
             (-> this-url
@@ -1520,6 +1522,8 @@
             (send-off branches/local-branches branches/store-creds project-name branch-name
                       request))
           (send-off branch-agent launch-process)
+          ;; TODO: this sleep should not be needed; figure out how to do without it:
+          (Thread/sleep 3000)
           (when (= new-action "git-push")
             (send-off branch-agent branches/remove-creds project-name branch-name))
           (-> this-url
