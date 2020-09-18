@@ -83,6 +83,8 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
  :site-admin-github-ids {:dev #{"user1" "user2"}
                          :test #{"user1" "user2"}
                          :prod #{"user1" "user2"}}
+ :personal-access-tokens {"user1" "personal-access-token2"
+                          "user2" "personal-access-token2"}
  :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
  :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
  :html-body-colors "bg-white"}
