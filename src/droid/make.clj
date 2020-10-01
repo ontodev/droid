@@ -130,11 +130,14 @@
 
                             (or (some #(= href %) (set/union file-views dir-views))
                                 (some #(-> href (normalize-exec-view) (= %)) exec-views))
-                            [tag {:href (str "/" project-name "/branches/" branch-name
-                                             "/views/" href)} text]
+                            [tag
+                             {:href (str "/" project-name "/branches/" branch-name
+                                             "/views/" href)
+                              :target "_blank"}
+                             text]
 
                             :else
-                            [tag {:href href} text]))]
+                            [tag {:href href :target "_blank"} text]))]
                   (->> (for [elem html]
                          (if (= (type elem) clojure.lang.PersistentVector)
                            (if (= (first elem) :a)
