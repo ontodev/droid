@@ -308,7 +308,7 @@
       (cmd/run-commands [["git" "clone" "--branch" branch-name
                           (str "https://github.com/" org "/" repo) branch-name
                           :dir (get-workspace-dir project-name)]
-                         ["bash" "-c" "exec echo '.git-credentials' >> .gitignore"
+                         ["bash" "-c" "exec grep '.git-credentials' .gitignore || echo '.git-credentials' >> .gitignore"
                           :dir cloned-branch-dir]
                          ["bash" "-c" (str "exec git config credential.helper "
                                            "'store --file=.git-credentials'")
