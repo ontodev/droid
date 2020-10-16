@@ -54,6 +54,16 @@
        (map #(:name %))
        (some #(= branch-name %))))
 
+(defn get-remote-main
+  "Gets the main branch for the given project, which could be either 'main' or 'master'. If neither
+  exists log an error and return nothing."
+  [project-name]
+  (cond
+    (remote-branch-exists? project-name "main") "main"
+    (remote-branch-exists? project-name "master") "master"
+    :else (throw (Exception. (str "Error while attempting to create a pr: " project-name
+                                  " has neither a main nor a master branch")))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Code related to local branches (i.e., branches managed by the server in its workspace)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

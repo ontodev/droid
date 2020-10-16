@@ -40,23 +40,22 @@
 (defn create-pr
   "Calls the GitHub API to create a pull request with the given description on the given branch in
   the given project. Returns the URL of the PR if successful or an empty string otherwise."
-  [project-name from-branch login token pr-to-add]
-  (let [to-branch "master"]
-    (log/info "Creating PR" (str "\"" pr-to-add "\"") "for user" (str login ":") "Merging"
-              from-branch "to" to-branch "in project" project-name)
-    (let [response (-> :projects
-                       (get-config)
-                       (get project-name)
-                       (get :github-coordinates)
-                       (string/split #"/")
-                       (#(create-pull (first %) (second %) pr-to-add to-branch from-branch
-                                      {:oauth-token token})))]
-      (let [error-msg (-> response :body :message)]
-        ;; If there is an error, log it and return an empty string, otherwise return the PR's URL:
-        (if error-msg
-          (do (log/error "Cound not create pull request. Reason:" error-msg)
-              "")
-          (:html_url response))))))
+  [project-name from-branch to-branch login token pr-to-add]
+  (log/info "Creating PR" (str "\"" pr-to-add "\"") "for user" (str login ":") "Merging"
+            from-branch "to" to-branch "in project" project-name)
+  (let [response (-> :projects
+                     (get-config)
+                     (get project-name)
+                     (get :github-coordinates)
+                     (string/split #"/")
+                     (#(create-pull (first %) (second %) pr-to-add to-branch from-branch
+                                    {:oauth-token token})))]
+    (let [error-msg (-> response :body :message)]
+      ;; If there is an error, log it and return an empty string, otherwise return the PR's URL:
+      (if error-msg
+        (do (log/error "Cound not create pull request. Reason:" error-msg)
+            "")
+        (:html_url response)))))
 
 (defn get-project-permissions
   "Given a GitHub login and an OAuth2 token, returns a hash-map specifying the user's permissions
