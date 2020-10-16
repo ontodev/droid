@@ -424,16 +424,23 @@
             ;; correspond to (1) the headers, and (2) a blank line separating the headers from the
             ;; output proper, contained in the remaining sections of the response. In this case the
             ;; output is parsed into hiccup and embedded into a div:
-            (->> response-sections
-                 (drop 2)
-                 (apply concat)
-                 (vec)
-                 (string/join "\n")
-                 (hickory/parse-fragment)
-                 (map hickory/as-hiccup)
-                 (into [:div])
-                 (hash-map :headers headers :content)
-                 (html-response request))
+            (let [body
+                  (->> response-sections
+                       (drop 2)
+                       (apply concat)
+                       (vec)
+                       (string/join "\n"))]
+              (if (= "text/html" (headers "Content-Type"))
+                (->> body
+                     (hickory/parse-fragment)
+                     (map hickory/as-hiccup)
+                     (into [:div])
+                     (hash-map :headers headers :content)
+                     (html-response request))
+                {:status 200 ; TODO: handle this properly
+                 :headers headers
+                 :session (:session request)
+                 :body body}))
             ;; If the response does not have a valid header, then all of it is treated as valid
             ;; output. In this case we write this output to the console, modify the values for
             ;; `command` and `action` in the branch, and then redirect back to the branch page:
