@@ -112,22 +112,6 @@
                    "  $(this).text(moment($(this).text()).fromNow());"
                    "});")]
 
-     ;; When unloading a page, show a progress cursor until the new page gets loaded, or after ten
-     ;; seconds, whichever comes first. The ten second limit is needed because when the browser
-     ;; happens to open a download dialog (which may happen for some view mime types), the
-     ;; 'unloading' will never actually complete.
-     [:script
-      "window.addEventListener('beforeunload', (event) => {"
-      "  $('*').css('cursor', 'progress');"
-      "  setTimeout("
-      "    function() {"
-      "      if (document.readyState === 'complete') {"
-      "        $('*').css('cursor', '');"
-      "      }"
-      "    },"
-      "  10000);"
-      "});"]
-
      ;; If the user has read-only access, run the following jQuery script to disable any action
      ;; buttons on the page:
      (when (read-only? request)
