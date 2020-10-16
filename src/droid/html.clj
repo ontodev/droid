@@ -160,6 +160,11 @@
                  (str "=" (-> % (val) (codec/url-encode)))))
        (string/join "&")))
 
+(defn render-github-webook-response
+  "Render a response to a GitHub event hitting this endpoint. Currently just a stub"
+  [request]
+  "Not implemented. Click <a href=\"/\">here</a> to return to DROID.")
+
 (defn- branch-status-summary
   "Given the names of a project and branch, output a summary string of the branch's commit status
   as compared with its remote."
