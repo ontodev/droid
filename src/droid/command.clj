@@ -46,7 +46,7 @@
                                           (map #(-> % (.getParent)))
                                           (first)))))]
     (if (not (:active? docker-config))
-      (log/info "Docker configuration is inactive for project:" project-name)
+      (log/debug "Docker configuration is inactive for project:" project-name)
       (let [dockerfile-path (find-dockerfile-path)
             command (if dockerfile-path
                       ["docker" "build" "--tag" (:image docker-config) "." :dir dockerfile-path]
@@ -137,7 +137,7 @@
           (log/debug "No branch specified; not looking for a container.")
 
           (not (:active? docker-config))
-          (log/info "Docker configuration inactive. Not retrieving container.")
+          (log/debug "Docker configuration inactive. Not retrieving container.")
 
           :else
           (let [container-name (-> project-name (str "-" branch-name))]
