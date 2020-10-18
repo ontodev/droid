@@ -12,6 +12,8 @@ DROID is in early development and is designed to work on Unix (Linux, macOS) sys
 
 DROID is implemented using [Clojure](https://clojure.org/), but uses the Python library [ansi2html](https://pypi.org/project/ansi2html/) to colourize console output (we investigated native solutions but have not (yet) found anything nearly as performant as `ansi2html`). For this to work you must set up a python virtual environment in DROID's root directory and install the dependencies specified in `requirements.txt` in the same directory. Once this is done, DROID should be run only after activating the virtual environment.
 
+<i>Note: as of 20-10-2020 we have investigated a few native java/clojure alternatives to using `ansi2html` but have not found anything nearly as performant. One possibility that still needs to be tried is `jansi` (see: https://github.com/ontodev/droid/issues/39)</i>
+
 1. Create the virtual environment:
 
    ```
