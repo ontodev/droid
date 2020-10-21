@@ -1126,7 +1126,7 @@
   page corresponding to a branch."
   [{:keys [branch-name project-name Makefile] :as branch}
    {:keys [params]
-    {:keys [view-path missing-view confirm-kill confirm-update updating-view
+    {:keys [view-path missing-view confirm-kill confirm-update updating-view process-killed
             commit-msg commit-amend-msg pr-to-add]} :params
     :as request}]
   (let [this-url (str "/" project-name "/branches/" branch-name)]
@@ -1192,6 +1192,11 @@
                    [:p {:class "mt-n2"} (branch-status-summary project-name branch-name)]
 
                    [:hr {:class "line1"}]
+
+                   (when process-killed
+                     [:p {:class "alert alert-warning"}
+                      "Process killed. If the process was being monitored in a different tab, "
+                      "you should now close that tab."])
 
                    (if (or confirm-update confirm-kill updating-view)
                      ;; If the confirm-update, confirm-kill, or updating-view flags have been set,
@@ -1358,7 +1363,7 @@
         (not (nil? force-kill))
         (do
           (send-off branch-agent branches/kill-process (-> request :session :user))
-          (redirect this-url))
+          (redirect (str this-url "?process-killed=1")))
 
         ;; If the confirm-kill parameter has been sent, then simply render the page for the
         ;; branch. The confirm-kill flag will be recognised during rendering and a prompt
@@ -1542,6 +1547,7 @@
                 ;; Remove the force kill and new action parameters:
                 (str "?" (-> params
                              (dissoc :force-kill :new-action :new-action-param)
+                             (assoc :process-killed 1)
                              (params-to-query-str)))
                 (redirect)))
 
