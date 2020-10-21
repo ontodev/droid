@@ -1173,10 +1173,7 @@
       (and updating-view
            (-> branch :exit-code (realized?))
            (-> branch :exit-code (deref) (= 0)))
-      (->> branch
-           :action
-           (str this-url "/views/")
-           (redirect))
+      (->> branch :action (str this-url "/views/") (redirect))
 
       ;; Otherwise process the request as normal:
       :else
@@ -1494,8 +1491,9 @@
                     "start action" new-action "and was prevented from doing so.")
           (render-branch-page @branch-agent request))
 
-        ;; If this is a cancel process action, kill the existing process and redirect to the branch
-        ;; page:
+        ;; If this is a cancel process action, kill the existing process. If the cancelled process
+        ;; was an update of a view, then render the "close tab" page; otherwise redirect to the
+        ;; branch page:
         (= new-action "cancel-DROID-process")
         (do
           (send-off branch-agent branches/kill-process (-> request :session :user))
@@ -1503,7 +1501,10 @@
             (render-close-tab request)
             (redirect this-url)))
 
-        ;; If this is a cancel action related to a view, just render the "close this tab" page:
+        ;; If this is a cancel action related to a view; i.e., if when asked to confirm whether she
+        ;; really wants to update the view, or kill an existing process so as to update the view,
+        ;; the user changes her mind and clicks on the "do nothing" button, then just render the
+        ;; "close this tab" page:
         (or cancel-update-view cancel-kill-for-view)
         (render-close-tab request)
 
@@ -1530,12 +1531,13 @@
             (send-off branch-agent branches/kill-process (-> request :session :user))
             (when (= new-action "git-push")
               (send-off branches/local-branches branches/store-creds project-name branch-name
-                        request))
+                        request)
+              (await branches/local-branches))
             (send-off branch-agent launch-process)
-            ;; TODO: this sleep should not be needed; figure out how to do without it:
-            (Thread/sleep 3000)
             (when (= new-action "git-push")
-              (send-off branch-agent branches/remove-creds project-name branch-name))
+              ;; TODO: this sleep should not be needed; figure out how to do without it:
+              (Thread/sleep 3000)
+              (send-off branches/local-branches branches/remove-creds project-name branch-name))
             (-> this-url
                 ;; Remove the force kill and new action parameters:
                 (str "?" (-> params
@@ -1566,12 +1568,13 @@
         (do
           (when (= new-action "git-push")
             (send-off branches/local-branches branches/store-creds project-name branch-name
-                      request))
+                      request)
+            (await branches/local-branches))
           (send-off branch-agent launch-process)
-          ;; TODO: this sleep should not be needed; figure out how to do without it:
-          (Thread/sleep 3000)
           (when (= new-action "git-push")
-            (send-off branch-agent branches/remove-creds project-name branch-name))
+            ;; TODO: this sleep should not be needed; figure out how to do without it:
+            (Thread/sleep 3000)
+            (send-off branches/local-branches branches/remove-creds project-name branch-name))
           (-> this-url
               ;; Remove the new action params so that the user will not be able to launch the action
               ;; again by hitting his browser's refresh button by mistake:
