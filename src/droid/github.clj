@@ -9,33 +9,68 @@
 
 (def git-actions
   "The version control operations available in DROID"
-  {:git-status "git status"
-   :git-diff "git diff"
-   :git-fetch "git fetch"
-   :git-pull "git pull"
-   :git-push "git push"
-   :git-commit (fn [{:keys [msg user] :as options}]
-                 ;; A function to generate a command line string that will commit to git with the
-                 ;; given URL encoded commit message and given user info.
+  {:git-status {:command "git status"
+                :html-param "?new-action=git-status"
+                :html-class "btn btn-sm btn-success"
+                :html-btn-label "Status"}
+   :git-diff {:command "git diff"
+              :html-param "?new-action=git-diff"
+              :html-class "btn btn-sm btn-success"
+              :html-btn-label "Diff"}
+   :git-fetch {:command "git fetch"
+               :html-param "?new-action=git-fetch"
+               :html-class "btn btn-sm btn-success"
+               :html-btn-label "Fetch"}
+   :git-pull {:command "git pull"
+              :html-param "?new-action=git-pull"
+              :html-class "btn btn-sm btn-warning"
+              :html-btn-label "Pull"}
+   :git-push {:command "git push"
+              :html-param "?confirm-push=1"
+              :html-class "btn btn-sm btn-danger"
+              :html-btn-label "Push"}
+   :git-commit {:command
+                (fn [{:keys [msg user] :as options}]
+                  ;; A function to generate a command line string that will commit to git with the
+                  ;; given URL encoded commit message and given user info.
+                  (let [commit-msg (codec/url-decode msg)]
+                    (if (and (not (nil? commit-msg))
+                             (not (string/blank? commit-msg)))
+                      (format "git commit --all -m \"%s\" --author \"%s <%s>\""
+                              commit-msg
+                              (or (:name user) (:login user))
+                              (or (:email user) ""))
+                      (log/error "Received empty commit message for commit"))))
+
+                :html-param
+                "?get-commit-msg=1"
+
+                :html-class
+                "btn btn-sm btn-warning"
+
+                :html-btn-label
+                "Commit"}
+   :git-amend {:command
+               (fn [{:keys [msg user] :as options}]
+                 ;; A function to generate a command line string that will ammend the last commit to
+                 ;; git with the given URL encoded commit message and given user info.
                  (let [commit-msg (codec/url-decode msg)]
                    (if (and (not (nil? commit-msg))
                             (not (string/blank? commit-msg)))
-                     (format "git commit --all -m \"%s\" --author \"%s <%s>\""
+                     (format "git commit --all --amend -m \"%s\" --author \"%s <%s>\""
                              commit-msg
                              (or (:name user) (:login user))
                              (or (:email user) ""))
-                     (log/error "Received empty commit message for commit"))))
-   :git-amend (fn [{:keys [msg user] :as options}]
-                ;; A function to generate a command line string that will ammend the last commit to
-                ;; git with the given URL encoded commit message and given user info.
-                (let [commit-msg (codec/url-decode msg)]
-                  (if (and (not (nil? commit-msg))
-                           (not (string/blank? commit-msg)))
-                    (format "git commit --all --amend -m \"%s\" --author \"%s <%s>\""
-                            commit-msg
-                            (or (:name user) (:login user))
-                            (or (:email user) ""))
-                    (log/error "Received empty commit message for commit amendment"))))})
+                     (log/error "Received empty commit message for commit amendment"))))
+
+               :html-param
+               "?get-commit-amend-msg=1"
+
+               :html-class
+               "btn btn-sm btn-warning"
+
+               :html-btn-label
+               "Amend"}})
 
 (defn create-pr
   "Calls the GitHub API to create a pull request with the given description on the given branch in

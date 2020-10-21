@@ -1093,32 +1093,39 @@
      ;; The git action buttons:
      [:table {:class "table table-borderless table-sm"}
       [:tr
-       [:td [:a {:href (str this-url "?new-action=git-status")
-                 :class "btn btn-sm btn-success btn-block"} "Status"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-status :html-param))
+                 :class (-> gh/git-actions :git-status :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-status :html-btn-label)]]
        [:td "Show which files have changed since the last commit"]]
       [:tr
-       [:td [:a {:href (str this-url "?new-action=git-diff")
-                 :class "btn btn-sm btn-success btn-block"} "Diff"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-diff :html-param))
+                 :class (-> gh/git-actions :git-diff :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-diff :html-btn-label)]]
        [:td "Show changes to tracked files since the last commit"]]
       [:tr
-       [:td [:a {:href (str this-url "?new-action=git-fetch")
-                 :class "btn btn-sm btn-success btn-block"} "Fetch"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-fetch :html-param))
+                 :class (-> gh/git-actions :git-fetch :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-fetch :html-btn-label)]]
        [:td "Fetch the latest changes from GitHub"]]
       [:tr
-       [:td [:a {:href (str this-url "?new-action=git-pull")
-                 :class "btn btn-sm btn-warning btn-block"} "Pull"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-pull :html-param))
+                 :class (-> gh/git-actions :git-pull :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-pull :html-btn-label)]]
        [:td "Update this branch with the latest changes from GitHub"]]
       [:tr
-       [:td [:a {:href (str this-url "?get-commit-msg=1")
-                 :class "btn btn-sm btn-warning btn-block"} "Commit"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-commit :html-param))
+                 :class (-> gh/git-actions :git-commit :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-commit :html-btn-label)]]
        [:td "Commit your changes locally"]]
       [:tr
-       [:td [:a {:href (str this-url "?get-commit-amend-msg=1")
-                 :class "btn btn-sm btn-warning btn-block"} "Amend"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-amend :html-param))
+                 :class (-> gh/git-actions :git-amend :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-amend :html-btn-label)]]
        [:td "Update your last commit with new changes"]]
       [:tr
-       [:td [:a {:href (str this-url "?confirm-push=1")
-                 :class "btn btn-sm btn-danger btn-block"} "Push"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-push :html-param))
+                 :class (-> gh/git-actions :git-push :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-push :html-btn-label)]]
        [:td "Push your latest local commit(s) to GitHub"]]]]))
 
 (defn- render-branch-page
@@ -1428,6 +1435,7 @@
                             ;; pass it the appropriate parameters. Otherwise, return it as is.
                             (-> gh/git-actions
                                 (get (keyword new-action))
+                                (get :command)
                                 (#(if (function? %)
                                     (% {:msg new-action-param, :user (-> request :session :user)})
                                     %)))
