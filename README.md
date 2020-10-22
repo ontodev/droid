@@ -10,7 +10,7 @@ DROID is in early development and is designed to work on Unix (Linux, macOS) sys
 
 ## Python virtual environment and `ansi2html`
 
-DROID is implemented using [Clojure](https://clojure.org/), but uses the Python library [ansi2html](https://pypi.org/project/ansi2html/) to colourize console output. For this to work you must set up a python virtual environment in DROID's root directory and install the dependencies specified in `requirements.txt` in the same directory. Once this is done, DROID should be run only after activating the virtual environment.
+DROID is implemented using [Clojure](https://clojure.org/), but uses the Python library [ansi2html](https://pypi.org/project/ansi2html/) to colourize console output (we investigated native solutions but have not (yet) found anything nearly as performant as `ansi2html`). For this to work you must set up a python virtual environment in DROID's root directory and install the dependencies specified in `requirements.txt` in the same directory. Once this is done, DROID should be run only after activating the virtual environment.
 
 1. Create the virtual environment:
 
@@ -35,29 +35,20 @@ You should now see the string "`(_venv)`" prefixed to your command-line prompt, 
 
 Steps 1 and 3 only need to be run once at installation time. Step 2, activating the Python virtual environment, is required in order for colourization to work. You must make sure that the virtual environment is active (as indicated by the string "`(_venv)`" at the beginning of your command prompt) before starting DROID.
 
-## GitHub environment variables
+## GitHub App Authentication
 
-DROID assumes that the following environment variables have been set. It may be convenient to add them to your python virtual environment activation script (`_venv/bin/activate`).
+DROID uses a GitHub App to authenticate on behalf of a logged in github user (see: [Identifying and authorizing users for GitHub Apps](https://docs.github.com/en/free-pro-team@latest/developers/apps/identifying-and-authorizing-users-for-github-apps)).
 
-### OAuth2
+For this to work properly, DROID assumes that the following environment variables have been set (it may be convenient to add them to your python virtual environment activation script (`_venv/bin/activate`)):
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- `GITHUB_APP_STATE`
 
-For OAuth2 integration to work properly, DROID assumes that the following environment variables have been set:
-- GITHUB_CLIENT_ID
-- GITHUB_CLIENT_SECRET
-
-These should match the client id and secret of your GitHub OAuth2 app.
-
-### Default committer
-
-DROID modifies the "author" of a commit to match the info for the authenticated user who requested it. The "committer" info should be changed as well, but in this case we do it globally in environment variables:
-
-export GIT_COMMITTER_NAME="DROID"
-export GIT_COMMITTER_EMAIL=""
-
+To obtain the values for the first two settings, send an email to james@overton.ca. For the value of `GITHUB_APP_STATE`, a randomly generated string may be used.
 
 ## Configuration file
 
-DROID assumes that a file called 'config.edn' exists in DROID's root directory with the following contents:
+DROID assumes that a file called 'config.edn' exists in DROID's root directory, which should look like the following:
 
 ```
 {:projects
@@ -83,8 +74,6 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
  :site-admin-github-ids {:dev #{"user1" "user2"}
                          :test #{"user1" "user2"}
                          :prod #{"user1" "user2"}}
- :personal-access-tokens {"user1" "personal-access-token2"
-                          "user2" "personal-access-token2"}
  :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
  :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
  :html-body-colors "bg-white"}
@@ -92,15 +81,15 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory w
 
 where:
 
-- `:docker-config` is optional. If included it must specify: (1) `:active?`: whether or not to actually use docker's container service when running commands in the project's branches; (2) `:image`: the name of the docker image to use; (3) `:workspace-dir`: the directory to map the server's local workspace directory for a branch to in the container; (4) `:temp-dir`: the directory to map the server's local temp directory for branch to in the container; (5) `:default-working-dir`: the directory relative to which DROID commands should be run by default within the container if not otherwise specified; (6) `:shell-command`: the program name of the shell to be used when running commands; (7) `:env`: extra environment variables to pass to a container when invoking it.
+- `:docker-config` is optional. If included it must specify: (1) `:active?`: whether or not to actually use docker's container service when running commands in the project's branches; (2) `:image`: the name of the docker image to use; (3) `:workspace-dir`: the directory to map the server's local workspace directory for a branch to in the container; (4) `:temp-dir`: the directory to map the server's local temp directory for branch to in the container; (5) `:default-working-dir`: the directory relative to which DROID commands should be run by default within the container, if not otherwise specified; (6) `:shell-command`: the program name of the shell to be used when running commands; (7) `:env`: extra environment variables to pass to a container when invoking it.
 - `:op-env` should be one of `:dev`, `:test`, `:prod`
-  - If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up all of the other configuration parameters.
-- `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`
+  - If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up other configuration parameters that provide alternate configurations for `:dev`, `:test`, and `:prod`.
+- `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`. The higher the specified level, the fewer messages will be written to the log.
 - `:server-port` is the port that the server will listen on.
-- `:secure-site` is either true or false and indicates whether the server will use https or http.
+- `:secure-site` is either true or false and indicates whether the server will use the `https://` or `http://` protocol.
 - `:site-admin-github-ids` is a hash-set of github userids who are considered site administrators.
 - `:cgi-timeout` is the maximum number of milliseconds that a CGI script is allowed to run.
-- `:log-file` is the file (relative to DROID's root directory) where the log will be written to. If it is nil then log is written to STDERR.
+- `:log-file` is the file (relative to DROID's root directory) where the log will be written to. If it is nil then log is written to `STDERR`.
 - `:html-body-colors` is a valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color) to use for DROID's pages.
 
 ## `projects/` directory
@@ -127,4 +116,4 @@ projects/
             └── ...
 ```
 
-The `project1/`, `project2/`, etc. directories should be writable by `DROID`.
+The `project1/`, `project2/`, etc. directories (and their subdirectories) should be writable by `DROID`.

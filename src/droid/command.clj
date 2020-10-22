@@ -22,15 +22,22 @@
   (let [ws-dir (get-workspace-dir project-name)
         docker-config (-> :projects (get-config) (get project-name) :docker-config)
         find-dockerfile-path (fn []
-                               (if (and (-> ws-dir (str "/master") (io/file) (.exists))
-                                        (-> ws-dir (str "/master/Dockerfile") (io/file) (.exists)))
+                               (cond
                                  ;; If there is a master branch that contains a Dockerfile, return
                                  ;; the filesystem path for that branch:
+                                 (and (-> ws-dir (str "/master") (io/file) (.exists))
+                                      (-> ws-dir (str "/master/Dockerfile") (io/file) (.exists)))
                                  (-> ws-dir (str "/master"))
+                                 ;; If there is a main branch that contains a Dockerfile, return
+                                 ;; the filesystem path for that branch:
+                                 (and (-> ws-dir (str "/main") (io/file) (.exists))
+                                      (-> ws-dir (str "/main/Dockerfile") (io/file) (.exists)))
+                                 (-> ws-dir (str "/main"))
                                  ;; Otherwise, find another branch with a Dockerfile in it, and
                                  ;; return the filesystem path for that branch:
-                                 (do (log/debug "No master branch in project:"
-                                                project-name "; looking for another branch")
+                                 :else
+                                 (do (log/debug "No master or main branch in project:"
+                                                project-name " has a Dockerfile")
                                      (->> ws-dir
                                           (io/file)
                                           (file-seq)

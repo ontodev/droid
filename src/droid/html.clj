@@ -112,22 +112,6 @@
                    "  $(this).text(moment($(this).text()).fromNow());"
                    "});")]
 
-     ;; When unloading a page, show a progress cursor until the new page gets loaded, or after ten
-     ;; seconds, whichever comes first. The ten second limit is needed because when the browser
-     ;; happens to open a download dialog (which may happen for some view mime types), the
-     ;; 'unloading' will never actually complete.
-     [:script
-      "window.addEventListener('beforeunload', (event) => {"
-      "  $('*').css('cursor', 'progress');"
-      "  setTimeout("
-      "    function() {"
-      "      if (document.readyState === 'complete') {"
-      "        $('*').css('cursor', '');"
-      "      }"
-      "    },"
-      "  10000);"
-      "});"]
-
      ;; If the user has read-only access, run the following jQuery script to disable any action
      ;; buttons on the page:
      (when (read-only? request)
@@ -175,6 +159,11 @@
                  (codec/url-encode)
                  (str "=" (-> % (val) (codec/url-encode)))))
        (string/join "&")))
+
+(defn render-github-webook-response
+  "Render a response to a GitHub event hitting this endpoint. Currently just a stub"
+  [request]
+  "Not implemented. Click <a href=\"/\">here</a> to return to DROID.")
 
 (defn- branch-status-summary
   "Given the names of a project and branch, output a summary string of the branch's commit status
@@ -279,11 +268,14 @@
     [:table {:class "table table-sm table-striped table-borderless mt-3"}
      [:thead
       [:tr (when-not restricted-access? [:th]) [:th "Branch"] [:th "Pull request"] [:th "Git status"]]]
-     ;; Render the local master branch first if it is present:
-     (->> local-branch-names (filter #(= % "master")) (first) (render-local-branch-row))
+     ;; Render the local main (or master) branch first if it is present:
+     (->> local-branch-names
+          (filter #(or (= % "master") (= % "main")))
+          (first)
+          (render-local-branch-row))
      ;; Render all of the other local branches:
      (for [local-branch-name (->> local-branch-names
-                                  (filter #(not= % "master"))
+                                  (filter #(and (not= % "master") (not= % "main")))
                                   ;; Branches with pull requests get displayed first, otherwise sort
                                   ;; by name.
                                   (sort (fn [one two]
@@ -305,15 +297,16 @@
 
        (render-local-branch-row local-branch-name))
 
-     ;; Render the master branch if it is present and there is no local copy:
-     (when (not-any? #(= "master" %) local-branch-names)
+     ;; Render the remote master/main branch if it is present and there is no local copy:
+     (when (not-any? #(or (= % "master") (= % "main")) local-branch-names)
        (->> remote-branches
-            (filter #(= (:name %) "master"))
+            (filter #(or (= (:name %) "master") (= (:name %) "main")))
             (first)
             (render-remote-branch-row)))
      ;; Render all of the other remote branches that don't have local copies:
      (for [remote-branch remote-branches]
        (when (and (not= (:name remote-branch) "master")
+                  (not= (:name remote-branch) "main")
                   (not-any? #(= (:name remote-branch) %) local-branch-names))
          (render-remote-branch-row remote-branch)))]))
 
@@ -693,7 +686,8 @@
                                                   (sort))]
                              ;; The master branch is selected by default:
                              [:option
-                              (merge {:value branch-name} (when (= branch-name "master")
+                              (merge {:value branch-name} (when (or (= branch-name "master")
+                                                                    (= branch-name "main"))
                                                             {:selected "selected"}))
                               branch-name])]]
                          ;; Input box for inputting the desired new branch name:
@@ -1035,8 +1029,8 @@
                              (first)
                              :pull-request)]
          (cond
-           ;; If this is the master branch, then PRs aren't relevant:
-           (= branch-name "master")
+           ;; If this is the master/main branch, then PRs aren't relevant:
+           (or (= branch-name "master") (= branch-name "main"))
            [:div]
 
            ;; If the current branch doesn't already have a PR associated, provide the user with
@@ -1145,7 +1139,9 @@
       (and (not (read-only? request))
            (not (nil? pr-to-add)))
       (->> pr-to-add
-           (gh/create-pr project-name branch-name
+           (gh/create-pr project-name
+                         branch-name
+                         (branches/get-remote-main project-name)
                          (-> request :session :user :login)
                          (-> request :oauth2/access-tokens :github :token))
            (codec/url-encode)

@@ -78,6 +78,7 @@
 
 (defroutes app-routes
   (GET "/" [] html/render-index)
+  (POST "/github_webhook" [] html/render-github-webook-response)
   (GET "/:project-name" [] html/render-project)
   (GET "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)
   (POST "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)

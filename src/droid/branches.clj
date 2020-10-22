@@ -28,17 +28,16 @@
   "Refresh the remote GitHub branches associated with the given project, using the given login and
   OAuth2 token to authenticate the request to GitHub."
   [all-current-branches project-name
-   {{{:keys [login]} :user} :session}]
-
-  (let [token (-> :personal-access-tokens (get-config) (get login))]
-    (if (or (nil? token) (nil? login))
-      ;; If the user is not authenticated, log it but just return the branch collection as is:
-      (do
-        (log/debug "Ignoring non-authenticated request to refresh remote branches")
-        all-current-branches)
-      ;; Otherwise perform the refresh:
-      (->> (initialize-remote-branches-for-project project-name login token)
-           (merge all-current-branches)))))
+   {{{:keys [login]} :user} :session,
+    {{:keys [token]} :github} :oauth2/access-tokens}]
+  (if (or (nil? token) (nil? login))
+    ;; If the user is not authenticated, log it but just return the branch collection as is:
+    (do
+      (log/debug "Ignoring non-authenticated request to refresh remote branches")
+      all-current-branches)
+    ;; Otherwise perform the refresh:
+    (->> (initialize-remote-branches-for-project project-name login token)
+         (merge all-current-branches))))
 
 (def remote-branches
   "The remote branches, per project, that are available to be checked out from GitHub."
@@ -54,6 +53,16 @@
        (get @remote-branches)
        (map #(:name %))
        (some #(= branch-name %))))
+
+(defn get-remote-main
+  "Gets the main branch for the given project, which could be either 'main' or 'master'. If neither
+  exists log an error and return nothing."
+  [project-name]
+  (cond
+    (remote-branch-exists? project-name "main") "main"
+    (remote-branch-exists? project-name "master") "master"
+    :else (throw (Exception. (str "Error while attempting to create a pr: " project-name
+                                  " has neither a main nor a master branch")))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Code related to local branches (i.e., branches managed by the server in its workspace)
@@ -275,10 +284,10 @@
   The all-branches parameter is required in order to serialize this function through an agent, but
   it is simply passed through without modification."
   [all-branches project-name branch-name
-   {{{:keys [login]} :user} :session}]
+   {{{:keys [login]} :user} :session,
+    {{:keys [token]} :github} :oauth2/access-tokens}]
   (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
                        (string/split #"/"))
-        token (-> :personal-access-tokens (get-config) (get login))
         url (str "https://" login ":" token "@github.com/" org "/" repo)]
     (log/debug "Storing github credentials for" project-name "/" branch-name)
     (-> project-name (get-workspace-dir) (str "/" branch-name "/.git-credentials") (spit url))
@@ -325,7 +334,8 @@
   "Creates a local branch with the given branch name in the workspace for the given project, with
   the branch point given by `base-branch-name`, and adds it to the collection of local branches."
   [all-branches project-name branch-name base-branch-name
-   {{{:keys [login]} :user} :session
+   {{{:keys [login]} :user} :session,
+    {{:keys [token]} :github} :oauth2/access-tokens
     :as request}]
   (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
                        (string/split #"/"))
