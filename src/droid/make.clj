@@ -4,6 +4,7 @@
             [clojure.string :as string]
             [markdown-to-hiccup.core :as m2h]
             [droid.fileutils :refer [get-workspace-dir]]
+            [droid.github :as gh]
             [droid.log :as log]))
 
 (defn- get-markdown-and-phonies
@@ -114,11 +115,15 @@
                 (-> href (string/replace #"^\./" "") (string/replace #"\?.+$" "")))
 
               (process-makefile-html [{:keys [html file-views dir-views exec-views general-actions
-                                              branch-name]
+                                              git-actions branch-name]
                                        :as makefile}]
                 ;; Recurses through the html hiccup structure and transforms any links that are
-                ;; found into either action links or view links:
-                (letfn [(process-link [[tag {href :href} text :as link]]
+                ;; found into either action links or view links. Note that when a link has a space
+                ;; in it, then the markdown convention is that the first word is to be interpreted
+                ;; as the link, and the second word is to be interpreted as the title. In our case
+                ;; we'll be using such links for git actions, e.g., [Don't be afraid to](git commit)
+                ;; so we must capture the title here in order to grab the 'commit' part of the link.
+                (letfn [(process-link [[tag {href :href title :title} text :as link]]
                           (cond
                             (some #(= href %) general-actions)
                             [tag {:href (str "/" project-name "/branches/" branch-name
@@ -126,13 +131,23 @@
                                   ;; The 'action-btn' class is a custom one to identify action
                                   ;; buttons which we will later want to conditionally restrict
                                   ;; access to.
-                                  :class "btn btn-primary btn-sm action-btn"} text]
+                                  :class "mb-1 mt-1 btn btn-primary btn-sm action-btn"} text]
+
+                            (some #(= (str href "-" title) %) git-actions)
+                            (let [git-keyword (-> href (str "-" title) (keyword))]
+                              [:div
+                               [:span {:class "mr-1"} text]
+                               [tag
+                                {:href (-> gh/git-actions (get git-keyword) :html-param)
+                                 :class (-> gh/git-actions (get git-keyword) :html-class
+                                            (str " mt-1 mb-1 action-btn"))}
+                                (-> gh/git-actions (get git-keyword) :html-btn-label)]])
 
                             (or (some #(= href %) (set/union file-views dir-views))
                                 (some #(-> href (normalize-exec-view) (= %)) exec-views))
                             [tag
                              {:href (str "/" project-name "/branches/" branch-name
-                                             "/views/" href)
+                                         "/views/" href)
                               :target "_blank"}
                              text]
 
@@ -147,6 +162,7 @@
                                                           :dir-views dir-views,
                                                           :exec-views exec-views
                                                           :general-actions general-actions,
+                                                          :git-actions git-actions,
                                                           :branch-name branch-name})))
                            elem))
                        (vec))))]
@@ -154,9 +170,13 @@
              (extract-nested-links)
              ;; For all of the extracted links, add those that do not contain an 'authority' part
              ;; (i.e. a domain name) to the list of targets, and then also place them, as
-             ;; appropriate, into one of the general-actions, file-views, dir-views, or exec-views
-             ;; lists:
-             (map (fn [[tag {href :href} text]]
+             ;; appropriate, into one of the general-actions, git-actions, file-views, dir-views,
+             ;; or exec-views lists. Note that when a link has a space in it, then the markdown
+             ;; convention is that the first word is to be interpreted as the link, and the second
+             ;; word is to be interpreted as the title. In our case we'll be using such links for
+             ;; git actions, e.g., [Don't be afraid to](git commit), so we must capture the title
+             ;; here in order to grab the 'commit' part of the link.
+             (map (fn [[tag {href :href title :title} text]]
                     (when (nil? (->> href
                                      (java.net.URI.)
                                      (bean)
@@ -166,6 +186,9 @@
                        (cond
                          (some #(= href %) phony-targets)
                          {:general-actions #{href}}
+
+                         (= href "git")
+                         {:git-actions #{(str href "-" title)}}
 
                          (string/ends-with? href "/")
                          {:dir-views #{href}}

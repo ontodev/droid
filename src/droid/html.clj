@@ -57,7 +57,7 @@
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session] :as request}
-   {:keys [status headers title heading content]
+   {:keys [status headers title heading script content]
     :as response
     :or {status 200
          headers default-html-headers
@@ -79,7 +79,9 @@
      [:link
       {:rel "stylesheet"
        :href "//cdn.jsdelivr.net/gh/highlightjs/cdn-release@9.16.2/build/styles/default.min.css"}]
-     [:title title]]
+     [:title title]
+     (when script
+       [:script script])]
     [:body (when (get-config :html-body-colors) {:class (get-config :html-body-colors)})
      [:div {:id "content" :class "container p-3"}
       (login-status request)
@@ -146,6 +148,18 @@
   "Render the 401 - unauthorized page"
   [request]
   (render-4xx request 401 "You are not authorized to view this page."))
+
+(defn- render-close-tab
+  "Renders a page with no links or any other content besides a message indicating that the user can
+  close the tab. The page also includes one line of javascript code to automatically close the tab
+  if the user has javascript enabled."
+  [request]
+  (html-response
+   request
+   {:title "DROID"
+    :heading [:div "DROID"]
+    :script "window.close();"
+    :content [:div {:class "alert alert-info"} "You may now close this tab"]}))
 
 (defn- params-to-query-str
   "Given a map of parameters, construct a string suitable for use in a GET request"
@@ -728,7 +742,8 @@
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
-  [{:keys [branch-name project-name run-time exit-code cancelled console] :as branch}]
+  [{:keys [branch-name project-name run-time exit-code cancelled console] :as branch}
+   {:keys [updating-view] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)]
     (cond
       ;; The last process was cancelled:
@@ -749,10 +764,13 @@
       [:p {:class "alert alert-warning"}
        (str "Processes still running after "
             (-> run-time (/ 1000) (float) (Math/ceil) (int)) " seconds.")
-       [:span {:class "col-sm-2"} [:a {:class "btn btn-success btn-sm" :href branch-url}
+       [:span {:class "col-sm-2"} [:a {:class "btn btn-success btn-sm"
+                                       :href (str branch-url (when updating-view
+                                                               "?updating-view=1"))}
                                    "Refresh"]]
        [:span {:class "col-sm-2"} [:a {:class "btn btn-danger btn-sm"
-                                       :href (str branch-url "?new-action=cancel-DROID-process")}
+                                       :href (str branch-url "?new-action=cancel-DROID-process"
+                                                  (when updating-view "&updating-view=1"))}
                                    "Cancel"]]]
 
       ;; The last process completed successfully:
@@ -805,7 +823,8 @@
       " is still not complete. You must cancel it before updating or running "
       [:span {:class "text-monospace font-weight-bold"} view-path]
       ". Do you really want to do this?"]
-     [:span [:a {:class "btn btn-secondary btn-sm" :href branch-url} "No, do nothing"]]
+     [:span [:a {:class "btn btn-secondary btn-sm" :href (str branch-url "?cancel-kill-for-view=1")}
+             "No, do nothing"]]
      [:span {:class "col-sm-1"}]
      [:span [:a {:class "btn btn-danger btn-sm" :href (str view-url "?force-kill=1")}
              "Yes, go ahead"]]
@@ -829,7 +848,8 @@
       [:p [:span {:class "font-weight-bold text-monospace"} view-path]
        " is not up to date. What would you like to do?"]
 
-      [:span [:a {:class "btn btn-secondary btn-sm" :href branch-url} "Do nothing"]]
+      [:span [:a {:class "btn btn-secondary btn-sm" :href (str branch-url "?cancel-update-view=1")}
+              "Do nothing"]]
       [:span {:class "col-sm-1"}]
       [:span [:a {:class "btn btn-danger btn-sm" :href (str view-url "?force-update=1")}
               "Rebuild the view"]]
@@ -869,7 +889,7 @@
   "Given some branch data, and a number of parameters related to an action or a view, render
   the console on the branch page."
   [{:keys [branch-name project-name action start-time command exit-code console] :as branch}
-   {:keys [new-action view-path confirm-update confirm-kill] :as params}]
+   {:keys [new-action view-path confirm-update confirm-kill updating-view] :as params}]
   (letfn [(render-status-bar []
             (cond
               (and (not (nil? view-path))
@@ -881,7 +901,7 @@
               (prompt-to-kill-for-action branch params)
 
               :else
-              (render-status-bar-for-action branch)))
+              (render-status-bar-for-action branch params)))
 
           (render-console-text []
             ;; Look for ANSI escape sequences in the console text. (see:
@@ -1073,32 +1093,39 @@
      ;; The git action buttons:
      [:table {:class "table table-borderless table-sm"}
       [:tr
-       [:td [:a {:href (str this-url "?new-action=git-status")
-                 :class "btn btn-sm btn-success btn-block"} "Status"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-status :html-param))
+                 :class (-> gh/git-actions :git-status :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-status :html-btn-label)]]
        [:td "Show which files have changed since the last commit"]]
       [:tr
-       [:td [:a {:href (str this-url "?new-action=git-diff")
-                 :class "btn btn-sm btn-success btn-block"} "Diff"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-diff :html-param))
+                 :class (-> gh/git-actions :git-diff :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-diff :html-btn-label)]]
        [:td "Show changes to tracked files since the last commit"]]
       [:tr
-       [:td [:a {:href (str this-url "?new-action=git-fetch")
-                 :class "btn btn-sm btn-success btn-block"} "Fetch"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-fetch :html-param))
+                 :class (-> gh/git-actions :git-fetch :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-fetch :html-btn-label)]]
        [:td "Fetch the latest changes from GitHub"]]
       [:tr
-       [:td [:a {:href (str this-url "?new-action=git-pull")
-                 :class "btn btn-sm btn-warning btn-block"} "Pull"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-pull :html-param))
+                 :class (-> gh/git-actions :git-pull :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-pull :html-btn-label)]]
        [:td "Update this branch with the latest changes from GitHub"]]
       [:tr
-       [:td [:a {:href (str this-url "?get-commit-msg=1")
-                 :class "btn btn-sm btn-warning btn-block"} "Commit"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-commit :html-param))
+                 :class (-> gh/git-actions :git-commit :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-commit :html-btn-label)]]
        [:td "Commit your changes locally"]]
       [:tr
-       [:td [:a {:href (str this-url "?get-commit-amend-msg=1")
-                 :class "btn btn-sm btn-warning btn-block"} "Amend"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-amend :html-param))
+                 :class (-> gh/git-actions :git-amend :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-amend :html-btn-label)]]
        [:td "Update your last commit with new changes"]]
       [:tr
-       [:td [:a {:href (str this-url "?confirm-push=1")
-                 :class "btn btn-sm btn-danger btn-block"} "Push"]]
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-push :html-param))
+                 :class (-> gh/git-actions :git-push :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-push :html-btn-label)]]
        [:td "Push your latest local commit(s) to GitHub"]]]]))
 
 (defn- render-branch-page
@@ -1106,7 +1133,8 @@
   page corresponding to a branch."
   [{:keys [branch-name project-name Makefile] :as branch}
    {:keys [params]
-    {:keys [view-path missing-view confirm-update commit-msg commit-amend-msg pr-to-add]} :params
+    {:keys [view-path missing-view confirm-kill confirm-update updating-view process-killed
+            commit-msg commit-amend-msg pr-to-add]} :params
     :as request}]
   (let [this-url (str "/" project-name "/branches/" branch-name)]
     (cond
@@ -1148,6 +1176,12 @@
            (str this-url "?pr-added=")
            (redirect))
 
+      ;; A view has successfully finished updating a view. In this case redirect to the view.
+      (and updating-view
+           (-> branch :exit-code (realized?))
+           (-> branch :exit-code (deref) (= 0)))
+      (->> branch :action (str this-url "/views/") (redirect))
+
       ;; Otherwise process the request as normal:
       :else
       (html-response
@@ -1166,31 +1200,40 @@
 
                    [:hr {:class "line1"}]
 
-                   [:div {:class "row"}
-                    [:div {:class "col-sm-6"}
-                     [:h3 "Workflow"]
-                     ;; If the missing-view parameter is present, then the user with read-only
-                     ;; access is trying to look at a view that doesn't exist:
-                     (cond
-                       (not (nil? missing-view))
-                       (notify-missing-view branch view-path)
+                   (when process-killed
+                     [:p {:class "alert alert-warning"}
+                      "Process killed. If the process was being monitored in a different tab, "
+                      "you should now close that tab."])
 
-                       (not (nil? confirm-update))
-                       (prompt-to-update-view branch params))
+                   (if (or confirm-update confirm-kill updating-view)
+                     ;; If the confirm-update, confirm-kill, or updating-view flags have been set,
+                     ;; then in the former case, render an update prompt. In the latter two cases,
+                     ;; the parameters will be handled by the render-console function:
+                     (if confirm-update
+                       (prompt-to-update-view branch params)
+                       (render-console branch params))
+                     ;; Otherwise render the branch page as normal:
+                     [:div
+                      [:div {:class "row"}
+                       [:div {:class "col-sm-6"}
+                        [:h3 "Workflow"]
+                        ;; If the missing-view parameter is present, then a user with read-only
+                        ;; access is trying to look at a view that doesn't exist:
+                        (when-not (nil? missing-view)
+                          (notify-missing-view branch view-path))
 
-                     ;; Render the Workflow HTML from the Makefile:
-                     (or (:html Makefile)
-                         [:ul [:li "No workflow found"]])]
+                        ;; Render the Workflow HTML from the Makefile:
+                        (or (:html Makefile)
+                            [:ul [:li "No workflow found"]])]
 
-                    ;; Render the Version Control section if the user has sufficient permission:
-                    (when-not (read-only? request)
-                      (render-version-control-section branch request))]]
-
-                  [:hr {:class "line1"}]
-
-                  [:div
-                   [:h3 "Console"]
-                   (render-console branch params)]]}))))
+                       ;; Render the Version Control section if the user has write permission:
+                       (when-not (read-only? request)
+                         (render-version-control-section branch request))]
+                      ;; Render the console:
+                      [:hr {:class "line1"}]
+                      [:div
+                       [:h3 "Console"]
+                       (render-console branch params)]])]]}))))
 
 (defn view-file
   "View a file in the workspace if it is in the list of allowed views for the branch. If the file is
@@ -1222,14 +1265,14 @@
                                            (conj (:dir-views %))
                                            (conj (:exec-views %))))))
 
-        ;; Run `make -q` to see if the view is up to date:
+        ;; Runs `make -q` to see if the view is up to date:
         up-to-date? #(let [[process exit-code] (cmd/run-command
                                                 ["make" "-q" view-path
                                                  :dir (get-workspace-dir project-name branch-name)]
                                                 nil @branch-agent)]
                        (or (= @exit-code 0) false))
 
-        ;; Run `make` (in the background) to rebuild the view, with output directed to the branch's
+        ;; Runs `make` (in the background) to rebuild the view, with output directed to the branch's
         ;; console.txt file:
         update-view (fn [branch]
                       (log/info "Rebuilding view" view-path "from branch" branch-name "of project"
@@ -1249,7 +1292,7 @@
                                :cancelled false
                                :exit-code (future (sh/exit-code process)))))
 
-        ;; Deliver an executable, possibly CGI-aware, script:
+        ;; Delivers an executable, possibly CGI-aware, script:
         deliver-exec-view #(let [script-path (-> (get-workspace-dir project-name branch-name)
                                                  (str "/" view-path))]
                              (cond (not (cmd/executable? script-path @branch-agent))
@@ -1265,7 +1308,7 @@
                                    :else
                                    (run-cgi script-path request)))
 
-        ;; Serve the view from the filesystem:
+        ;; Serves the view from the filesystem:
         deliver-file-view #(-> (get-workspace-dir project-name branch-name)
                                (str "/" view-path)
                                (file-response)
@@ -1288,9 +1331,10 @@
       (and view-path (-> view-path (string/ends-with? "/")))
       (redirect (-> this-url (str "index.html")))
 
-      ;; If the 'missing-view' parameter is present, then render the page for the branch. It will
-      ;; be handled during rendering and a notification area will be displayed on the page
-      ;; informing the user (who has read-only access) that the view does not exist:
+      ;; If the 'missing-view' parameter is present (which can only happen if the user has
+      ;; read-only access), then render the page for the branch. The 'missing-view parameter will
+      ;; then be handled during rendering and a notification area will be displayed on the page
+      ;; informing the user that the view does not exist:
       (not (nil? missing-view))
       (render-branch-page @branch-agent request)
 
@@ -1321,12 +1365,12 @@
       (and (->> @branch-agent :process (nil?) (not))
            (->> @branch-agent :exit-code (realized?) (not)))
       (cond
-        ;; If the force-kill parameter has been sent, kill the process, update the view,
-        ;; and redirect the user back to the view again:
+        ;; If the force-kill parameter has been sent, kill the process and redirect the user back to
+        ;; the view:
         (not (nil? force-kill))
         (do
           (send-off branch-agent branches/kill-process (-> request :session :user))
-          (redirect branch-url))
+          (redirect (str this-url "?process-killed=1")))
 
         ;; If the confirm-kill parameter has been sent, then simply render the page for the
         ;; branch. The confirm-kill flag will be recognised during rendering and a prompt
@@ -1359,7 +1403,7 @@
         ;; Here we aren't (await)ing for the process to finish, but for the branch to update,
         ;; which in this case means adding a reference to the currently running build process:
         (await branch-agent)
-        (redirect branch-url))
+        (redirect (str branch-url "?updating-view=1")))
 
       ;; If the 'confirm-update' parameter is present, simply render the page for the branch. The
       ;; confirm-update flag will be recognised during rendering and a prompt will be displayed
@@ -1378,7 +1422,8 @@
   "Render a branch, possibly performing an action on it in the process. Note that this function will
   call the branch's agent to potentially modify the branch."
   [{:keys [params]
-    {:keys [project-name branch-name new-action new-action-param confirm-kill force-kill]} :params
+    {:keys [project-name branch-name new-action new-action-param confirm-kill force-kill
+            updating-view cancel-kill-for-view cancel-update-view]} :params
     :as request}]
   (letfn [(launch-process [branch]
             (log/info "Starting action" new-action "on branch" branch-name "of project"
@@ -1390,6 +1435,7 @@
                             ;; pass it the appropriate parameters. Otherwise, return it as is.
                             (-> gh/git-actions
                                 (get (keyword new-action))
+                                (get :command)
                                 (#(if (function? %)
                                     (% {:msg new-action-param, :user (-> request :session :user)})
                                     %)))
@@ -1458,11 +1504,22 @@
                     "start action" new-action "and was prevented from doing so.")
           (render-branch-page @branch-agent request))
 
-        ;; If this is a cancel action, kill the existing process and redirect to the branch page:
+        ;; If this is a cancel process action, kill the existing process. If the cancelled process
+        ;; was an update of a view, then render the "close tab" page; otherwise redirect to the
+        ;; branch page:
         (= new-action "cancel-DROID-process")
         (do
           (send-off branch-agent branches/kill-process (-> request :session :user))
-          (redirect this-url))
+          (if updating-view
+            (render-close-tab request)
+            (redirect this-url)))
+
+        ;; If this is a cancel action related to a view; i.e., if when asked to confirm whether she
+        ;; really wants to update the view, or kill an existing process so as to update the view,
+        ;; the user changes her mind and clicks on the "do nothing" button, then just render the
+        ;; "close this tab" page:
+        (or cancel-update-view cancel-kill-for-view)
+        (render-close-tab request)
 
         ;; If there is no action to be performed, or the action is unrecognised, then just render
         ;; the page using the existing branch data:
@@ -1487,16 +1544,18 @@
             (send-off branch-agent branches/kill-process (-> request :session :user))
             (when (= new-action "git-push")
               (send-off branches/local-branches branches/store-creds project-name branch-name
-                        request))
+                        request)
+              (await branches/local-branches))
             (send-off branch-agent launch-process)
-            ;; TODO: this sleep should not be needed; figure out how to do without it:
-            (Thread/sleep 3000)
             (when (= new-action "git-push")
-              (send-off branch-agent branches/remove-creds project-name branch-name))
+              ;; TODO: this sleep should not be needed; figure out how to do without it:
+              (Thread/sleep 3000)
+              (send-off branches/local-branches branches/remove-creds project-name branch-name))
             (-> this-url
                 ;; Remove the force kill and new action parameters:
                 (str "?" (-> params
                              (dissoc :force-kill :new-action :new-action-param)
+                             (assoc :process-killed 1)
                              (params-to-query-str)))
                 (redirect)))
 
@@ -1523,12 +1582,13 @@
         (do
           (when (= new-action "git-push")
             (send-off branches/local-branches branches/store-creds project-name branch-name
-                      request))
+                      request)
+            (await branches/local-branches))
           (send-off branch-agent launch-process)
-          ;; TODO: this sleep should not be needed; figure out how to do without it:
-          (Thread/sleep 3000)
           (when (= new-action "git-push")
-            (send-off branch-agent branches/remove-creds project-name branch-name))
+            ;; TODO: this sleep should not be needed; figure out how to do without it:
+            (Thread/sleep 3000)
+            (send-off branches/local-branches branches/remove-creds project-name branch-name))
           (-> this-url
               ;; Remove the new action params so that the user will not be able to launch the action
               ;; again by hitting his browser's refresh button by mistake:
