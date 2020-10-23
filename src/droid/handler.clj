@@ -78,6 +78,7 @@
 
 (defroutes app-routes
   (GET "/" [] html/render-index)
+  (GET "/just_logged_in" [] html/just-logged-in)
   (POST "/github_webhook" [] html/render-github-webook-response)
   (GET "/:project-name" [] html/render-project)
   (GET "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)
@@ -102,7 +103,9 @@
          :scopes           ["user:email public_repo"]
          :launch-uri       "/oauth2/github"
          :redirect-uri     "/oauth2/github/callback"
-         :landing-uri      "/"}})
+         :landing-uri      "/just_logged_in"
+         ;;:redirect-handler "/"
+         }})
       (wrap-session
        {:store db/session-store})
       (wrap-defaults
