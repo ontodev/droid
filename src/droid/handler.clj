@@ -103,9 +103,7 @@
          :scopes           ["user:email public_repo"]
          :launch-uri       "/oauth2/github"
          :redirect-uri     "/oauth2/github/callback"
-         :landing-uri      "/just_logged_in"
-         ;;:redirect-handler "/"
-         }})
+         :landing-uri      "/just_logged_in"}})
       (wrap-session
        {:store db/session-store})
       (wrap-defaults
