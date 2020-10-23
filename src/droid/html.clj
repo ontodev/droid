@@ -491,7 +491,6 @@
     {:keys [just-logged-out rebuild-containers rebuild-launched reset really-reset]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
-  ;;(clojure.pprint/pprint request)
   (log/debug "Processing request in index with params:" params)
   (letfn [(site-admin? []
             (some #(= login %) (get-config :site-admin-github-ids)))]
