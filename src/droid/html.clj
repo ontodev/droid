@@ -390,11 +390,11 @@
                         (do (spit tmp-infile query-string)
                             (cmd/run-command
                              ["bash" "-c"
-                              (str "exec ./" basename " < " tmp-infile " > " tmp-outfile)
+                              (str "./" basename " < " tmp-infile " > " tmp-outfile)
                               :dir dirname :env cgi-input-env]
                              timeout branch-contents))
                         (cmd/run-command
-                         ["bash" "-c" (str "exec ./" basename " > " tmp-outfile)
+                         ["bash" "-c" (str "./" basename " > " tmp-outfile)
                           :dir dirname :env cgi-input-env]
                          timeout branch-contents))
           ;; We expect a blank line separating the response's header and body:
@@ -473,6 +473,17 @@
                   (get (keyword branch-name))
                   (send #(assoc % :command basename :action basename)))
               (redirect branch-url))))))))
+
+(defn just-logged-in
+  "After logging into DROID a user is directed here, which in turn redirects the user either to the
+  page she was previously on, or if that is unknown, to the index page."
+  [{:keys [headers] :as request}]
+  (let [{host "host", referer "referer"} headers
+        pattern (re-pattern (str "https?://" host "/(.+)"))
+        rel-url (-> (and referer host (re-matches pattern referer))
+                    (second)
+                    (#(when % (string/replace % #"\?.+$" ""))))]
+    (redirect (or rel-url "/"))))
 
 (defn render-index
   "Render the index page"
@@ -919,7 +930,7 @@
                        a2h-exit-code] (do (log/debug "Colourizing console using ansi2html ...")
                                           (cmd/run-command
                                            ["bash" "-c"
-                                            (str "exec ansi2html -i < console.txt > console.html")
+                                            (str "ansi2html -i < console.txt > console.html")
                                             :dir pwd]))
                       colourized-console (if (not= @a2h-exit-code 0)
                                            (do (log/error "Unable to colourize console.")
@@ -1279,6 +1290,9 @@
                                 project-name "for user" (-> request :session :user :login))
                       (let [[process exit-code]
                             (cmd/run-command ["bash" "-c"
+                                              ;; `exec` is needed here to prevent the make process from
+                                              ;; detaching from the parent (since that would make it
+                                              ;; difficult to destroy later).
                                               (str "exec make " view-path
                                                    " > " (get-temp-dir project-name branch-name)
                                                    "/console.txt 2>&1")

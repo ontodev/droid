@@ -318,10 +318,10 @@
                           (str "https://github.com/" org "/" repo) branch-name
                           :dir (get-workspace-dir project-name)]
                          ["bash" "-c"
-                          (str "exec grep '.git-credentials' .gitignore || "
+                          (str "grep -qs '.git-credentials' .gitignore || "
                                "echo '.git-credentials' >> .gitignore")
                           :dir cloned-branch-dir]
-                         ["bash" "-c" (str "exec git config credential.helper "
+                         ["bash" "-c" (str "git config credential.helper "
                                            "'store --file=.git-credentials'")
                           :dir cloned-branch-dir]
                          ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]])
@@ -352,11 +352,11 @@
                           (str "https://github.com/" org "/" repo) branch-name
                           :dir (get-workspace-dir project-name)]
                          ["bash" "-c"
-                          (str "exec grep '.git-credentials' .gitignore || "
+                          (str "grep -qs '.git-credentials' .gitignore || "
                                "echo '.git-credentials' >> .gitignore")
                           :dir new-branch-dir]])
       (store-creds all-branches project-name branch-name request)
-      (cmd/run-commands [["bash" "-c" (str "exec git config credential.helper "
+      (cmd/run-commands [["bash" "-c" (str "git config credential.helper "
                                            "'store --file=.git-credentials'")
                           :dir new-branch-dir]
                          ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
