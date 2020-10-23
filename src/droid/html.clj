@@ -194,7 +194,8 @@
                         [:a {:href (-> remote
                                        (string/split #"/")
                                        (last)
-                                       (#(str "https://github.com/" org "/" repo "/tree/" %)))}
+                                       (#(str "https://github.com/" org "/" repo "/tree/" %)))
+                             :target "__blank"}
                          remote])]
 
     (send-off branch-agent branches/refresh-local-branch)
@@ -242,7 +243,8 @@
 
         render-pr-link #(let [pr-url (:pull-request %)]
                           (when-not (nil? pr-url)
-                            [:a {:href pr-url} "#" (-> pr-url (string/split #"/") (last))]))
+                            [:a {:href pr-url :target "__blank"}
+                             "#" (-> pr-url (string/split #"/") (last))]))
 
         render-local-branch-row (fn [branch-name]
                                   (when branch-name
@@ -274,7 +276,8 @@
                                       [:td [:a {:href (->> remote-branch
                                                            :name
                                                            (str "https://github.com/" org "/" repo
-                                                                "/tree/"))}
+                                                                "/tree/"))
+                                                :target "__blank"}
                                             (:name remote-branch)]]
                                       [:td (render-pr-link remote-branch)]
                                       [:td]]))]
@@ -1207,7 +1210,17 @@
                   branch-name]
         :content [:div
                   [:div
-                   [:p {:class "mt-n2"} (branch-status-summary project-name branch-name)]
+                   [:p {:class "mt-n2"}
+                    (branch-status-summary project-name branch-name)
+                    (let [pr-url (->> @branches/remote-branches
+                                      (#(get % (keyword project-name)))
+                                      (filter #(= branch-name (:name %)))
+                                      (first)
+                                      :pull-request)]
+                      (when pr-url
+                        [:span " &ndash; pull request "
+                         [:a {:href pr-url :target "__blank"}
+                          "#" (-> pr-url (string/split #"/") (last))]]))]
 
                    [:hr {:class "line1"}]
 
