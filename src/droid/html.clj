@@ -57,7 +57,7 @@
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session] :as request}
-   {:keys [status headers title heading script content]
+   {:keys [status headers title heading script content auto-refresh]
     :as response
     :or {status 200
          headers default-html-headers
@@ -71,6 +71,10 @@
     [:head
      [:meta {:charset "utf-8"}]
      [:meta {:name "viewport" :content "width=device-width, initial-scale=1, shrink-to-fit=no"}]
+     (let [{:keys [interval anchor]} auto-refresh]
+       (when interval
+         [:meta {:http-equiv "refresh", :content (str interval (when anchor
+                                                                 (str "; " anchor)))}]))
      [:link
       {:rel "stylesheet"
        :href "https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
@@ -757,8 +761,18 @@
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
   [{:keys [branch-name project-name run-time exit-code cancelled console] :as branch}
-   {:keys [updating-view] :as params}]
-  (let [branch-url (str "/" project-name "/branches/" branch-name)]
+   {:keys [follow updating-view] :as params}]
+  (let [branch-url (str "/" project-name "/branches/" branch-name)
+        follow-span [:span {:class "col-sm-2"}
+                     [:a {:class "btn btn-success btn-sm"
+                          :href (str branch-url "?follow=1" (when updating-view
+                                                              "&updating-view=1") "#bottom")}
+                      "Follow console"]]
+        unfollow-span [:span {:class "col-sm-2"}
+                       [:a {:class "btn btn-success btn-sm"
+                            :href (str branch-url (when updating-view
+                                                    "?updating-view=1"))}
+                        "Unfollow console"]]]
     (cond
       ;; The last process was cancelled:
       cancelled
@@ -785,15 +799,18 @@
        [:span {:class "col-sm-2"} [:a {:class "btn btn-danger btn-sm"
                                        :href (str branch-url "?new-action=cancel-DROID-process"
                                                   (when updating-view "&updating-view=1"))}
-                                   "Cancel"]]]
+                                   "Cancel"]]
+       (if follow unfollow-span follow-span)]
 
       ;; The last process completed successfully:
       (= 0 @exit-code)
-      [:p {:class "alert alert-success"} "Success"]
+      [:p {:class "alert alert-success mr-3"} "Success"
+       (when follow unfollow-span)]
 
       ;; The last process completed unsuccessfully:
       :else
-      [:p {:class "alert alert-danger"} (str "ERROR: Exit code " @exit-code)])))
+      [:p {:class "alert alert-danger mr-3"} (str "ERROR: Exit code " @exit-code)
+       (when follow unfollow-span)])))
 
 (defn- prompt-to-kill-for-action
   "Given some branch data, and a new action to run, render an alert box asking the user to confirm
@@ -973,7 +990,9 @@
        (when (<= 35 (->> console
                          (filter #(= \newline  %))
                          (count)))
-         (render-status-bar)))]))
+         (render-status-bar)))
+     ;; An anchor for the bottom of the page (used for auto-refresh):
+     [:a {:id "bottom"}]]))
 
 (defn- render-version-control-section
   "Render the Version Control section on the page for a branch"
@@ -1148,7 +1167,7 @@
   [{:keys [branch-name project-name Makefile] :as branch}
    {:keys [params]
     {:keys [view-path missing-view confirm-kill confirm-update updating-view process-killed
-            commit-msg commit-amend-msg pr-to-add]} :params
+            follow commit-msg commit-amend-msg pr-to-add]} :params
     :as request}]
   (let [this-url (str "/" project-name "/branches/" branch-name)]
     (cond
@@ -1190,6 +1209,11 @@
            (str this-url "?pr-added=")
            (redirect))
 
+      ;; The follow flag is set, but no process is currently running. In this case redirect back
+      ;; to the page with the flag unset:
+      (and follow (-> branch :exit-code (realized?)))
+      (-> this-url (str "?" (-> params (dissoc :follow :folval) (params-to-query-str))) (redirect))
+
       ;; A view has successfully finished updating a view. In this case redirect to the view.
       (and updating-view
            (-> branch :exit-code (realized?))
@@ -1202,6 +1226,17 @@
        request
        {:title (-> :projects (get-config) (get project-name) :project-title
                    (str " -- " branch-name))
+        :auto-refresh (when follow
+                        {:interval 5
+                         :anchor (-> this-url
+                                     (str "?" (-> params
+                                                  ;; A random parameter is needed to force the
+                                                  ;; browser to recognise the url as different from
+                                                  ;; the last one when refreshing; otherwise it will
+                                                  ;; maintain the previous location on the page.
+                                                  (assoc :folval (rand-int 100000))
+                                                  (params-to-query-str))
+                                          "#bottom"))})
         :heading [:div
                   [:a {:href "/"} "DROID"]
                   " / "
