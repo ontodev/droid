@@ -998,7 +998,8 @@
   "Render the Version Control section on the page for a branch"
   [{:keys [branch-name project-name] :as branch}
    {:keys [params]
-    {:keys [confirm-push get-commit-msg get-commit-amend-msg next-task pr-added]} :params
+    {:keys [confirm-push confirm-reset-hard get-commit-msg get-commit-amend-msg next-task
+            pr-added]} :params
     :as request}]
   (let [get-last-commit-msg #(let [[process exit-code]
                                    (cmd/run-command ["git" "show" "-s" "--format=%s"
@@ -1053,6 +1054,16 @@
                          :maxlength "500" :onClick "this.select();" :value (get-last-commit-msg)}]]]
          [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Amend"]
          [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
+
+       ;; If a reset --hard was requested, confirm that the user really wants to do it:
+       (not (nil? confirm-reset-hard))
+       [:div {:class "alert alert-danger m-1"}
+        [:div {:class "font-weight-bold mb-2"}
+         "Reset will delete all changes since the last commit. "
+         "This cannot be undone. Are you sure?"]
+        [:a {:href this-url :class "btn btn-sm btn-secondary"} "Cancel"]
+        [:a {:href (str this-url "?new-action=git-reset-hard") :class "ml-2 btn btn-sm btn-danger"}
+         "Reset branch"]]
 
        ;; If a push was requested, render a dialog showing the list of local commits that would be
        ;; pushed, and ask the user to confirm:
@@ -1159,7 +1170,12 @@
        [:td [:a {:href (str this-url (-> gh/git-actions :git-push :html-param))
                  :class (-> gh/git-actions :git-push :html-class (str " btn-block"))}
              (-> gh/git-actions :git-push :html-btn-label)]]
-       [:td "Push your latest local commit(s) to GitHub"]]]]))
+       [:td "Push your latest local commit(s) to GitHub"]]
+      [:tr
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-reset-hard :html-param))
+                 :class (-> gh/git-actions :git-reset-hard :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-reset-hard :html-btn-label)]]
+       [:td "Reset this branch to the last commit"]]]]))
 
 (defn- render-branch-page
   "Given some branch data, and a number of parameters related to an action or a view, construct the

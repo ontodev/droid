@@ -29,6 +29,10 @@
               :html-param "?confirm-push=1"
               :html-class "btn btn-sm btn-danger"
               :html-btn-label "Push"}
+   :git-reset-hard {:command "git reset --hard"
+                    :html-param "?confirm-reset-hard=1"
+                    :html-class "btn btn-sm btn-danger"
+                    :html-btn-label "Reset"}
    :git-commit {:command
                 (fn [{:keys [msg user] :as options}]
                   ;; A function to generate a command line string that will commit to git with the
