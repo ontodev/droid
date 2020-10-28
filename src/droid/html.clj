@@ -532,12 +532,21 @@
                        [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
                    [:div
                     [:h3 "Available Projects"]
-                    [:ul {:class ""}
+                    [:table
+                     {:class "table table-borderless table-sm"}
                      (for [project (get-config :projects)]
-                       [:li [:a {:href (->> project (key) (str "/"))}
-                             (->> project (val) :project-title)]
-                        [:span "&nbsp;"]
-                        (->> project (val) :project-description)])]
+                       [:tr
+                        [:td
+                         [:a
+                          {:style "font-weight: bold"
+                           :href (->> project (key) (str "/"))}
+                          (->> project (val) :project-title)]]
+                        [:td (->> project (val) :project-description)]
+                        [:td
+                         [:a
+                          {:href (str "https://github.com/"
+                                      (-> project val :github-coordinates))}
+                          (-> project val :github-coordinates)]]])]
                     (when (site-admin?)
                       [:div
                        [:h3 "Administration"]
