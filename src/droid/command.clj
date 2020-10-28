@@ -12,57 +12,84 @@
   "An agent that has no role other than to be used to serialize calls to the containers."
   (agent {} :error-mode :continue, :error-handler default-agent-error-handler))
 
-(defn rebuild-container-image
-  "Given a project name, if the project has been configured to use docker, and if the master
-  branch of the project has been checked out locally and contains a Dockerfile, then build
-  the image according to the instructions in the Dockerfile. The first argument,
-  `_`, exists to make it possible to serialize calls to this function through
-  an agent, but is otherwise unused."
+(defn- throw-process-exception
+  "Throw an exception using the error stream associated with the given process"
+  [process summary]
+  (-> summary (str ": " (sh/stream-to-string process :err)) (Exception.) (throw)))
+
+(defn- lookup-image
+  "Given a reference to an image, lookup its ID."
+  [image-ref]
+  (let [process (sh/proc "docker" "images" "-q" "-f" (str "reference=" image-ref))
+        exit-code (future (sh/exit-code process))]
+    (when-not (= @exit-code 0)
+      (throw-process-exception process "Error looking up image"))
+    ;; If there is no such image the output will be an empty string,
+    ;; otherwise it will be the image id. In the former case send it
+    ;; back as nil:
+    (-> (sh/stream-to-string process :out)
+        (string/trim-newline)
+        (#(if (empty? %)
+            (log/debug "No image found for" image-ref)
+            %)))))
+
+;; TODO: Call this function using send-off after creating and checking out a branch.
+(defn create-image-for-branch
+  "Create a new branch-specific image using the given reference as the argument to --tag"
+  [{:keys [branch-name project-name] :as branch} image-ref]
+  (log/info "Creating docker image" image-ref "...")
+  (let [command-base (str "docker build --tag " image-ref " .")
+        command ["bash" "-c" (str command-base " > " (get-temp-dir project-name branch-name)
+                                  "/console.txt 2>&1")
+                 :dir (get-workspace-dir project-name branch-name)]
+        process (apply sh/proc command)
+        exit-code (future (sh/exit-code process))]
+    (assoc branch
+           :action "create docker image"
+           :command command-base
+           :process process
+           :start-time (System/currentTimeMillis)
+           :cancelled false
+           :exit-code exit-code)))
+
+(defn rebuild-container-images
+  "Given a project name, if the project has been configured to use docker, pull the image specified
+  in the config file. Additionally, if there are Dockerfiles on any of the local branches, use them
+  to build branch-specific images. The first argument to this function, `_`, exists to make it
+  possible to serialize calls to this function through an agent, but is otherwise unused."
   [_ project-name]
   (let [ws-dir (get-workspace-dir project-name)
-        docker-config (-> :projects (get-config) (get project-name) :docker-config)
-        find-dockerfile-path (fn []
-                               (cond
-                                 ;; If there is a master branch that contains a Dockerfile, return
-                                 ;; the filesystem path for that branch:
-                                 (and (-> ws-dir (str "/master") (io/file) (.exists))
-                                      (-> ws-dir (str "/master/Dockerfile") (io/file) (.exists)))
-                                 (-> ws-dir (str "/master"))
-                                 ;; If there is a main branch that contains a Dockerfile, return
-                                 ;; the filesystem path for that branch:
-                                 (and (-> ws-dir (str "/main") (io/file) (.exists))
-                                      (-> ws-dir (str "/main/Dockerfile") (io/file) (.exists)))
-                                 (-> ws-dir (str "/main"))
-                                 ;; Otherwise, find another branch with a Dockerfile in it, and
-                                 ;; return the filesystem path for that branch:
-                                 :else
-                                 (do (log/debug "No master or main branch in project:"
-                                                project-name " has a Dockerfile")
-                                     (->> ws-dir
-                                          (io/file)
-                                          (file-seq)
-                                          (filter #(and (.isFile %)
-                                                        (= (.getName %) "Dockerfile")))
-                                          (map #(-> % (.getParent)))
-                                          (first)))))]
+        docker-config (-> :projects (get-config) (get project-name) :docker-config)]
     (if (not (:active? docker-config))
-      (log/debug "Docker configuration is inactive for project:" project-name)
-      (let [dockerfile-path (find-dockerfile-path)
-            command (if dockerfile-path
-                      ["docker" "build" "--tag" (:image docker-config) "." :dir dockerfile-path]
-                      ["docker" "pull" (:image docker-config)])
-            process (apply sh/proc command)
-            ;; Redirect process's stdout to our stdout:
-            output (future (sh/stream-to-out process :out))
-            exit-code (future (sh/exit-code process))]
-        (if dockerfile-path
-          (log/info "Building docker image" (:image docker-config) "using Dockerfile from"
-                    dockerfile-path)
-          (log/info "Retrieving docker image" (:image docker-config)))
-        (when-not (= @exit-code 0)
-          (throw (Exception. (str "Error while building/retrieving image: "
-                                  (sh/stream-to-string process :err)))))
-        (log/info "Docker image built for" (:image docker-config))))))
+      (log/info "Docker configuration is inactive for project:" project-name)
+      (do
+        ;; Pull the project-level image:
+        (let [command ["docker" "pull" (:image docker-config)]
+              process (apply sh/proc command)
+              ;; Redirect process's stdout to our stdout:
+              output (future (sh/stream-to-out process :out))
+              exit-code (future (sh/exit-code process))]
+          (log/info "Retrieving docker image" (:image docker-config))
+          (when-not (= @exit-code 0)
+            (throw (Exception. (str "Error while retrieving image: "
+                                    (sh/stream-to-string process :err)))))
+          (log/info "Docker image" (:image docker-config) "retrieved"))
+        ;; Now build any branch-specific images for branches that have a Dockerfile in their
+        ;; top-level directory, naming the image by joining the project and branch names with "-".
+        (doseq [branch-name (.list (io/file ws-dir))]
+          (when (-> ws-dir (str "/" branch-name "/Dockerfile") (io/file) (.exists))
+            (let [image-ref (str project-name "-" branch-name)
+                  dockerfile-dir (str ws-dir "/" branch-name)
+                  command ["docker" "build" "--tag" image-ref "." :dir dockerfile-dir]
+                  process (apply sh/proc command)
+                  ;; Redirect process's stdout to our stdout:
+                  output (future (sh/stream-to-out process :out))
+                  exit-code (future (sh/exit-code process))]
+              (log/info "Building docker image" image-ref "using Dockerfile in" dockerfile-dir)
+              (when-not (= @exit-code 0)
+                (throw (Exception. (str "Error while building image: "
+                                        (sh/stream-to-string process :err)))))
+              (log/info "Docker image" image-ref "built"))))))))
 
 (defn remove-container
   "Given a project and branch name, remove the corresponding container."
@@ -77,18 +104,26 @@
 
 (defn- container-for
   "Retrieves the container ID corresponding to the given branch if it exists, or if it doesn't
-  exist, creates one, starts it, and then returns the newly created container ID."
+  exist, creates one (along with its image if that also doesn't exist), starts it, and then returns
+  the newly created container ID."
   [{:keys [branch-name project-name] :as branch}]
   (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
 
-        throw-exception (fn [process summary]
-                          (-> summary
-                              (str ": " (sh/stream-to-string process :err))
-                              (Exception.)
-                              (throw)))
+        get-image (fn []
+                    ;; Get the image corresponding to this project and branch and return its ID.
+                    ;; Throw an exception if it doesn't exist.
+                    (let [branch-dir (get-workspace-dir project-name branch-name)
+                          image-id (if-not (-> branch-dir (str "/Dockerfile") (io/file) (.exists))
+                                     (-> docker-config :image (lookup-image))
+                                     (-> (str project-name "-" branch-name) (lookup-image)))]
+                      (when-not image-id
+                        (-> (str "Project-level docker image for " project-name
+                                 " does not exist") (Exception.) (throw)))
+                      ;; Return the image-id:
+                      image-id))
 
-        create-container (fn [container-name]
-                           ;; Creates a docker container encapsulating a bash shell:
+        create-container (fn [container-name image-id]
+                           ;; Creates a docker container encapsulating a shell:
                            (log/debug "Creating container for" container-name "with docker config:"
                                       docker-config)
                            (let [ws-dir (-> (get-workspace-dir project-name branch-name) (str "/"))
@@ -98,11 +133,11 @@
                                           "--name" container-name
                                           "--volume" (str ws-dir ":" (:workspace-dir docker-config))
                                           "--volume" (str tmp-dir ":" (:temp-dir docker-config))
-                                          (:image docker-config)
+                                          image-id
                                           (:shell-command docker-config))
                                  exit-code (future (sh/exit-code process))]
                              (when-not (= @exit-code 0)
-                               (throw-exception process "Error while creating container"))
+                               (throw-process-exception process "Error while creating container"))
                              ;; The container id can be retrieved from STDOUT:
                              (-> (sh/stream-to-string process :out)
                                  (string/trim-newline))))
@@ -113,7 +148,7 @@
                           (let [process (sh/proc "docker" "start" container-id-or-name)
                                 exit-code (future (sh/exit-code process))]
                             (when-not (= @exit-code 0)
-                              (throw-exception process "Error while starting container"))
+                              (throw-process-exception process "Error while starting container"))
                             ;; Return the container id (or name) that was passed in, for threading:
                             container-id-or-name))
 
@@ -121,7 +156,7 @@
                         (let [process (sh/proc "docker" "ps" "-q" "-f" (str "name=" container-name))
                               exit-code (future (sh/exit-code process))]
                           (when-not (= @exit-code 0)
-                            (throw-exception process "Error retrieving container"))
+                            (throw-process-exception process "Error retrieving container"))
                           ;; If there is no such container the output will be an empty string,
                           ;; otherwise it will be the container id. In the former case send it
                           ;; back as nil:
@@ -133,25 +168,25 @@
 
     ;; If the project is configured to use docker then return either its existing container's ID, or
     ;; create one, start it, and return its container ID:
-    (cond (nil? branch)
-          (log/debug "No branch specified; not looking for a container.")
+    (cond
+      (nil? branch)
+      (log/debug "No branch specified; not looking for a container.")
 
-          (not (:active? docker-config))
-          (log/debug "Docker configuration inactive. Not retrieving container.")
+      (not (:active? docker-config))
+      (log/debug "Docker configuration inactive. Not retrieving container.")
 
-          :else
-          (let [container-name (-> project-name (str "-" branch-name))]
-            (log/debug "Looking for an existing container for branch:" branch-name
-                       "in project:" project-name)
-            (or (get-container container-name)
-                ;; If there is no existing container for this branch, create one and start it:
-                (try
-                  (->> container-name (create-container) (start-container))
-                  (catch Exception e
-                    (log/error (.getMessage e))
-                    (when (and (->> :op-env (get-config) (= :dev))
-                               (->> :log-level (get-config) (= :debug)))
-                      (.printStackTrace e)))))))))
+      :else
+      (let [image-id (get-image)
+            container-name (-> project-name (str "-" branch-name))]
+        (or (get-container container-name)
+            ;; If there is no existing container for this branch, create one and start it:
+            (try
+              (-> container-name (create-container image-id) (start-container))
+              (catch Exception e
+                (log/error (.getMessage e))
+                (when (and (->> :op-env (get-config) (= :dev))
+                           (->> :log-level (get-config) (= :debug)))
+                  (.printStackTrace e)))))))))
 
 (defn local-to-docker
   "Given a command, a project name, and a branch name, replace the local workspace and temp

@@ -519,7 +519,7 @@
       (and (site-admin?) (not (nil? rebuild-containers)))
       (do
         (doseq [project-name (->> :projects (get-config) (keys) (map name))]
-          (send-off cmd/container-serializer cmd/rebuild-container-image project-name))
+          (send-off cmd/container-serializer cmd/rebuild-container-images project-name))
         (redirect "/?rebuild-launched=1"))
 
       ;; Otherwise just render the page:

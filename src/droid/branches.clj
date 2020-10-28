@@ -388,6 +388,10 @@
        (keys)
        (some #(= branch-name (name %)))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Code related to docker that needs to reference data in this module
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn remove-local-branch-containers
   "Remove all containers associated with managed branches."
   []
@@ -395,7 +399,7 @@
     (doseq [branch-name (-> @local-branches (get (keyword project-name)) (keys) (#(map name %)))]
       (cmd/remove-container project-name branch-name))))
 
-;; Build the container images (for branches that have been configured to use them) that will be
+;; Build the container images (for projects that have been configured to use docker) that will be
 ;; used to isolate the commands run on a branch:
 (doseq [project-name (->> @local-branches (keys) (map name))]
-  (cmd/rebuild-container-image nil project-name))
+  (cmd/rebuild-container-images nil project-name))
