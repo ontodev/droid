@@ -280,15 +280,19 @@
 
 (defn store-creds
   "Given the names of a project and of a branch within that project, and the login and token for the
-  current user's OAuth2 session, store these credentials in a file in the directory for the branch.
-  The all-branches parameter is required in order to serialize this function through an agent, but
-  it is simply passed through without modification."
+  current user's session, store these credentials in a file in the directory for the branch, or if
+  the :push-with-installation-token parameter is set to true in the config file, fetch an
+  installation token to use instead. Note that the all-branches parameter is required in order to
+  serialize this function through an agent, but it is simply passed through without modification."
   [all-branches project-name branch-name
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens}]
   (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
                        (string/split #"/"))
-        url (str "https://" login ":" token "@github.com/" org "/" repo)]
+        password (if (get-config :push-with-installation-token)
+                   (gh/get-github-app-installation-token project-name)
+                   token)
+        url (str "https://" login ":" password "@github.com/" org "/" repo)]
     (log/debug "Storing github credentials for" project-name "/" branch-name)
     (-> project-name (get-workspace-dir) (str "/" branch-name "/.git-credentials") (spit url))
     all-branches))
