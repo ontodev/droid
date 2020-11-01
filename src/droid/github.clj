@@ -180,9 +180,9 @@
         remote-branches (do
                           (log/debug "Querying GitHub repository" (str org "/" repo)
                                      "for list of remote branches of project" project-name
-                                     "using" (str login "'s") "credentials")
+                                     (when login
+                                       (str "using " login "'s credentials")))
                           (branches org repo {:oauth-token token}))]
-
     (if (= (type remote-branches) clojure.lang.PersistentHashMap)
       (do (log/error
            "Request to retrieve remote branches of project" project-name

@@ -26,17 +26,13 @@
 
 (defn refresh-remote-branches-for-project
   "Refresh the remote GitHub branches associated with the given project, using the given login and
-  OAuth2 token to authenticate the request to GitHub."
+  OAuth2 token to authenticate the request to GitHub. If no credentials are provided, fetch an
+  installation token from GitHub and use it instead"
   [all-current-branches project-name
    {{{:keys [login]} :user} :session,
     {{:keys [token]} :github} :oauth2/access-tokens}]
-  (if (or (nil? token) (nil? login))
-    ;; If the user is not authenticated, log it but just return the branch collection as is:
-    (do
-      (log/debug "Ignoring non-authenticated request to refresh remote branches")
-      all-current-branches)
-    ;; Otherwise perform the refresh:
-    (->> (initialize-remote-branches-for-project project-name login token)
+  (let [password (or token (gh/get-github-app-installation-token project-name))]
+    (->> (initialize-remote-branches-for-project project-name login password)
          (merge all-current-branches))))
 
 (def remote-branches

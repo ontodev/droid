@@ -400,7 +400,7 @@
           ;; We expect a blank line separating the response's header and body:
           split-response #(->> % (string/split-lines) (partition-by string/blank?))]
 
-      (log/info "Running CGI script" script-path "for at most" timeout "seconds")
+      (log/info "Running CGI script" script-path "for at most" timeout "milliseconds")
       (cond
         (= :timeout @exit-code)
         (let [error-msg (str "Timed out after " timeout "s waiting for CGI script: " script-path)]
@@ -620,11 +620,15 @@
                 :else
                 (do
                   ;; Create the branch, then refresh the local branch collection so that it shows up
-                  ;; on the page:
+                  ;; on the page, and also refresh the remote branches since the new local branch
+                  ;; will have been pushed to the remote upon creation:
                   (send-off branches/local-branches branches/create-local-branch project-name
                             branch-name branch-from request)
                   (send-off branches/local-branches branches/refresh-local-branches [project-name])
                   (await branches/local-branches)
+                  (send-off branches/remote-branches
+                            branches/refresh-remote-branches-for-project project-name request)
+                  (await branches/remote-branches)
                   (redirect this-url))))]
 
       ;; Perform an action based on the parameters present in the request:
@@ -1186,15 +1190,20 @@
       ;; and add its return value to the URL for redirection. Any problems are handled elsewhere.
       (and (not (read-only? request))
            (not (nil? pr-to-add)))
-      (->> pr-to-add
-           (gh/create-pr project-name
-                         branch-name
-                         (branches/get-remote-main project-name)
-                         (-> request :session :user :login)
-                         (-> request :oauth2/access-tokens :github :token))
-           (codec/url-encode)
-           (str this-url "?pr-added=")
-           (redirect))
+      (do
+        ;; Refresh the remote branches to make sure their PR info is up-to-date:
+        (send-off branches/remote-branches
+                  branches/refresh-remote-branches-for-project project-name request)
+        (await branches/remote-branches)
+        (->> pr-to-add
+             (gh/create-pr project-name
+                           branch-name
+                           (branches/get-remote-main project-name)
+                           (-> request :session :user :login)
+                           (-> request :oauth2/access-tokens :github :token))
+             (codec/url-encode)
+             (str this-url "?pr-added=")
+             (redirect)))
 
       ;; A view has successfully finished updating a view. In this case redirect to the view.
       (and updating-view
@@ -1625,12 +1634,13 @@
   (let [[{:keys [params]
           {:keys [project-name]} :params, {{:keys [login]} :user} :session
           :as request}
-         & rest] args]
+         & rest] args
+        remote-branches-contents (->> project-name (keyword) (get @branches/remote-branches))]
+
     ;; If the collection of remote branches is empty then refresh it:
-    (when (and (not (read-only? request))
-               (not (nil? project-name))
-               (->> project-name (keyword) (get @branches/remote-branches) (nil?) (not))
-               (->> project-name (keyword) (get @branches/remote-branches) (empty?)))
+    (when (and (not (nil? project-name))
+               (or (nil? remote-branches-contents) (empty? remote-branches-contents)))
+      (log/debug "Remote branches are empty. Refreshing ...")
       (send-off branches/remote-branches
                 branches/refresh-remote-branches-for-project project-name request)
       (await branches/remote-branches))
