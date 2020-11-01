@@ -1067,11 +1067,18 @@
        (and (= next-task "create-pr")
             (-> branch :action (= "git-push"))
             (-> branch :exit-code (deref) (= 0)))
-       (let [current-pr (->> @branches/remote-branches
-                             (#(get % (keyword project-name)))
-                             (filter #(= branch-name (:name %)))
-                             (first)
-                             :pull-request)]
+       (let [current-pr
+             (do
+               ;; Refresh the remote branches to make sure their PR info is up-to-date before
+               ;; retrieving the PR info for the branch:
+               (send-off branches/remote-branches
+                         branches/refresh-remote-branches-for-project project-name request)
+               (await branches/remote-branches)
+               (->> @branches/remote-branches
+                    (#(get % (keyword project-name)))
+                    (filter #(= branch-name (:name %)))
+                    (first)
+                    :pull-request))]
          (cond
            ;; If this is the master/main branch, then PRs aren't relevant:
            (or (= branch-name "master") (= branch-name "main"))
@@ -1190,20 +1197,15 @@
       ;; and add its return value to the URL for redirection. Any problems are handled elsewhere.
       (and (not (read-only? request))
            (not (nil? pr-to-add)))
-      (do
-        ;; Refresh the remote branches to make sure their PR info is up-to-date:
-        (send-off branches/remote-branches
-                  branches/refresh-remote-branches-for-project project-name request)
-        (await branches/remote-branches)
-        (->> pr-to-add
-             (gh/create-pr project-name
-                           branch-name
-                           (branches/get-remote-main project-name)
-                           (-> request :session :user :login)
-                           (-> request :oauth2/access-tokens :github :token))
-             (codec/url-encode)
-             (str this-url "?pr-added=")
-             (redirect)))
+      (->> pr-to-add
+           (gh/create-pr project-name
+                         branch-name
+                         (branches/get-remote-main project-name)
+                         (-> request :session :user :login)
+                         (-> request :oauth2/access-tokens :github :token))
+           (codec/url-encode)
+           (str this-url "?pr-added=")
+           (redirect))
 
       ;; A view has successfully finished updating a view. In this case redirect to the view.
       (and updating-view
@@ -1496,7 +1498,20 @@
                        :process process
                        :start-time (System/currentTimeMillis)
                        :cancelled false
-                       :exit-code exit-code))))]
+                       :exit-code exit-code))))
+
+          (launch-process-with-creds [branch-agent]
+            ;; Stores credentials to a temporary file before passing the new-action specified in the
+            ;; request to the given branch agent. Once the action is done the creds are removed.
+            (send-off branches/local-branches branches/store-creds project-name branch-name
+                      request)
+            (await branches/local-branches)
+            (send-off branch-agent launch-process)
+            ;; In addition to awaiting for the branch agent, we must ensure that the process is
+            ;; complete before removing the credentials file:
+            (await branch-agent)
+            (-> @branch-agent :exit-code (deref))
+            (send-off branches/local-branches branches/remove-creds project-name branch-name))]
 
     (log/debug "Processing request in hit-branch with params:" params)
     (let [branch-key (keyword branch-name)
@@ -1574,15 +1589,9 @@
           (not (nil? force-kill))
           (do
             (send-off branch-agent branches/kill-process (-> request :session :user))
-            (when (= new-action "git-push")
-              (send-off branches/local-branches branches/store-creds project-name branch-name
-                        request)
-              (await branches/local-branches))
-            (send-off branch-agent launch-process)
-            (when (= new-action "git-push")
-              ;; TODO: this sleep should not be needed; figure out how to do without it:
-              (Thread/sleep 3000)
-              (send-off branches/local-branches branches/remove-creds project-name branch-name))
+            (if (= new-action "git-push")
+              (launch-process-with-creds branch-agent)
+              (send-off branch-agent launch-process))
             (-> this-url
                 ;; Remove the force kill and new action parameters:
                 (str "?" (-> params
@@ -1612,15 +1621,9 @@
         ;; store the user credentials first and then remove them afterwards.
         :else
         (do
-          (when (= new-action "git-push")
-            (send-off branches/local-branches branches/store-creds project-name branch-name
-                      request)
-            (await branches/local-branches))
-          (send-off branch-agent launch-process)
-          (when (= new-action "git-push")
-            ;; TODO: this sleep should not be needed; figure out how to do without it:
-            (Thread/sleep 3000)
-            (send-off branches/local-branches branches/remove-creds project-name branch-name))
+          (if (= new-action "git-push")
+            (launch-process-with-creds branch-agent)
+            (send-off branch-agent launch-process))
           (-> this-url
               ;; Remove the new action params so that the user will not be able to launch the action
               ;; again by hitting his browser's refresh button by mistake:
