@@ -135,13 +135,11 @@
 
                             (some #(= (str href "-" title) %) git-actions)
                             (let [git-keyword (-> href (str "-" title) (keyword))]
-                              [:div
-                               [:span {:class "mr-1"} text]
-                               [tag
-                                {:href (-> gh/git-actions (get git-keyword) :html-param)
-                                 :class (-> gh/git-actions (get git-keyword) :html-class
-                                            (str " mt-1 mb-1 action-btn"))}
-                                (-> gh/git-actions (get git-keyword) :html-btn-label)]])
+                              [tag
+                               {:href (-> gh/git-actions (get git-keyword) :html-param)
+                                :class (-> gh/git-actions (get git-keyword) :html-class
+                                           (str " mt-1 mb-1 action-btn"))}
+                               (-> gh/git-actions (get git-keyword) :html-btn-label)])
 
                             (or (some #(= href %) (set/union file-views dir-views))
                                 (some #(-> href (normalize-exec-view) (= %)) exec-views))
