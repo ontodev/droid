@@ -1642,6 +1642,7 @@
 
     ;; If the collection of remote branches is empty then refresh it:
     (when (and (not (nil? project-name))
+               (->> :projects (get-config) (keys) (some #(= % project-name)))
                (or (nil? remote-branches-contents) (empty? remote-branches-contents)))
       (log/debug "Remote branches are empty. Refreshing ...")
       (send-off branches/remote-branches
