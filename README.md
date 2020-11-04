@@ -76,6 +76,9 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
  :site-admin-github-ids {:dev #{"user1" "user2"}
                          :test #{"user1" "user2"}
                          :prod #{"user1" "user2"}}
+ :github-app-id {:dev 55555, :test 66666, :prod 77777}
+ :pem-file "FILE.pem"
+ :push-with-installation-token false
  :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
  :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
  :html-body-colors "bg-white"}
@@ -90,6 +93,9 @@ where:
 - `:server-port` is the port that the server will listen on.
 - `:secure-site` is either true or false and indicates whether the server will use the `https://` or `http://` protocol.
 - `:site-admin-github-ids` is a hash-set of github userids who are considered site administrators.
+- `:github-app-id` is the ID of the GitHub App to use for authentication
+- `:pem-file` is the file, relative to DROID's root directory, containing the private key to use for authenticating with the GitHub App
+- `:push-with-installation-token` If set to true, then pushes to GitHub will use an installation token provided through the GitHub App for the repo. Otherwise pushes will use the user's user access token (which is also authenticated via the GitHub App).
 - `:cgi-timeout` is the maximum number of milliseconds that a CGI script is allowed to run.
 - `:log-file` is the file (relative to DROID's root directory) where the log will be written to. If it is nil then log is written to `STDERR`.
 - `:html-body-colors` is a valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color) to use for DROID's pages.

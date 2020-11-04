@@ -1,11 +1,49 @@
 (ns droid.github
   (:require [clojure.string :as string]
+            [cheshire.core :as cheshire]
+            [clj-jwt.core  :refer [jwt sign to-str]]
+            [clj-jwt.key   :refer [private-key]]
+            [clj-time.core :refer [now plus minutes]]
+            [org.httpkit.client :as http]
             [ring.util.codec :as codec]
             [tentacles.core :refer [api-call]]
             [tentacles.pulls :refer [create-pull pulls]]
             [tentacles.repos :refer [branches]]
             [droid.config :refer [get-config]]
             [droid.log :as log]))
+
+(defn get-github-app-installation-token
+  "Fetch a GitHub App installation token corresponding to the given project from GitHub"
+  [project-name]
+  (log/debug "Fetching GitHub App installation token for" project-name "from GitHub")
+  (let [payload {:iss (-> :github-app-id (get-config) (str))
+                 :exp (-> (now) (plus (minutes 10)))
+                 :iat (now)}
+        pem (-> :pem-file (get-config) (private-key))
+        json-web-token (-> payload jwt (sign :RS256 pem) to-str)
+        project-org (-> :projects (get-config) (get project-name) (get :github-coordinates)
+                        (string/split #"/") (first))
+        inst-id (let [{:keys [body status] :as resp}
+                      @(http/get "https://api.github.com/app/installations"
+                                 {:headers {"Authorization" (str "Bearer " json-web-token)}})]
+                  (when (or (< status 200) (> status 299))
+                    (throw
+                     (Exception.
+                      (str "Failed to get installations info from GitHub: " resp))))
+                  (->> body (#(cheshire/parse-string % true))
+                       (filter #(-> % :account :login (= project-org))) (first) :id))
+        inst-token (let [{:keys [body status] :as resp}
+                         @(http/post (str "https://api.github.com/app/installations/" inst-id
+                                          "/access_tokens")
+                                     {:headers {"Authorization" (str "Bearer " json-web-token)}})]
+                     (when (or (< status 200) (> status 299))
+                       (throw
+                        (Exception.
+                         (str "Failed to get installation token from GitHub: " resp))))
+                     ;; Note that the token has further fields, including an expiry time, which
+                     ;; we throw away since we will be deleting the token immediately:
+                     (-> body (cheshire/parse-string true) :token))]
+    inst-token))
 
 (def git-actions
   "The version control operations available in DROID"
@@ -142,9 +180,9 @@
         remote-branches (do
                           (log/debug "Querying GitHub repository" (str org "/" repo)
                                      "for list of remote branches of project" project-name
-                                     "using" (str login "'s") "credentials")
+                                     (when login
+                                       (str "using " login "'s credentials")))
                           (branches org repo {:oauth-token token}))]
-
     (if (= (type remote-branches) clojure.lang.PersistentHashMap)
       (do (log/error
            "Request to retrieve remote branches of project" project-name

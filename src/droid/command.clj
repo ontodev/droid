@@ -133,25 +133,17 @@
 
     ;; If the project is configured to use docker then return either its existing container's ID, or
     ;; create one, start it, and return its container ID:
-    (cond (nil? branch)
-          (log/debug "No branch specified; not looking for a container.")
-
-          (not (:active? docker-config))
-          (log/debug "Docker configuration inactive. Not retrieving container.")
-
-          :else
-          (let [container-name (-> project-name (str "-" branch-name))]
-            (log/debug "Looking for an existing container for branch:" branch-name
-                       "in project:" project-name)
-            (or (get-container container-name)
-                ;; If there is no existing container for this branch, create one and start it:
-                (try
-                  (->> container-name (create-container) (start-container))
-                  (catch Exception e
-                    (log/error (.getMessage e))
-                    (when (and (->> :op-env (get-config) (= :dev))
-                               (->> :log-level (get-config) (= :debug)))
-                      (.printStackTrace e)))))))))
+    (when (and branch (:active? docker-config))
+      (let [container-name (-> project-name (str "-" branch-name))]
+        (or (get-container container-name)
+            ;; If there is no existing container for this branch, create one and start it:
+            (try
+              (->> container-name (create-container) (start-container))
+              (catch Exception e
+                (log/error (.getMessage e))
+                (when (and (->> :op-env (get-config) (= :dev))
+                           (->> :log-level (get-config) (= :debug)))
+                  (.printStackTrace e)))))))))
 
 (defn local-to-docker
   "Given a command, a project name, and a branch name, replace the local workspace and temp
@@ -192,8 +184,6 @@
   arguments that will be sent to (me.raynes.conch.low-level/proc). If `timeout` has been specified,
   then the command will run for no more than the specified number of milliseconds."
   [command & [timeout {:keys [project-name branch-name] :as branch}]]
-  (log/debug "Request to run command:" (->> command (filter string?) (string/join " "))
-             "with timeout:" (or timeout "none"))
   (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
         container-id (container-for branch)
         ;; Looks in `command` (a vector of strings that has been passed to the outer function) for
@@ -251,6 +241,7 @@
                       (#(if timeout
                           (sh/exit-code % timeout)
                           (sh/exit-code %)))
+                      (#(do (when timeout (log/debug "Timeout is set:" timeout)) %))
                       (future))]
     (vector process exit-code)))
 
