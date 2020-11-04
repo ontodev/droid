@@ -17,6 +17,8 @@
   ([]
    ;; Right before shutting down the application do the following:
    (log/info "DROID shutting down.")
+   ;; TODO: instead of remove, do a stop/start if it is :test or :prod and maybe also add
+   ;; a configurable remove for :dev.
    (remove-local-branch-containers)
    (shutdown-agents))
 

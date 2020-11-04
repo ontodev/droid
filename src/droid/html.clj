@@ -342,7 +342,6 @@
     (render-401 request)
     (let [branch-key (keyword branch-name)
           project-key (keyword project-name)
-          branch-contents (->> @branches/local-branches project-key branch-key (deref))
           branch-url (str "/" project-name "/branches/" branch-name)
           dirname (-> script-path (io/file) (.getParent))
           basename (-> script-path (io/file) (.getName))
@@ -395,15 +394,16 @@
           [process
            exit-code] (if (= request-method :post)
                         (do (spit tmp-infile query-string)
-                            (cmd/run-command
-                             ["bash" "-c"
+                            (branches/run-branch-command
+                             ["sh" "-c"
                               (str "./" basename " < " tmp-infile " > " tmp-outfile)
                               :dir dirname :env cgi-input-env]
-                             timeout branch-contents))
-                        (cmd/run-command
-                         ["bash" "-c" (str "./" basename " > " tmp-outfile)
-                          :dir dirname :env cgi-input-env]
-                         timeout branch-contents))
+                             project-name branch-name timeout))
+                        (do
+                          (branches/run-branch-command
+                           ["sh" "-c" (str "./" basename " > " tmp-outfile)
+                            :dir dirname :env cgi-input-env]
+                           project-name branch-name timeout)))
           ;; We expect a blank line separating the response's header and body:
           split-response #(->> % (string/split-lines) (partition-by string/blank?))]
 
@@ -519,7 +519,10 @@
       (and (site-admin?) (not (nil? rebuild-containers)))
       (do
         (doseq [project-name (->> :projects (get-config) (keys) (map name))]
-          (send-off cmd/container-serializer cmd/rebuild-container-images project-name))
+          ;; We send the rebuild jobs through container-serializer so that they will run in the
+          ;; background one after another:
+          (send-off branches/container-serializer
+                    branches/rebuild-container-images project-name true true))
         (redirect "/?rebuild-launched=1"))
 
       ;; Otherwise just render the page:
@@ -630,7 +633,6 @@
                   ;; on the page:
                   (send-off branches/local-branches branches/create-local-branch project-name
                             branch-name branch-from request)
-                  (send-off branches/local-branches branches/refresh-local-branches [project-name])
                   (await branches/local-branches)
                   (redirect this-url))))]
 
@@ -748,6 +750,7 @@
                           [:div "&nbsp;"]
                           [:button {:type "submit" :class "btn btn-sm btn-success mr-2"}
                            "Create"]
+                          ;; TODO: Disable this for image builds
                           [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
                            "Cancel"]]]]])
 
@@ -957,8 +960,10 @@
               (if ansi-commands?
                 (let [[process
                        a2h-exit-code] (do (log/debug "Colourizing console using ansi2html ...")
+                                          ;; TODO: once we eliminate the ansi2html dependency, this
+                                          ;; command should run in the branch container.
                                           (cmd/run-command
-                                           ["bash" "-c"
+                                           ["sh" "-c"
                                             (str "ansi2html -i < console.txt > console.html")
                                             :dir pwd]))
                       colourized-console (if (not= @a2h-exit-code 0)
@@ -1011,10 +1016,10 @@
             pr-added]} :params
     :as request}]
   (let [get-last-commit-msg #(let [[process exit-code]
-                                   (cmd/run-command ["git" "show" "-s" "--format=%s"
-                                                     :dir (get-workspace-dir project-name
-                                                                             branch-name)]
-                                                    nil branch)]
+                                   (branches/run-branch-command
+                                    ["git" "show" "-s" "--format=%s"
+                                     :dir (get-workspace-dir project-name branch-name)]
+                                    project-name branch-name)]
                                (if-not (= 0 @exit-code)
                                  (do (log/error "Unable to retrieve previous commit message:"
                                                 (sh/stream-to-string process :err))
@@ -1022,11 +1027,11 @@
                                  (sh/stream-to-string process :out)))
 
         get-commits-to-push #(let [[process exit-code]
-                                   (cmd/run-command ["git" "log" "--branches" "--not" "--remotes"
-                                                     "--reverse" "--format=%s"
-                                                     :dir (get-workspace-dir project-name
-                                                                             branch-name)]
-                                                    nil branch)]
+                                   (branches/run-branch-command
+                                    ["git" "log" "--branches" "--not" "--remotes"
+                                     "--reverse" "--format=%s"
+                                     :dir (get-workspace-dir project-name branch-name)]
+                                    project-name branch-name)]
                                (if-not (= 0 @exit-code)
                                  (do (log/error "Unable to retrieve commit list:"
                                                 (sh/stream-to-string process :err))
@@ -1350,10 +1355,10 @@
                                            (conj (:exec-views %))))))
 
         ;; Runs `make -q` to see if the view is up to date:
-        up-to-date? #(let [[process exit-code] (cmd/run-command
+        up-to-date? #(let [[process exit-code] (branches/run-branch-command
                                                 ["make" "-q" view-path
                                                  :dir (get-workspace-dir project-name branch-name)]
-                                                nil @branch-agent)]
+                                                project-name branch-name)]
                        (or (= @exit-code 0) false))
 
         ;; Runs `make` (in the background) to rebuild the view, with output directed to the branch's
@@ -1362,15 +1367,16 @@
                       (log/info "Rebuilding view" view-path "from branch" branch-name "of project"
                                 project-name "for user" (-> request :session :user :login))
                       (let [[process exit-code]
-                            (cmd/run-command ["bash" "-c"
-                                              ;; `exec` is needed here to prevent the make process from
-                                              ;; detaching from the parent (since that would make it
-                                              ;; difficult to destroy later).
-                                              (str "exec make " view-path
-                                                   " > " (get-temp-dir project-name branch-name)
-                                                   "/console.txt 2>&1")
-                                              :dir (get-workspace-dir project-name branch-name)]
-                                             nil branch)]
+                            (branches/run-branch-command
+                             ["sh" "-c"
+                              ;; `exec` is needed here to prevent the make process from
+                              ;; detaching from the parent (since that would make it
+                              ;; difficult to destroy later).
+                              (str "exec make " view-path
+                                   " > " (get-temp-dir project-name branch-name)
+                                   "/console.txt 2>&1")
+                              :dir (get-workspace-dir project-name branch-name)]
+                             project-name branch-name)]
                         (assoc branch
                                :action view-path
                                :command (str "make " view-path)
@@ -1382,7 +1388,8 @@
         ;; Delivers an executable, possibly CGI-aware, script:
         deliver-exec-view #(let [script-path (-> (get-workspace-dir project-name branch-name)
                                                  (str "/" view-path))]
-                             (cond (not (cmd/executable? script-path @branch-agent))
+                             (cond (not (branches/path-executable?
+                                         script-path project-name branch-name))
                                    (let [error-msg (str script-path " is not executable")]
                                      (log/error error-msg)
                                      (render-4xx request 400 error-msg))
@@ -1529,8 +1536,8 @@
                             ;; Otherwise prefix it with "make ":
                             (str "make " new-action))
                   [process exit-code] (when-not (nil? command)
-                                        (cmd/run-command
-                                         ["bash" "-c"
+                                        (branches/run-branch-command
+                                         ["sh" "-c"
                                           ;; `exec` is needed here to prevent the make process from
                                           ;; detaching from the parent (since that would make it
                                           ;; difficult to destroy later).
@@ -1539,7 +1546,7 @@
                                            " > " (get-temp-dir project-name branch-name)
                                            "/console.txt 2>&1")
                                           :dir (get-workspace-dir project-name branch-name)]
-                                         nil branch))]
+                                         project-name branch-name))]
               (if (nil? command)
                 ;; If the command is nil just return the branch back unchanged:
                 branch
