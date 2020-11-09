@@ -407,7 +407,7 @@
           ;; We expect a blank line separating the response's header and body:
           split-response #(->> % (string/split-lines) (partition-by string/blank?))]
 
-      (log/info "Running CGI script" script-path "for at most" timeout "seconds")
+      (log/info "Running CGI script" script-path "for at most" timeout "milliseconds")
       (cond
         (= :timeout @exit-code)
         (let [error-msg (str "Timed out after " timeout "s waiting for CGI script: " script-path)]
@@ -630,10 +630,14 @@
                 :else
                 (do
                   ;; Create the branch, then refresh the local branch collection so that it shows up
-                  ;; on the page:
+                  ;; on the page, and also refresh the remote branches since the new local branch
+                  ;; will have been pushed to the remote upon creation:
                   (send-off branches/local-branches branches/create-local-branch project-name
                             branch-name branch-from request)
                   (await branches/local-branches)
+                  (send-off branches/remote-branches
+                            branches/refresh-remote-branches-for-project project-name request)
+                  (await branches/remote-branches)
                   (redirect this-url))))]
 
       ;; Perform an action based on the parameters present in the request:
@@ -1101,11 +1105,18 @@
        (and (= next-task "create-pr")
             (-> branch :action (= "git-push"))
             (-> branch :exit-code (deref) (= 0)))
-       (let [current-pr (->> @branches/remote-branches
-                             (#(get % (keyword project-name)))
-                             (filter #(= branch-name (:name %)))
-                             (first)
-                             :pull-request)]
+       (let [current-pr
+             (do
+               ;; Refresh the remote branches to make sure their PR info is up-to-date before
+               ;; retrieving the PR info for the branch:
+               (send-off branches/remote-branches
+                         branches/refresh-remote-branches-for-project project-name request)
+               (await branches/remote-branches)
+               (->> @branches/remote-branches
+                    (#(get % (keyword project-name)))
+                    (filter #(= branch-name (:name %)))
+                    (first)
+                    :pull-request))]
          (cond
            ;; If this is the master/main branch, then PRs aren't relevant:
            (or (= branch-name "master") (= branch-name "main"))
@@ -1558,7 +1569,20 @@
                        :process process
                        :start-time (System/currentTimeMillis)
                        :cancelled false
-                       :exit-code exit-code))))]
+                       :exit-code exit-code))))
+
+          (launch-process-with-creds [branch-agent]
+            ;; Stores credentials to a temporary file before passing the new-action specified in the
+            ;; request to the given branch agent. Once the action is done the creds are removed.
+            (send-off branches/local-branches branches/store-creds project-name branch-name
+                      request)
+            (await branches/local-branches)
+            (send-off branch-agent launch-process)
+            ;; In addition to awaiting for the branch agent, we must ensure that the process is
+            ;; complete before removing the credentials file:
+            (await branch-agent)
+            (-> @branch-agent :exit-code (deref))
+            (send-off branches/local-branches branches/remove-creds project-name branch-name))]
 
     (log/debug "Processing request in hit-branch with params:" params)
     (let [branch-key (keyword branch-name)
@@ -1636,15 +1660,9 @@
           (not (nil? force-kill))
           (do
             (send-off branch-agent branches/kill-process (-> request :session :user))
-            (when (= new-action "git-push")
-              (send-off branches/local-branches branches/store-creds project-name branch-name
-                        request)
-              (await branches/local-branches))
-            (send-off branch-agent launch-process)
-            (when (= new-action "git-push")
-              ;; TODO: this sleep should not be needed; figure out how to do without it:
-              (Thread/sleep 3000)
-              (send-off branches/local-branches branches/remove-creds project-name branch-name))
+            (if (= new-action "git-push")
+              (launch-process-with-creds branch-agent)
+              (send-off branch-agent launch-process))
             (-> this-url
                 ;; Remove the force kill and new action parameters:
                 (str "?" (-> params
@@ -1674,15 +1692,9 @@
         ;; store the user credentials first and then remove them afterwards.
         :else
         (do
-          (when (= new-action "git-push")
-            (send-off branches/local-branches branches/store-creds project-name branch-name
-                      request)
-            (await branches/local-branches))
-          (send-off branch-agent launch-process)
-          (when (= new-action "git-push")
-            ;; TODO: this sleep should not be needed; figure out how to do without it:
-            (Thread/sleep 3000)
-            (send-off branches/local-branches branches/remove-creds project-name branch-name))
+          (if (= new-action "git-push")
+            (launch-process-with-creds branch-agent)
+            (send-off branch-agent launch-process))
           (-> this-url
               ;; Remove the new action params so that the user will not be able to launch the action
               ;; again by hitting his browser's refresh button by mistake:
@@ -1696,12 +1708,14 @@
   (let [[{:keys [params]
           {:keys [project-name]} :params, {{:keys [login]} :user} :session
           :as request}
-         & rest] args]
+         & rest] args
+        remote-branches-contents (->> project-name (keyword) (get @branches/remote-branches))]
+
     ;; If the collection of remote branches is empty then refresh it:
-    (when (and (not (read-only? request))
-               (not (nil? project-name))
-               (->> project-name (keyword) (get @branches/remote-branches) (nil?) (not))
-               (->> project-name (keyword) (get @branches/remote-branches) (empty?)))
+    (when (and (not (nil? project-name))
+               (->> :projects (get-config) (keys) (some #(= % project-name)))
+               (or (nil? remote-branches-contents) (empty? remote-branches-contents)))
+      (log/debug "Remote branches are empty. Refreshing ...")
       (send-off branches/remote-branches
                 branches/refresh-remote-branches-for-project project-name request)
       (await branches/remote-branches))
