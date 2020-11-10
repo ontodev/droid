@@ -20,19 +20,35 @@
 (def default-html-headers
   {"Content-Type" "text/html"})
 
+(defn- image-rebuilding?
+  "Returns true if the given branch is rebuilding a docker image"
+  [project-name branch-name]
+  (let [this-branch (when branch-name
+                      (-> @branches/local-branches (get (keyword project-name))
+                          (get (keyword branch-name)) (deref)))
+        action (:action this-branch)
+        exit-code (:exit-code this-branch)]
+    (and this-branch
+         (= action "create-docker-image")
+         (not (realized? exit-code)))))
+
 (defn- read-only?
-  "Returns true if the given user has read-only access to the site."
-  [{{:keys [project-name]} :params
-    {{:keys [login project-permissions]} :user} :session}]
-  ;; Access will be read-only in the following cases:
-  ;; - The user is logged out
-  ;; - The user does not have write or admin permission on the requested project,
-  ;;   and is not a site admin.
-  (let [this-project-permissions (->> project-name (keyword) (get project-permissions))]
-    (or (nil? login)
-        (and (not= this-project-permissions "write")
-             (not= this-project-permissions "admin")
-             (not-any? #(= login %) (get-config :site-admin-github-ids))))))
+  "Returns true if the given user has read-only access to the site.
+   Access will be read-only in the following cases:
+   - The user is logged out
+   - The user does not have write or admin permission on the requested project,
+     and is not a site admin.
+   - The image for the given branch is currently being rebuilt."
+  ([project-name branch-name]
+   (image-rebuilding? project-name branch-name))
+  ([{{:keys [project-name branch-name]} :params
+     {{:keys [login project-permissions]} :user} :session}]
+   (let [this-project-permissions (->> project-name (keyword) (get project-permissions))]
+     (or (image-rebuilding? project-name branch-name)
+         (nil? login)
+         (and (not= this-project-permissions "write")
+              (not= this-project-permissions "admin")
+              (not-any? #(= login %) (get-config :site-admin-github-ids)))))))
 
 (defn- login-status
   "Render the user's login status."
@@ -754,7 +770,6 @@
                           [:div "&nbsp;"]
                           [:button {:type "submit" :class "btn btn-sm btn-success mr-2"}
                            "Create"]
-                          ;; TODO: Disable this for image builds
                           [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
                            "Cancel"]]]]])
 
@@ -812,7 +827,11 @@
                                        :href (str branch-url (when updating-view
                                                                "?updating-view=1"))}
                                    "Refresh"]]
-       [:span {:class "col-sm-2"} [:a {:class "btn btn-danger btn-sm"
+       [:span {:class "col-sm-2"} [:a {:class (str "btn btn-danger btn-sm"
+                                                   ;; Disable the cancel button if the user has
+                                                   ;; read-only access:
+                                                   (when (read-only? project-name branch-name)
+                                                     " disabled"))
                                        :href (str branch-url "?new-action=cancel-DROID-process"
                                                   (when updating-view "&updating-view=1"))}
                                    "Cancel"]]
@@ -927,10 +946,12 @@
      [:span {:class "text-monospace font-weight-bold"} view-path]
      [:span " does not exist in branch "]
      [:span {:class "text-monospace font-weight-bold"} branch-name]
-     [:span ". Ask someone with write access to this project to build it for you."]]]
+     (if (image-rebuilding? project-name branch-name)
+       [:span ". You cannot build it while the branch's image is being rebuilt. Try again later."]
+       [:span ". Ask someone with write access to this project to build it for you."])]]
    [:div {:class "pt-2"}
     [:a {:class "btn btn-sm btn-primary"
-         :href (str "/" project-name "/branches/" branch-name)} "Dismiss"]]])
+         :href (str "/" project-name "/branches/" branch-name "?close-tab=1")} "Dismiss"]]])
 
 (defn- render-console
   "Given some branch data, and a number of parameters related to an action or a view, render
@@ -1300,28 +1321,27 @@
 
                    [:hr {:class "line1"}]
 
+                   (when (image-rebuilding? project-name branch-name)
+                     [:p {:class "alert alert-primary"}
+                      "The image for this branch is currently being built. Access to this branch "
+                      "will be read-only until it is complete."])
                    (when process-killed
                      [:p {:class "alert alert-warning"}
                       "Process killed. If the process was being monitored in a different tab, "
                       "you should now close that tab."])
 
-                   (if (or confirm-update confirm-kill updating-view)
+                   (if (or confirm-update confirm-kill updating-view missing-view)
                      ;; If the confirm-update, confirm-kill, or updating-view flags have been set,
                      ;; then in the former case, render an update prompt. In the latter two cases,
                      ;; the parameters will be handled by the render-console function:
-                     (if confirm-update
-                       (prompt-to-update-view branch params)
-                       (render-console branch params))
+                     (cond confirm-update (prompt-to-update-view branch params)
+                           missing-view (notify-missing-view branch view-path)
+                           :else (render-console branch params))
                      ;; Otherwise render the branch page as normal:
                      [:div
                       [:div {:class "row"}
                        [:div {:class "col-sm-6"}
                         [:h3 "Workflow"]
-                        ;; If the missing-view parameter is present, then a user with read-only
-                        ;; access is trying to look at a view that doesn't exist:
-                        (when-not (nil? missing-view)
-                          (notify-missing-view branch view-path))
-
                         ;; Render the Workflow HTML from the Makefile:
                         (or (:html Makefile)
                             [:ul [:li "No workflow found"]])]
@@ -1528,7 +1548,7 @@
   call the branch's agent to potentially modify the branch."
   [{:keys [params]
     {:keys [project-name branch-name new-action new-action-param confirm-kill force-kill
-            updating-view cancel-kill-for-view cancel-update-view]} :params
+            updating-view cancel-kill-for-view cancel-update-view close-tab]} :params
     :as request}]
   (letfn [(launch-process [branch]
             (log/info "Starting action" new-action "on branch" branch-name "of project"
@@ -1632,11 +1652,11 @@
             (render-close-tab request)
             (redirect this-url)))
 
-        ;; If this is a cancel action related to a view; i.e., if when asked to confirm whether she
+        ;; If this is a cancel action related to a view (i.e., if when asked to confirm whether she
         ;; really wants to update the view, or kill an existing process so as to update the view,
-        ;; the user changes her mind and clicks on the "do nothing" button, then just render the
-        ;; "close this tab" page:
-        (or cancel-update-view cancel-kill-for-view)
+        ;; the user changes her mind and clicks on the "do nothing" button), or if we see the
+        ;; "close-tab" parameter, then just render the "close this tab" page:
+        (or cancel-update-view cancel-kill-for-view close-tab)
         (render-close-tab request)
 
         ;; If there is no action to be performed, or the action is unrecognised, then just render
