@@ -81,6 +81,7 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
  :push-with-installation-token false
  :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
  :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
+ :remove-containers-on-shutdown {:dev true, :test false, :prod false}
  :html-body-colors "bg-white"}
 ```
 
@@ -98,6 +99,7 @@ where:
 - `:push-with-installation-token` If set to true, then pushes to GitHub will use an installation token provided through the GitHub App for the repo. Otherwise pushes will use the user's user access token (which is also authenticated via the GitHub App).
 - `:cgi-timeout` is the maximum number of milliseconds that a CGI script is allowed to run.
 - `:log-file` is the file (relative to DROID's root directory) where the log will be written to. If it is nil then log is written to `STDERR`.
+- `:remove-containers-on-shutdown` set this to true if you would like to clean up docker containers whenever the server shuts down. Note that even without this flag set, docker containers will be *paused* on server shutdown.
 - `:html-body-colors` is a valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color) to use for DROID's pages.
 
 ## `projects/` directory

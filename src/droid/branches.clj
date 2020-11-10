@@ -147,8 +147,8 @@
         (if-not image-id
           ;; We should have found an image id. If we did not, log a warning:
           (log/warn "Could not find an image for branch:" branch-name "of project:" project-name
-                    "despite active docker configuration. If the branch was just created or checked"
-                    "out, this is normal.")
+                    "despite active docker configuration. If the branch image is currently being"
+                    "created, this is normal. Otherwise there may be a problem.")
           ;; Otherwise look for the branch container:
           (or (get-container container-name)
               ;; If there is no existing container for this branch, create one and start it:
@@ -415,6 +415,19 @@
   (log/info "Reinitializing local branches ...")
   (refresh-local-branches {} (-> :projects (get-config) (keys))))
 
+(defn pause-branch-container
+  "If pause? is true, pause the container for the given branch of the given project, otherwise
+  unpause them."
+  [project-name branch-name pause?]
+  (let [[process exit-code] (cmd/run-command ["docker" (if pause? "pause" "unpause")
+                                              (-> project-name (str "-" branch-name))])]
+    (let [error-msg (sh/stream-to-string process :err)]
+      (if-not (= @exit-code 0)
+        (when-not (re-find #"No such container" error-msg)
+          (log/error "Error" (if pause? "pausing" "unpausing") "container:" error-msg))
+        (log/info (if pause? "Paused" "Unpaused")
+                  "docker container for branch:" branch-name "in project:" project-name)))))
+
 (defn- remove-branch-container
   "Given a project and branch name, remove the corresponding container."
   [project-name branch-name]
@@ -426,6 +439,8 @@
           (cmd/throw-process-exception process "Error removing container"))
         (log/info "Removed docker container for branch:" branch-name "in project:" project-name)))))
 
+;; TODO: This doesn't work well with docker unless the server is run with sudo. The problem has to
+;; do with filesystem permissions for shared folders.
 (defn delete-local-branch
   "Deletes the given branch of the given project from the given managed server branches,
   and deletes the workspace and temporary directories for the branch in the filesystem."
@@ -560,17 +575,31 @@
 ;; Code related to general container management
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn remove-local-branch-containers-for-project
+(defn remove-branch-containers-for-project
   "Remove all containers associated with managed branches for a given project"
   [project-name]
   (doseq [branch-name (-> @local-branches (get (keyword project-name)) (keys) (#(map name %)))]
     (remove-branch-container project-name branch-name)))
 
-(defn remove-local-branch-containers
+(defn remove-branch-containers
   "Remove all containers associated with managed branches for all projects."
   []
   (doseq [project-name (-> :projects (get-config) (keys))]
-    (remove-local-branch-containers-for-project project-name)))
+    (remove-branch-containers-for-project project-name)))
+
+(defn pause-branch-containers-for-project
+  "If pause? is true, then pause all containers associated with managed branches for the given
+  project, otherwise unpause them."
+  [project-name pause?]
+  (doseq [branch-name (-> @local-branches (get (keyword project-name)) (keys) (#(map name %)))]
+    (pause-branch-container project-name branch-name pause?)))
+
+(defn pause-branch-containers
+  "If pause? is true, then pause all containers associated with managed branches for all projects,
+  otherwise unpause them."
+  [pause?]
+  (doseq [project-name (-> :projects (get-config) (keys))]
+    (pause-branch-containers-for-project project-name pause?)))
 
 ;; Example usage: (send-off container-serializer func arg)
 (def container-serializer
@@ -590,7 +619,7 @@
       (do
         (when remove-containers?
           (log/info "Removing branch containers for project:" project-name)
-          (remove-local-branch-containers-for-project project-name))
+          (remove-branch-containers-for-project project-name))
         ;; Project-default images:
         (let [command ["docker" "pull" (:image docker-config)]
               process (apply sh/proc command)
