@@ -46,7 +46,7 @@
                             value)))))))
 
 (defn- get-option-value
-  "Looks in `command` (a vector of strings) for the given keyword, and once it is found, returns
+  "Looks in `command` (a vector) for the given keyword, and once it is found, returns
   the next item in the vector"
   [command option-keyword]
   (let [keyword-index (.indexOf command option-keyword)]

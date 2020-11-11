@@ -636,20 +636,15 @@
           (log/info "Docker image" (:image docker-config) "retrieved"))
         ;; Branch-specific images:
         (when branch-specific?
-          (log/info "Building branch-specific images")
+          (log/debug "Building branch-specific images")
           (doseq [branch-name (.list (io/file ws-dir))]
             (when (-> ws-dir (str "/" branch-name "/Dockerfile") (io/file) (.exists))
               (let [image-ref (str project-name "-" branch-name)
-                    dockerfile-dir (str ws-dir "/" branch-name)
-                    command ["docker" "build" "--tag" image-ref "." :dir dockerfile-dir]
-                    process (apply sh/proc command)
-                    ;; Redirect process's stdout to our stdout:
-                    output (future (sh/stream-to-out process :out))
-                    exit-code (future (sh/exit-code process))]
-                (log/info "Building docker image" image-ref "using Dockerfile in" dockerfile-dir)
-                (when-not (= @exit-code 0)
-                  (cmd/throw-process-exception process "Error building image"))
-                (log/info "Docker image" image-ref "built")))))))))
+                    branch-agent (-> @local-branches (get (keyword project-name))
+                                     (get (keyword branch-name)))]
+                (log/info "Building docker image" image-ref "using Dockerfile for branch:"
+                          branch-name "in project:" project-name)
+                (send-off branch-agent create-image-for-branch (str project-name "-" branch-name))))))))))
 
 ;; Build the container images that will be used to isolate the commands run on a branch. Note that
 ;; we do not build branch-specific images at startup because they will be built automatically when
