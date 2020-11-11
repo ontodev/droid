@@ -17,10 +17,10 @@
   ([]
    ;; Right before shutting down the application do the following:
    (log/info "DROID shutting down.")
-   (log/info "Pausing branch containers")
+   (log/info "Pausing any running branch containers")
    (pause-branch-containers true)
    (when (get-config :remove-containers-on-shutdown)
-     (log/info "Removing branch containers")
+     (log/info "Removing any existing branch containers")
      (remove-branch-containers))
    (shutdown-agents))
 
@@ -34,7 +34,7 @@
 (defn -main []
   ;; Add a shutdown hook to the no-argument version of `shutdown`:
   (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable shutdown))
-  (log/info "Unpausing branch containers")
+  (log/info "Unpausing any paused branch containers")
   (pause-branch-containers false)
   (let [port (get-config :server-port)]
     (log/info (str "Starting HTTP server on port " port "."))

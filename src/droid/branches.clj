@@ -167,7 +167,11 @@
   [command project-name branch-name & [timeout]]
   (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
         container-id (when (:active? docker-config)
-                       (get-container-for-branch project-name branch-name))]
+                       (get-container-for-branch project-name branch-name))
+        ;; Redefine the command by adding in the project-level environment. The docker-specific
+        ;; environment variables will be taken care of by run-command:
+        command (-> :projects (get-config) (get project-name) :env
+                    (#(cmd/supplement-command-env command %)))]
     (cmd/run-command command timeout (when container-id {:project-name project-name
                                                          :branch-name branch-name
                                                          :container-id container-id}))))

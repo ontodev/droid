@@ -58,13 +58,14 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
               :project-welcome "welcome message" 
               :project-description "description"
               :github-coordinates "github-org/repository-1"
+              :env {"ENV_VAR" "env_var_val"}
               :docker-config {:active? true
                               :image "debian"
                               :workspace-dir "/workspace/"
                               :temp-dir "/tmp/droid/"
                               :default-working-dir "/workspace/"
                               :shell-command "bash"
-                              :env {"ENV_VAR_1" "env_var_1_value"}}}
+                              :env {"ENV_VAR" "env_var_value"}}}
   "project2" {:project-title "PROJECT2"
               :project-welcome "welcome message"
               :project-description "description"
@@ -91,6 +92,7 @@ where:
 - `:op-env` should be one of `:dev`, `:test`, `:prod`
   - If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up other configuration parameters that provide alternate configurations for `:dev`, `:test`, and `:prod`.
 - `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`. The higher the specified level, the fewer messages will be written to the log.
+- `:env` specifies the environment variables to use with all commands that run in the given project.
 - `:server-port` is the port that the server will listen on.
 - `:secure-site` is either true or false and indicates whether the server will use the `https://` or `http://` protocol.
 - `:site-admin-github-ids` is a hash-set of github userids who are considered site administrators.
