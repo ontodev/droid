@@ -93,9 +93,7 @@
                                   (:default-working-dir docker-config))
                               (str "/"))
         process (if container-id
-                  (do (log/debug "Running" (->> command (filter string?) (string/join " "))
-                                 "in container" container-id)
-                      (->> docker-cmd-base
+                  (do (->> docker-cmd-base
                            (local-to-docker project-name branch-name)
                            (into [container-id])
                            (into (-> docker-config :env (env-map-to-cli-opts)))
@@ -103,9 +101,9 @@
                            (into ["docker" "exec" "--workdir"
                                   (->> (get-working-dir)
                                        (local-to-docker project-name branch-name))])
+                           (#(do (log/debug "Running" % "in container" container-id) %))
                            (apply sh/proc)))
-                  (do (log/debug "Running" (->> command (filter string?) (string/join " "))
-                                 "without a container")
+                  (do (log/debug "Running" command "without a container")
                       (apply sh/proc command)))
         exit-code (-> process
                       (#(if timeout

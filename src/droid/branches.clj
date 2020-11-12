@@ -68,8 +68,12 @@
   "Get the image corresponding to this project and branch and return its ID"
   [project-name branch-name]
   (letfn [(lookup-image [image-ref]
-            ;; Given a reference to an image, lookup its ID
-            (let [[process exit-code] (cmd/run-command ["docker" "images" "-q" "-f"
+            ;; Given a reference to an image, lookup its ID. If the image ref doesn't specify a tag,
+            ;; assume ':latest'.
+            (let [image-ref (if (re-find #":.+" image-ref)
+                              image-ref
+                              (str image-ref ":latest"))
+                  [process exit-code] (cmd/run-command ["docker" "images" "-q" "-f"
                                                         (str "reference=" image-ref)])]
               ;; The above command will have exit status 0 even if it doesn't find an image, so
               ;; throw an exception if anything else is received:
@@ -168,10 +172,12 @@
   (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
         container-id (when (:active? docker-config)
                        (get-container-for-branch project-name branch-name))
+        project-env (-> :projects (get-config) (get project-name) :env)
         ;; Redefine the command by adding in the project-level environment. The docker-specific
         ;; environment variables will be taken care of by run-command:
-        command (-> :projects (get-config) (get project-name) :env
-                    (#(cmd/supplement-command-env command %)))]
+        command (if-not (empty? project-env)
+                  (cmd/supplement-command-env command project-env)
+                  command)]
     (cmd/run-command command timeout (when container-id {:project-name project-name
                                                          :branch-name branch-name
                                                          :container-id container-id}))))
