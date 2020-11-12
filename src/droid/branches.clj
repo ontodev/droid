@@ -70,7 +70,7 @@
   (letfn [(lookup-image [image-ref]
             ;; Given a reference to an image, lookup its ID. If the image ref doesn't specify a tag,
             ;; assume ':latest'.
-            (let [image-ref (if (re-find #":.+" image-ref)
+            (let [image-ref (if (re-find #":.+$" image-ref)
                               image-ref
                               (str image-ref ":latest"))
                   [process exit-code] (cmd/run-command ["docker" "images" "-q" "-f"
