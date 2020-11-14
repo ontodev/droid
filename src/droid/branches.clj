@@ -294,7 +294,7 @@
   initialize and return a hashmap with an entry corresponding to an agent that will be used to
   manage access to the branch's resources. If docker is active for the given project, then create an
   image to use for associating a container with the branch."
-  [project-name branch-name]
+  [project-name branch-name & [server-startup?]]
   (let [project-temp-dir (get-temp-dir project-name)]
     ;; If a subdirectory with the given branch name doesn't exist in the temp dir,
     ;; recreate it:
@@ -326,7 +326,7 @@
           image-id (when docker-active? (get-image-for-branch project-name branch-name))]
 
       ;; Create a docker image to use for the branch's containers if it doesn't exist already:
-      (when docker-active?
+      (when (and docker-active? (not server-startup?))
         (if image-id
           (log/debug "An image (ID:" image-id ") for branch:" branch-name "of project:"
                      project-name "already exists. No need to create one.")
@@ -343,7 +343,7 @@
   "Returns a hashmap containing information about the contents and status of every local branch
   in the workspace of the given project. If the collection of current branches is given, an
   updated version of it is returned, otherwise a new collection is initialized."
-  [project-name & [current-branches]]
+  [server-startup? project-name current-branches]
   (let [project-workspace-dir (get-workspace-dir project-name)
         project-temp-dir (get-temp-dir project-name)]
     (when-not (->> project-workspace-dir (io/file) (.isDirectory))
@@ -361,7 +361,7 @@
                      (if (nil? branch-agent)
                        (do
                          (log/info "Initializing branch:" % "of project:" project-name)
-                         (initialize-branch project-name %))
+                         (initialize-branch project-name % server-startup?))
                        (-> %
                            (keyword)
                            (hash-map (send-off branch-agent refresh-local-branch)))))))
@@ -370,12 +370,12 @@
 
 (defn refresh-local-branches
   "Refresh all of the local branches associated with the given sequence of project names."
-  [all-branches project-names]
+  [all-branches project-names & [server-startup?]]
   (->> project-names
        (map #(->> %
                   (keyword)
                   (get all-branches)
-                  (refresh-local-branches-for-project %)))
+                  (refresh-local-branches-for-project server-startup? %)))
        ;; Merge the sequence of hash-maps generated into a single hash-map:
        (apply merge)
        ;; Merge that hash-map into the hash-map for all projects:
@@ -568,7 +568,7 @@
   (-> :projects
       (get-config)
       (keys)
-      (#(refresh-local-branches {} %))
+      (#(refresh-local-branches {} % true))
       (agent :error-mode :continue :error-handler default-agent-error-handler)))
 
 (defn local-branch-exists?
