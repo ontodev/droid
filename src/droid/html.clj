@@ -32,6 +32,11 @@
          (= action "create-docker-image")
          (not (realized? exit-code)))))
 
+(defn- site-admin?
+  "Returns true if the given user is a site administrator"
+  [{{{:keys [login]} :user} :session}]
+  (some #(= login %) (get-config :site-admin-github-ids)))
+
 (defn- read-only?
   "Returns true if the given user has read-only access to the site.
    Access will be read-only in the following cases:
@@ -42,13 +47,14 @@
   ([project-name branch-name]
    (image-rebuilding? project-name branch-name))
   ([{{:keys [project-name branch-name]} :params
-     {{:keys [login project-permissions]} :user} :session}]
+     {{:keys [login project-permissions]} :user} :session,
+     :as request}]
    (let [this-project-permissions (->> project-name (keyword) (get project-permissions))]
      (or (image-rebuilding? project-name branch-name)
          (nil? login)
          (and (not= this-project-permissions "write")
               (not= this-project-permissions "admin")
-              (not-any? #(= login %) (get-config :site-admin-github-ids)))))))
+              (not (site-admin? request)))))))
 
 (defn- login-status
   "Render the user's login status."
@@ -508,104 +514,123 @@
                     (#(when % (string/replace % #"\?.+$" ""))))]
     (redirect (or rel-url "/"))))
 
+(defn- render-rebuild-image-dialog
+  "Render a dialog to ask the user if she would like to rebuild images. Use the given base-url
+  for forward links"
+  [base-url]
+  [:div {:class "alert alert-warning"}
+   "Would you like to remove any running containers before rebuilding images? Note that if you "
+   "choose not to do this, then any currently running containers will continue to use the old "
+   "version of an image if an image version is upgraded."
+   [:div {:class "pt-2"}
+    [:a {:class "btn btn-sm btn-primary" :href base-url} "Cancel"]
+    [:span "&nbsp;"]
+    [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild=1")}
+     "Remove containers before rebuilding"]
+    [:span "&nbsp;"]
+    [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild=2")}
+     "Rebuild without removing containers"]]])
+
 (defn render-index
   "Render the index page"
   [{:keys [params]
-    {:keys [just-logged-out rebuild-containers rebuild-launched reset really-reset]} :params,
+    {:keys [just-logged-out rebuild-images really-rebuild rebuild-launched
+            reset really-reset]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
   (log/debug "Processing request in index with params:" params)
-  (letfn [(site-admin? []
-            (some #(= login %) (get-config :site-admin-github-ids)))]
-    (cond
-      ;; If the user is a site-admin and has confirmed a reset action, do it now and redirect back
-      ;; to this page:
-      (and (site-admin?) (not (nil? really-reset)))
-      (do
-        (log/info "Site administrator" login "requested a global reset of branch data")
-        ;; We refresh the local branches before resetting to make sure that the metadata has been
-        ;; persisted to the database:
-        (log/debug "Refreshing local branches before reset")
-        (send-off branches/local-branches
-                  branches/refresh-local-branches (-> :projects (get-config) (keys)))
-        (send-off branches/local-branches branches/reset-all-local-branches)
-        (await branches/local-branches)
-        (redirect "/"))
+  (cond
+    ;; If the user is a site-admin and has confirmed a reset action, do it now and redirect back
+    ;; to this page:
+    (and (site-admin? request) (not (nil? really-reset)))
+    (do
+      (log/info "Site administrator" login "requested a global reset of branch data")
+      ;; We refresh the local branches before resetting to make sure that the metadata has been
+      ;; persisted to the database:
+      (log/debug "Refreshing local branches before reset")
+      (send-off branches/local-branches
+                branches/refresh-local-branches (-> :projects (get-config) (keys)))
+      (send-off branches/local-branches branches/reset-all-local-branches)
+      (await branches/local-branches)
+      (redirect "/"))
 
-      (and (site-admin?) (not (nil? rebuild-containers)))
-      (do
-        (doseq [project-name (->> :projects (get-config) (keys) (map name))]
-          ;; We send the rebuild jobs through container-serializer so that they will run in the
-          ;; background one after another:
-          (send-off branches/container-serializer
-                    branches/rebuild-container-images project-name true true))
-        (redirect "/?rebuild-launched=1"))
+    (and (site-admin? request) (not (nil? really-rebuild)))
+    (let [remove-containers? (= really-rebuild "1")]
+      (doseq [project-name (->> :projects (get-config) (keys) (map name))]
+        ;; We send the rebuild jobs through container-serializer so that they will run in the
+        ;; background one after another:
+        (send-off branches/container-serializer
+                  branches/rebuild-container-images project-name remove-containers?))
+      (redirect "/?rebuild-launched=1"))
 
-      ;; Otherwise just render the page:
-      :else
-      (html-response
-       request
-       {:title "DROID"
-        :heading [:div [:a {:href "/"} "DROID"]]
-        :content [:div
-                  [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
-                  [:div
-                   (when-not (nil? just-logged-out)
-                     [:div {:class "alert alert-info"}
-                      "You have been logged out. If this is a shared computer you may also want to "
-                      [:a {:href "https://github.com/logout"} "sign out of GitHub"]
-                      [:div {:class "pt-2"}
-                       [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
-                   [:div
-                    [:h3 "Available Projects"]
-                    [:table
-                     {:class "table table-borderless table-sm"}
-                     (for [project (get-config :projects)]
-                       [:tr
-                        [:td
-                         [:a
-                          {:style "font-weight: bold"
-                           :href (->> project (key) (str "/"))}
-                          (->> project (val) :project-title)]]
-                        [:td (->> project (val) :project-description)]
-                        [:td
-                         [:a
-                          {:href (str "https://github.com/"
-                                      (-> project val :github-coordinates))}
-                          (-> project val :github-coordinates)]]])]
-                    (when (site-admin?)
-                      [:div
-                       [:h3 "Administration"]
-                       [:div {:class "row pb-3 pt-2 pl-3"}
-                        [:a {:class "btn btn-sm btn-danger mr-2" :href "/?reset=1"
-                             :data-toggle "tooltip"
-                             :title "Clear branch data for all managed projects"}
-                         "Reset branch data"]
-                        [:a {:class "btn btn-sm btn-primary" :href "/?rebuild-containers=1"
-                             :data-toggle "tooltip"
-                             :title "(Re)build container images for managed projects"}
-                         "Rebuild container images"]]
-                       (when (not (nil? reset))
-                         [:div {:class "alert alert-danger"}
-                          "Are you sure you want to reset branch data for all projects? Note that "
-                          "doing so will kill any running processes and clear all console data."
-                          [:div {:class "pt-2"}
-                           [:a {:class "btn btn-sm btn-primary" :href "/"} "No, cancel"]
-                           [:span "&nbsp;"]
-                           [:a {:class "btn btn-sm btn-danger" :href "/?really-reset=1"}
-                            "Yes, continue"]]])
-                       (when (not (nil? rebuild-launched))
-                         [:div {:class "alert alert-success"}
-                          "Container images are being rebuilt. This could take a few minutes "
-                          "to complete."
-                          [:div [:a {:class "btn btn-sm btn-primary mt-2" :href "/"}
-                                 "Dismiss"]]])])]]]}))))
+    ;; Otherwise just render the page:
+    :else
+    (html-response
+     request
+     {:title "DROID"
+      :heading [:div [:a {:href "/"} "DROID"]]
+      :content [:div
+                [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
+                [:div
+                 (when-not (nil? just-logged-out)
+                   [:div {:class "alert alert-info"}
+                    "You have been logged out. If this is a shared computer you may also want to "
+                    [:a {:href "https://github.com/logout"} "sign out of GitHub"]
+                    [:div {:class "pt-2"}
+                     [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
+                 [:div
+                  [:h3 "Available Projects"]
+                  [:table
+                   {:class "table table-borderless table-sm"}
+                   (for [project (get-config :projects)]
+                     [:tr
+                      [:td
+                       [:a
+                        {:style "font-weight: bold"
+                         :href (->> project (key) (str "/"))}
+                        (->> project (val) :project-title)]]
+                      [:td (->> project (val) :project-description)]
+                      [:td
+                       [:a
+                        {:href (str "https://github.com/"
+                                    (-> project val :github-coordinates))}
+                        (-> project val :github-coordinates)]]])]
+                  (when (site-admin? request)
+                    [:div
+                     [:h3 "Administration"]
+                     [:div {:class "row pb-3 pt-2 pl-3"}
+                      [:a {:class "btn btn-sm btn-danger mr-2" :href "/?reset=1"
+                           :data-toggle "tooltip"
+                           :title "Clear branch data for all managed projects"}
+                       "Reset branch data"]
+                      [:a {:class "btn btn-sm btn-warning" :href "/?rebuild-images=1"
+                           :data-toggle "tooltip"
+                           :title "(Re)build all container images for managed projects"}
+                       "Rebuild container images"]]
+                     (when (not (nil? reset))
+                       [:div {:class "alert alert-danger"}
+                        "Are you sure you want to reset branch data for all projects? Note that "
+                        "doing so will kill any running processes and clear all console data."
+                        [:div {:class "pt-2"}
+                         [:a {:class "btn btn-sm btn-primary" :href "/"} "No, cancel"]
+                         [:span "&nbsp;"]
+                         [:a {:class "btn btn-sm btn-danger" :href "/?really-reset=1"}
+                          "Yes, continue"]]])
+                     (when (not (nil? rebuild-images))
+                       (render-rebuild-image-dialog "/"))
+                     (when (not (nil? rebuild-launched))
+                       [:div {:class "alert alert-success"}
+                        "Container images are being rebuilt. This could take a few minutes "
+                        "to complete."
+                        [:div [:a {:class "btn btn-sm btn-primary mt-2" :href "/"}
+                               "Dismiss"]]])])]]]})))
 
 (defn render-project
   "Render the home page for a project"
   [{:keys [params]
     {:keys [project-name refresh to-delete to-really-delete to-checkout
-            create invalid-name-error to-create branch-from]} :params,
+            create invalid-name-error to-create branch-from
+            rebuild-images really-rebuild rebuild-launched]} :params,
     :as request}]
   (log/debug "Processing request in render-project with params:" params)
   (let [this-url (str "/" project-name)
@@ -692,6 +717,15 @@
                     "initiated by" (-> request :session :user :login))
           (create-branch project-name to-create))
 
+        ;; Rebuild the project's containers:
+        (and (site-admin? request) (not (nil? really-rebuild)))
+        (let [remove-containers? (= really-rebuild "1")]
+          ;; We send the rebuild job through container-serializer so that it will run in the
+          ;; background:
+          (send-off branches/container-serializer
+                    branches/rebuild-container-images project-name remove-containers?)
+          (redirect (str this-url "?rebuild-launched=1")))
+
         ;; Refresh local and remote branches:
         (not (nil? refresh))
         (do
@@ -773,6 +807,19 @@
                           [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
                            "Cancel"]]]]])
 
+                    ;; Display this alert when the rebuild-images parameter is present and the user
+                    ;; is a site admin:
+                    (when (and (site-admin? request) (not (nil? rebuild-images)))
+                      (render-rebuild-image-dialog this-url))
+
+                    ;; Display this alert when a rebuild of container images has been launched:
+                    (when (not (nil? rebuild-launched))
+                      [:div {:class "alert alert-success"}
+                       "Container images are being rebuilt. This could take a few minutes "
+                       "to complete."
+                       [:div [:a {:class "btn btn-sm btn-primary mt-2" :href this-url}
+                              "Dismiss"]]])
+
                     ;; The non-conditional content of the project page is here:
                     [:h3 "Branches"]
                     [:div {:class "pb-2"}
@@ -786,7 +833,15 @@
                             :href (str this-url "?create=1")
                             :data-toggle "tooltip"
                             :title "Create a new local branch"}
-                        "Create new"])]
+                        "Create new"])
+                     (when (and (site-admin? request)
+                                (-> :projects (get-config) (get project-name) :docker-config
+                                    :active?))
+                       [:a {:class "btn btn-sm btn-warning ml-2"
+                            :href (str this-url "?rebuild-images=1")
+                            :data-toggle "tooltip"
+                            :title "Rebuild container images for this project"}
+                        "Rebuild container images"])]
                     (->> request (read-only?) (render-project-branches project-name))]})))))
 
 (defn- render-status-bar-for-action

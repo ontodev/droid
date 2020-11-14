@@ -621,7 +621,7 @@
   in the config file. Additionally, if there are Dockerfiles on any of the local branches, use them
   to build branch-specific images. The first argument to this function, `_`, exists to make it
   possible to serialize calls to this function through an agent, but is otherwise unused."
-  [_ project-name remove-containers? branch-specific?]
+  [_ project-name remove-containers?]
   (let [ws-dir (get-workspace-dir project-name)
         docker-config (-> :projects (get-config) (get project-name) :docker-config)]
     (if (not (:active? docker-config))
@@ -630,30 +630,23 @@
         (when remove-containers?
           (log/info "Removing branch containers for project:" project-name)
           (remove-branch-containers-for-project project-name))
-        ;; Project-default images:
+        (log/info "Retrieving project-level images for project" project-name)
         (let [command ["docker" "pull" (:image docker-config)]
               process (apply sh/proc command)
               ;; Redirect process's stdout to our stdout:
               output (future (sh/stream-to-out process :out))
               exit-code (future (sh/exit-code process))]
-          (log/info "Retrieving docker image" (:image docker-config))
+          (log/info "Retrieving docker image" (:image docker-config) "(this may take some time)")
           (when-not (= @exit-code 0)
             (cmd/throw-process-exception process "Error retrieving image"))
           (log/info "Docker image" (:image docker-config) "retrieved"))
         ;; Branch-specific images:
-        (when branch-specific?
-          (log/debug "Building branch-specific images")
-          (doseq [branch-name (.list (io/file ws-dir))]
-            (when (-> ws-dir (str "/" branch-name "/Dockerfile") (io/file) (.exists))
-              (let [image-ref (str project-name "-" branch-name)
-                    branch-agent (-> @local-branches (get (keyword project-name))
-                                     (get (keyword branch-name)))]
-                (log/info "Building docker image" image-ref "using Dockerfile for branch:"
-                          branch-name "in project:" project-name)
-                (send-off branch-agent create-image-for-branch (str project-name "-" branch-name))))))))))
-
-;; Build the container images that will be used to isolate the commands run on a branch. Note that
-;; we do not build branch-specific images at startup because they will be built automatically when
-;; the individual branches are initialized.
-(doseq [project-name (->> @local-branches (keys) (map name))]
-  (rebuild-container-images nil project-name false false))
+        (log/info "Building branch-specific images for project" project-name)
+        (doseq [branch-name (.list (io/file ws-dir))]
+          (when (-> ws-dir (str "/" branch-name "/Dockerfile") (io/file) (.exists))
+            (let [image-ref (str project-name "-" branch-name)
+                  branch-agent (-> @local-branches (get (keyword project-name))
+                                   (get (keyword branch-name)))]
+              (log/info "Building docker image" image-ref "using Dockerfile for branch:"
+                        branch-name "in project:" project-name)
+              (send-off branch-agent create-image-for-branch (str project-name "-" branch-name)))))))))
