@@ -58,13 +58,14 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
               :project-welcome "welcome message" 
               :project-description "description"
               :github-coordinates "github-org/repository-1"
+              :env {"ENV_VAR" "env_var_val"}
               :docker-config {:active? true
                               :image "debian"
                               :workspace-dir "/workspace/"
                               :temp-dir "/tmp/droid/"
                               :default-working-dir "/workspace/"
                               :shell-command "bash"
-                              :env {"ENV_VAR_1" "env_var_1_value"}}}
+                              :env {"ENV_VAR" "env_var_value"}}}
   "project2" {:project-title "PROJECT2"
               :project-welcome "welcome message"
               :project-description "description"
@@ -81,6 +82,7 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
  :push-with-installation-token false
  :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
  :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
+ :remove-containers-on-shutdown {:dev true, :test false, :prod false}
  :html-body-colors "bg-white"}
 ```
 
@@ -90,6 +92,7 @@ where:
 - `:op-env` should be one of `:dev`, `:test`, `:prod`
   - If `:op-env` is defined as (for example) `:dev`, then the `:dev` key will be used when looking up other configuration parameters that provide alternate configurations for `:dev`, `:test`, and `:prod`.
 - `:log-level` should be one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`. The higher the specified level, the fewer messages will be written to the log.
+- `:env` specifies the environment variables to use with all commands that run in the given project.
 - `:server-port` is the port that the server will listen on.
 - `:secure-site` is either true or false and indicates whether the server will use the `https://` or `http://` protocol.
 - `:site-admin-github-ids` is a hash-set of github userids who are considered site administrators.
@@ -98,6 +101,7 @@ where:
 - `:push-with-installation-token` If set to true, then pushes to GitHub will use an installation token provided through the GitHub App for the repo. Otherwise pushes will use the user's user access token (which is also authenticated via the GitHub App).
 - `:cgi-timeout` is the maximum number of milliseconds that a CGI script is allowed to run.
 - `:log-file` is the file (relative to DROID's root directory) where the log will be written to. If it is nil then log is written to `STDERR`.
+- `:remove-containers-on-shutdown` set this to true if you would like to clean up docker containers whenever the server shuts down. Note that even without this flag set, docker containers will be *paused* on server shutdown.
 - `:html-body-colors` is a valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color) to use for DROID's pages.
 
 ## `projects/` directory

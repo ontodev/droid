@@ -1,7 +1,7 @@
 (ns droid.core
   (:require [clojure.repl :as repl]
             [org.httpkit.server :refer [run-server]]
-            [droid.branches :refer [remove-local-branch-containers]]
+            [droid.branches :refer [pause-branch-containers remove-branch-containers]]
             [droid.config :refer [get-config]]
             [droid.handler :as handler]
             [droid.log :as log])
@@ -17,7 +17,11 @@
   ([]
    ;; Right before shutting down the application do the following:
    (log/info "DROID shutting down.")
-   (remove-local-branch-containers)
+   (log/info "Pausing any running branch containers")
+   (pause-branch-containers true)
+   (when (get-config :remove-containers-on-shutdown)
+     (log/info "Removing any existing branch containers")
+     (remove-branch-containers))
    (shutdown-agents))
 
   ([_]
@@ -30,6 +34,8 @@
 (defn -main []
   ;; Add a shutdown hook to the no-argument version of `shutdown`:
   (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable shutdown))
+  (log/info "Unpausing any paused branch containers")
+  (pause-branch-containers false)
   (let [port (get-config :server-port)]
     (log/info (str "Starting HTTP server on port " port "."))
     (run-server (wrap-app) {:port port})))

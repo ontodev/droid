@@ -10,7 +10,9 @@
       (let [path (str topname "/" filename)]
         (if (-> path (io/file) (.isDirectory))
           (delete-recursively path)
+          ;; TODO: Consider setting this to false
           (io/delete-file path true)))))
+  ;; TODO: Consider setting this to false
   (io/delete-file topname true)
   (log/debug "Deleted" topname))
 

@@ -20,19 +20,41 @@
 (def default-html-headers
   {"Content-Type" "text/html"})
 
+(defn- image-rebuilding?
+  "Returns true if the given branch is rebuilding a docker image"
+  [project-name branch-name]
+  (let [this-branch (when branch-name
+                      (-> @branches/local-branches (get (keyword project-name))
+                          (get (keyword branch-name)) (deref)))
+        action (:action this-branch)
+        exit-code (:exit-code this-branch)]
+    (and this-branch
+         (= action "create-docker-image")
+         (not (realized? exit-code)))))
+
+(defn- site-admin?
+  "Returns true if the given user is a site administrator"
+  [{{{:keys [login]} :user} :session}]
+  (some #(= login %) (get-config :site-admin-github-ids)))
+
 (defn- read-only?
-  "Returns true if the given user has read-only access to the site."
-  [{{:keys [project-name]} :params
-    {{:keys [login project-permissions]} :user} :session}]
-  ;; Access will be read-only in the following cases:
-  ;; - The user is logged out
-  ;; - The user does not have write or admin permission on the requested project,
-  ;;   and is not a site admin.
-  (let [this-project-permissions (->> project-name (keyword) (get project-permissions))]
-    (or (nil? login)
-        (and (not= this-project-permissions "write")
-             (not= this-project-permissions "admin")
-             (not-any? #(= login %) (get-config :site-admin-github-ids))))))
+  "Returns true if the given user has read-only access to the site.
+   Access will be read-only in the following cases:
+   - The user is logged out
+   - The user does not have write or admin permission on the requested project,
+     and is not a site admin.
+   - The image for the given branch is currently being rebuilt."
+  ([project-name branch-name]
+   (image-rebuilding? project-name branch-name))
+  ([{{:keys [project-name branch-name]} :params
+     {{:keys [login project-permissions]} :user} :session,
+     :as request}]
+   (let [this-project-permissions (->> project-name (keyword) (get project-permissions))]
+     (or (image-rebuilding? project-name branch-name)
+         (nil? login)
+         (and (not= this-project-permissions "write")
+              (not= this-project-permissions "admin")
+              (not (site-admin? request)))))))
 
 (defn- login-status
   "Render the user's login status."
@@ -57,7 +79,7 @@
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session] :as request}
-   {:keys [status headers title heading script content]
+   {:keys [status headers title heading script content auto-refresh]
     :as response
     :or {status 200
          headers default-html-headers
@@ -71,6 +93,10 @@
     [:head
      [:meta {:charset "utf-8"}]
      [:meta {:name "viewport" :content "width=device-width, initial-scale=1, shrink-to-fit=no"}]
+     (let [{:keys [interval anchor]} auto-refresh]
+       (when interval
+         [:meta {:http-equiv "refresh", :content (str interval (when anchor
+                                                                 (str "; " anchor)))}]))
      [:link
       {:rel "stylesheet"
        :href "https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
@@ -194,7 +220,8 @@
                         [:a {:href (-> remote
                                        (string/split #"/")
                                        (last)
-                                       (#(str "https://github.com/" org "/" repo "/tree/" %)))}
+                                       (#(str "https://github.com/" org "/" repo "/tree/" %)))
+                             :target "__blank"}
                          remote])]
 
     (send-off branch-agent branches/refresh-local-branch)
@@ -242,7 +269,8 @@
 
         render-pr-link #(let [pr-url (:pull-request %)]
                           (when-not (nil? pr-url)
-                            [:a {:href pr-url} "#" (-> pr-url (string/split #"/") (last))]))
+                            [:a {:href pr-url :target "__blank"}
+                             "#" (-> pr-url (string/split #"/") (last))]))
 
         render-local-branch-row (fn [branch-name]
                                   (when branch-name
@@ -274,7 +302,8 @@
                                       [:td [:a {:href (->> remote-branch
                                                            :name
                                                            (str "https://github.com/" org "/" repo
-                                                                "/tree/"))}
+                                                                "/tree/"))
+                                                :target "__blank"}
                                             (:name remote-branch)]]
                                       [:td (render-pr-link remote-branch)]
                                       [:td]]))]
@@ -335,7 +364,6 @@
     (render-401 request)
     (let [branch-key (keyword branch-name)
           project-key (keyword project-name)
-          branch-contents (->> @branches/local-branches project-key branch-key (deref))
           branch-url (str "/" project-name "/branches/" branch-name)
           dirname (-> script-path (io/file) (.getParent))
           basename (-> script-path (io/file) (.getName))
@@ -388,15 +416,16 @@
           [process
            exit-code] (if (= request-method :post)
                         (do (spit tmp-infile query-string)
-                            (cmd/run-command
-                             ["bash" "-c"
+                            (branches/run-branch-command
+                             ["sh" "-c"
                               (str "./" basename " < " tmp-infile " > " tmp-outfile)
                               :dir dirname :env cgi-input-env]
-                             timeout branch-contents))
-                        (cmd/run-command
-                         ["bash" "-c" (str "./" basename " > " tmp-outfile)
-                          :dir dirname :env cgi-input-env]
-                         timeout branch-contents))
+                             project-name branch-name timeout))
+                        (do
+                          (branches/run-branch-command
+                           ["sh" "-c" (str "./" basename " > " tmp-outfile)
+                            :dir dirname :env cgi-input-env]
+                           project-name branch-name timeout)))
           ;; We expect a blank line separating the response's header and body:
           split-response #(->> % (string/split-lines) (partition-by string/blank?))]
 
@@ -485,101 +514,123 @@
                     (#(when % (string/replace % #"\?.+$" ""))))]
     (redirect (or rel-url "/"))))
 
+(defn- render-rebuild-image-dialog
+  "Render a dialog to ask the user if she would like to rebuild images. Use the given base-url
+  for forward links"
+  [base-url]
+  [:div {:class "alert alert-warning"}
+   "Would you like to remove any running containers before rebuilding images? Note that if you "
+   "choose not to do this, then any currently running containers will continue to use the old "
+   "version of an image if an image version is upgraded."
+   [:div {:class "pt-2"}
+    [:a {:class "btn btn-sm btn-primary" :href base-url} "Cancel"]
+    [:span "&nbsp;"]
+    [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild=1")}
+     "Remove containers before rebuilding"]
+    [:span "&nbsp;"]
+    [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild=2")}
+     "Rebuild without removing containers"]]])
+
 (defn render-index
   "Render the index page"
   [{:keys [params]
-    {:keys [just-logged-out rebuild-containers rebuild-launched reset really-reset]} :params,
+    {:keys [just-logged-out rebuild-images really-rebuild rebuild-launched
+            reset really-reset]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
   (log/debug "Processing request in index with params:" params)
-  (letfn [(site-admin? []
-            (some #(= login %) (get-config :site-admin-github-ids)))]
-    (cond
-      ;; If the user is a site-admin and has confirmed a reset action, do it now and redirect back
-      ;; to this page:
-      (and (site-admin?) (not (nil? really-reset)))
-      (do
-        (log/info "Site administrator" login "requested a global reset of branch data")
-        ;; We refresh the local branches before resetting to make sure that the metadata has been
-        ;; persisted to the database:
-        (log/debug "Refreshing local branches before reset")
-        (send-off branches/local-branches
-                  branches/refresh-local-branches (-> :projects (get-config) (keys)))
-        (send-off branches/local-branches branches/reset-all-local-branches)
-        (await branches/local-branches)
-        (redirect "/"))
+  (cond
+    ;; If the user is a site-admin and has confirmed a reset action, do it now and redirect back
+    ;; to this page:
+    (and (site-admin? request) (not (nil? really-reset)))
+    (do
+      (log/info "Site administrator" login "requested a global reset of branch data")
+      ;; We refresh the local branches before resetting to make sure that the metadata has been
+      ;; persisted to the database:
+      (log/debug "Refreshing local branches before reset")
+      (send-off branches/local-branches
+                branches/refresh-local-branches (-> :projects (get-config) (keys)))
+      (send-off branches/local-branches branches/reset-all-local-branches)
+      (await branches/local-branches)
+      (redirect "/"))
 
-      (and (site-admin?) (not (nil? rebuild-containers)))
-      (do
-        (doseq [project-name (->> :projects (get-config) (keys) (map name))]
-          (send-off cmd/container-serializer cmd/rebuild-container-image project-name))
-        (redirect "/?rebuild-launched=1"))
+    (and (site-admin? request) (not (nil? really-rebuild)))
+    (let [remove-containers? (= really-rebuild "1")]
+      (doseq [project-name (->> :projects (get-config) (keys) (map name))]
+        ;; We send the rebuild jobs through container-serializer so that they will run in the
+        ;; background one after another:
+        (send-off branches/container-serializer
+                  branches/rebuild-container-images project-name remove-containers?))
+      (redirect "/?rebuild-launched=1"))
 
-      ;; Otherwise just render the page:
-      :else
-      (html-response
-       request
-       {:title "DROID"
-        :heading [:div [:a {:href "/"} "DROID"]]
-        :content [:div
-                  [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
-                  [:div
-                   (when-not (nil? just-logged-out)
-                     [:div {:class "alert alert-info"}
-                      "You have been logged out. If this is a shared computer you may also want to "
-                      [:a {:href "https://github.com/logout"} "sign out of GitHub"]
-                      [:div {:class "pt-2"}
-                       [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
-                   [:div
-                    [:h3 "Available Projects"]
-                    [:table
-                     {:class "table table-borderless table-sm"}
-                     (for [project (get-config :projects)]
-                       [:tr
-                        [:td
-                         [:a
-                          {:style "font-weight: bold"
-                           :href (->> project (key) (str "/"))}
-                          (->> project (val) :project-title)]]
-                        [:td (->> project (val) :project-description)]
-                        [:td
-                         [:a
-                          {:href (str "https://github.com/"
-                                      (-> project val :github-coordinates))}
-                          (-> project val :github-coordinates)]]])]
-                    (when (site-admin?)
-                      [:div
-                       [:h3 "Administration"]
-                       [:div {:class "row pb-3 pt-2 pl-3"}
-                        [:a {:class "btn btn-sm btn-danger mr-2" :href "/?reset=1"
-                             :data-toggle "tooltip"
-                             :title "Clear branch data for all managed projects"}
-                         "Reset branch data"]
-                        [:a {:class "btn btn-sm btn-primary" :href "/?rebuild-containers=1"
-                             :data-toggle "tooltip"
-                             :title "(Re)build container images for managed projects"}
-                         "Rebuild container images"]]
-                       (when (not (nil? reset))
-                         [:div {:class "alert alert-danger"}
-                          "Are you sure you want to reset branch data for all projects? Note that "
-                          "doing so will kill any running processes and clear all console data."
-                          [:div {:class "pt-2"}
-                           [:a {:class "btn btn-sm btn-primary" :href "/"} "No, cancel"]
-                           [:span "&nbsp;"]
-                           [:a {:class "btn btn-sm btn-danger" :href "/?really-reset=1"}
-                            "Yes, continue"]]])
-                       (when (not (nil? rebuild-launched))
-                         [:div {:class "alert alert-success"}
-                          "Container images are being rebuilt. This could take a few minutes "
-                          "to complete."
-                          [:div [:a {:class "btn btn-sm btn-primary mt-2" :href "/"}
-                                 "Dismiss"]]])])]]]}))))
+    ;; Otherwise just render the page:
+    :else
+    (html-response
+     request
+     {:title "DROID"
+      :heading [:div [:a {:href "/"} "DROID"]]
+      :content [:div
+                [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
+                [:div
+                 (when-not (nil? just-logged-out)
+                   [:div {:class "alert alert-info"}
+                    "You have been logged out. If this is a shared computer you may also want to "
+                    [:a {:href "https://github.com/logout"} "sign out of GitHub"]
+                    [:div {:class "pt-2"}
+                     [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
+                 [:div
+                  [:h3 "Available Projects"]
+                  [:table
+                   {:class "table table-borderless table-sm"}
+                   (for [project (get-config :projects)]
+                     [:tr
+                      [:td
+                       [:a
+                        {:style "font-weight: bold"
+                         :href (->> project (key) (str "/"))}
+                        (->> project (val) :project-title)]]
+                      [:td (->> project (val) :project-description)]
+                      [:td
+                       [:a
+                        {:href (str "https://github.com/"
+                                    (-> project val :github-coordinates))}
+                        (-> project val :github-coordinates)]]])]
+                  (when (site-admin? request)
+                    [:div
+                     [:h3 "Administration"]
+                     [:div {:class "row pb-3 pt-2 pl-3"}
+                      [:a {:class "btn btn-sm btn-danger mr-2" :href "/?reset=1"
+                           :data-toggle "tooltip"
+                           :title "Clear branch data for all managed projects"}
+                       "Reset branch data"]
+                      [:a {:class "btn btn-sm btn-warning" :href "/?rebuild-images=1"
+                           :data-toggle "tooltip"
+                           :title "(Re)build all container images for managed projects"}
+                       "Rebuild container images"]]
+                     (when (not (nil? reset))
+                       [:div {:class "alert alert-danger"}
+                        "Are you sure you want to reset branch data for all projects? Note that "
+                        "doing so will kill any running processes and clear all console data."
+                        [:div {:class "pt-2"}
+                         [:a {:class "btn btn-sm btn-primary" :href "/"} "No, cancel"]
+                         [:span "&nbsp;"]
+                         [:a {:class "btn btn-sm btn-danger" :href "/?really-reset=1"}
+                          "Yes, continue"]]])
+                     (when (not (nil? rebuild-images))
+                       (render-rebuild-image-dialog "/"))
+                     (when (not (nil? rebuild-launched))
+                       [:div {:class "alert alert-success"}
+                        "Container images are being rebuilt. This could take a few minutes "
+                        "to complete."
+                        [:div [:a {:class "btn btn-sm btn-primary mt-2" :href "/"}
+                               "Dismiss"]]])])]]]})))
 
 (defn render-project
   "Render the home page for a project"
   [{:keys [params]
     {:keys [project-name refresh to-delete to-really-delete to-checkout
-            create invalid-name-error to-create branch-from]} :params,
+            create invalid-name-error to-create branch-from
+            rebuild-images really-rebuild rebuild-launched]} :params,
     :as request}]
   (log/debug "Processing request in render-project with params:" params)
   (let [this-url (str "/" project-name)
@@ -624,7 +675,6 @@
                   ;; will have been pushed to the remote upon creation:
                   (send-off branches/local-branches branches/create-local-branch project-name
                             branch-name branch-from request)
-                  (send-off branches/local-branches branches/refresh-local-branches [project-name])
                   (await branches/local-branches)
                   (send-off branches/remote-branches
                             branches/refresh-remote-branches-for-project project-name request)
@@ -666,6 +716,15 @@
           (log/info "Creation of a new branch:" to-create "in project" project-name
                     "initiated by" (-> request :session :user :login))
           (create-branch project-name to-create))
+
+        ;; Rebuild the project's containers:
+        (and (site-admin? request) (not (nil? really-rebuild)))
+        (let [remove-containers? (= really-rebuild "1")]
+          ;; We send the rebuild job through container-serializer so that it will run in the
+          ;; background:
+          (send-off branches/container-serializer
+                    branches/rebuild-container-images project-name remove-containers?)
+          (redirect (str this-url "?rebuild-launched=1")))
 
         ;; Refresh local and remote branches:
         (not (nil? refresh))
@@ -748,6 +807,19 @@
                           [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
                            "Cancel"]]]]])
 
+                    ;; Display this alert when the rebuild-images parameter is present and the user
+                    ;; is a site admin:
+                    (when (and (site-admin? request) (not (nil? rebuild-images)))
+                      (render-rebuild-image-dialog this-url))
+
+                    ;; Display this alert when a rebuild of container images has been launched:
+                    (when (not (nil? rebuild-launched))
+                      [:div {:class "alert alert-success"}
+                       "Container images are being rebuilt. This could take a few minutes "
+                       "to complete."
+                       [:div [:a {:class "btn btn-sm btn-primary mt-2" :href this-url}
+                              "Dismiss"]]])
+
                     ;; The non-conditional content of the project page is here:
                     [:h3 "Branches"]
                     [:div {:class "pb-2"}
@@ -761,14 +833,32 @@
                             :href (str this-url "?create=1")
                             :data-toggle "tooltip"
                             :title "Create a new local branch"}
-                        "Create new"])]
+                        "Create new"])
+                     (when (and (site-admin? request)
+                                (-> :projects (get-config) (get project-name) :docker-config
+                                    :active?))
+                       [:a {:class "btn btn-sm btn-warning ml-2"
+                            :href (str this-url "?rebuild-images=1")
+                            :data-toggle "tooltip"
+                            :title "Rebuild container images for this project"}
+                        "Rebuild container images"])]
                     (->> request (read-only?) (render-project-branches project-name))]})))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
   [{:keys [branch-name project-name run-time exit-code cancelled console] :as branch}
-   {:keys [updating-view] :as params}]
-  (let [branch-url (str "/" project-name "/branches/" branch-name)]
+   {:keys [follow updating-view] :as params}]
+  (let [branch-url (str "/" project-name "/branches/" branch-name)
+        follow-span [:span {:class "col-sm-2"}
+                     [:a {:class "btn btn-success btn-sm"
+                          :href (str branch-url "?follow=1" (when updating-view
+                                                              "&updating-view=1") "#bottom")}
+                      "Follow console"]]
+        unfollow-span [:span {:class "col-sm-2"}
+                       [:a {:class "btn btn-success btn-sm"
+                            :href (str branch-url (when updating-view
+                                                    "?updating-view=1"))}
+                        "Unfollow console"]]]
     (cond
       ;; The last process was cancelled:
       cancelled
@@ -792,18 +882,25 @@
                                        :href (str branch-url (when updating-view
                                                                "?updating-view=1"))}
                                    "Refresh"]]
-       [:span {:class "col-sm-2"} [:a {:class "btn btn-danger btn-sm"
+       [:span {:class "col-sm-2"} [:a {:class (str "btn btn-danger btn-sm"
+                                                   ;; Disable the cancel button if the user has
+                                                   ;; read-only access:
+                                                   (when (read-only? project-name branch-name)
+                                                     " disabled"))
                                        :href (str branch-url "?new-action=cancel-DROID-process"
                                                   (when updating-view "&updating-view=1"))}
-                                   "Cancel"]]]
+                                   "Cancel"]]
+       (if follow unfollow-span follow-span)]
 
       ;; The last process completed successfully:
       (= 0 @exit-code)
-      [:p {:class "alert alert-success"} "Success"]
+      [:p {:class "alert alert-success mr-3"} "Success"
+       (when follow unfollow-span)]
 
       ;; The last process completed unsuccessfully:
       :else
-      [:p {:class "alert alert-danger"} (str "ERROR: Exit code " @exit-code)])))
+      [:p {:class "alert alert-danger mr-3"} (str "ERROR: Exit code " @exit-code)
+       (when follow unfollow-span)])))
 
 (defn- prompt-to-kill-for-action
   "Given some branch data, and a new action to run, render an alert box asking the user to confirm
@@ -904,10 +1001,12 @@
      [:span {:class "text-monospace font-weight-bold"} view-path]
      [:span " does not exist in branch "]
      [:span {:class "text-monospace font-weight-bold"} branch-name]
-     [:span ". Ask someone with write access to this project to build it for you."]]]
+     (if (image-rebuilding? project-name branch-name)
+       [:span ". You cannot build it while the branch's image is being rebuilt. Try again later."]
+       [:span ". Ask someone with write access to this project to build it for you."])]]
    [:div {:class "pt-2"}
     [:a {:class "btn btn-sm btn-primary"
-         :href (str "/" project-name "/branches/" branch-name)} "Dismiss"]]])
+         :href (str "/" project-name "/branches/" branch-name "?close-tab=1")} "Dismiss"]]])
 
 (defn- render-console
   "Given some branch data, and a number of parameters related to an action or a view, render
@@ -941,8 +1040,10 @@
               (if ansi-commands?
                 (let [[process
                        a2h-exit-code] (do (log/debug "Colourizing console using ansi2html ...")
+                                          ;; TODO: once we eliminate the ansi2html dependency, this
+                                          ;; command should run in the branch container.
                                           (cmd/run-command
-                                           ["bash" "-c"
+                                           ["sh" "-c"
                                             (str "ansi2html -i < console.txt > console.html")
                                             :dir pwd]))
                       colourized-console (if (not= @a2h-exit-code 0)
@@ -983,19 +1084,22 @@
        (when (<= 35 (->> console
                          (filter #(= \newline  %))
                          (count)))
-         (render-status-bar)))]))
+         (render-status-bar)))
+     ;; An anchor for the bottom of the page (used for auto-refresh):
+     [:a {:id "bottom"}]]))
 
 (defn- render-version-control-section
   "Render the Version Control section on the page for a branch"
   [{:keys [branch-name project-name] :as branch}
    {:keys [params]
-    {:keys [confirm-push get-commit-msg get-commit-amend-msg next-task pr-added]} :params
+    {:keys [confirm-push confirm-reset-hard get-commit-msg get-commit-amend-msg next-task
+            pr-added]} :params
     :as request}]
   (let [get-last-commit-msg #(let [[process exit-code]
-                                   (cmd/run-command ["git" "show" "-s" "--format=%s"
-                                                     :dir (get-workspace-dir project-name
-                                                                             branch-name)]
-                                                    nil branch)]
+                                   (branches/run-branch-command
+                                    ["git" "show" "-s" "--format=%s"
+                                     :dir (get-workspace-dir project-name branch-name)]
+                                    project-name branch-name)]
                                (if-not (= 0 @exit-code)
                                  (do (log/error "Unable to retrieve previous commit message:"
                                                 (sh/stream-to-string process :err))
@@ -1003,11 +1107,11 @@
                                  (sh/stream-to-string process :out)))
 
         get-commits-to-push #(let [[process exit-code]
-                                   (cmd/run-command ["git" "log" "--branches" "--not" "--remotes"
-                                                     "--reverse" "--format=%s"
-                                                     :dir (get-workspace-dir project-name
-                                                                             branch-name)]
-                                                    nil branch)]
+                                   (branches/run-branch-command
+                                    ["git" "log" "--branches" "--not" "--remotes"
+                                     "--reverse" "--format=%s"
+                                     :dir (get-workspace-dir project-name branch-name)]
+                                    project-name branch-name)]
                                (if-not (= 0 @exit-code)
                                  (do (log/error "Unable to retrieve commit list:"
                                                 (sh/stream-to-string process :err))
@@ -1044,6 +1148,16 @@
                          :maxlength "500" :onClick "this.select();" :value (get-last-commit-msg)}]]]
          [:button {:type "submit" :class "btn btn-sm btn-warning mr-2"} "Amend"]
          [:a {:class "btn btn-sm btn-secondary" :href this-url} "Cancel"]]]
+
+       ;; If a reset --hard was requested, confirm that the user really wants to do it:
+       (not (nil? confirm-reset-hard))
+       [:div {:class "alert alert-danger m-1"}
+        [:div {:class "font-weight-bold mb-2"}
+         "Reset will delete all changes since the last commit. "
+         "This cannot be undone. Are you sure?"]
+        [:a {:href this-url :class "btn btn-sm btn-secondary"} "Cancel"]
+        [:a {:href (str this-url "?new-action=git-reset-hard") :class "ml-2 btn btn-sm btn-danger"}
+         "Reset branch"]]
 
        ;; If a push was requested, render a dialog showing the list of local commits that would be
        ;; pushed, and ask the user to confirm:
@@ -1157,7 +1271,12 @@
        [:td [:a {:href (str this-url (-> gh/git-actions :git-push :html-param))
                  :class (-> gh/git-actions :git-push :html-class (str " btn-block"))}
              (-> gh/git-actions :git-push :html-btn-label)]]
-       [:td "Push your latest local commit(s) to GitHub"]]]]))
+       [:td "Push your latest local commit(s) to GitHub"]]
+      [:tr
+       [:td [:a {:href (str this-url (-> gh/git-actions :git-reset-hard :html-param))
+                 :class (-> gh/git-actions :git-reset-hard :html-class (str " btn-block"))}
+             (-> gh/git-actions :git-reset-hard :html-btn-label)]]
+       [:td "Reset this branch to the last commit"]]]]))
 
 (defn- render-branch-page
   "Given some branch data, and a number of parameters related to an action or a view, construct the
@@ -1165,7 +1284,7 @@
   [{:keys [branch-name project-name Makefile] :as branch}
    {:keys [params]
     {:keys [view-path missing-view confirm-kill confirm-update updating-view process-killed
-            commit-msg commit-amend-msg pr-to-add]} :params
+            follow commit-msg commit-amend-msg pr-to-add]} :params
     :as request}]
   (let [this-url (str "/" project-name "/branches/" branch-name)]
     (cond
@@ -1207,6 +1326,11 @@
            (str this-url "?pr-added=")
            (redirect))
 
+      ;; The follow flag is set, but no process is currently running. In this case redirect back
+      ;; to the page with the flag unset:
+      (and follow (-> branch :exit-code (realized?)))
+      (-> this-url (str "?" (-> params (dissoc :follow :folval) (params-to-query-str))) (redirect))
+
       ;; A view has successfully finished updating a view. In this case redirect to the view.
       (and updating-view
            (-> branch :exit-code (realized?))
@@ -1219,6 +1343,17 @@
        request
        {:title (-> :projects (get-config) (get project-name) :project-title
                    (str " -- " branch-name))
+        :auto-refresh (when follow
+                        {:interval 5
+                         :anchor (-> this-url
+                                     (str "?" (-> params
+                                                  ;; A random parameter is needed to force the
+                                                  ;; browser to recognise the url as different from
+                                                  ;; the last one when refreshing; otherwise it will
+                                                  ;; maintain the previous location on the page.
+                                                  (assoc :folval (rand-int 100000))
+                                                  (params-to-query-str))
+                                          "#bottom"))})
         :heading [:div
                   [:a {:href "/"} "DROID"]
                   " / "
@@ -1227,32 +1362,41 @@
                   branch-name]
         :content [:div
                   [:div
-                   [:p {:class "mt-n2"} (branch-status-summary project-name branch-name)]
+                   [:p {:class "mt-n2"}
+                    (branch-status-summary project-name branch-name)
+                    (let [pr-url (->> @branches/remote-branches
+                                      (#(get % (keyword project-name)))
+                                      (filter #(= branch-name (:name %)))
+                                      (first)
+                                      :pull-request)]
+                      (when pr-url
+                        [:span " &ndash; pull request "
+                         [:a {:href pr-url :target "__blank"}
+                          "#" (-> pr-url (string/split #"/") (last))]]))]
 
                    [:hr {:class "line1"}]
 
+                   (when (image-rebuilding? project-name branch-name)
+                     [:p {:class "alert alert-primary"}
+                      "The image for this branch is currently being built. Access to this branch "
+                      "will be read-only until it is complete."])
                    (when process-killed
                      [:p {:class "alert alert-warning"}
                       "Process killed. If the process was being monitored in a different tab, "
                       "you should now close that tab."])
 
-                   (if (or confirm-update confirm-kill updating-view)
+                   (if (or confirm-update confirm-kill updating-view missing-view)
                      ;; If the confirm-update, confirm-kill, or updating-view flags have been set,
                      ;; then in the former case, render an update prompt. In the latter two cases,
                      ;; the parameters will be handled by the render-console function:
-                     (if confirm-update
-                       (prompt-to-update-view branch params)
-                       (render-console branch params))
+                     (cond confirm-update (prompt-to-update-view branch params)
+                           missing-view (notify-missing-view branch view-path)
+                           :else (render-console branch params))
                      ;; Otherwise render the branch page as normal:
                      [:div
                       [:div {:class "row"}
                        [:div {:class "col-sm-6"}
                         [:h3 "Workflow"]
-                        ;; If the missing-view parameter is present, then a user with read-only
-                        ;; access is trying to look at a view that doesn't exist:
-                        (when-not (nil? missing-view)
-                          (notify-missing-view branch view-path))
-
                         ;; Render the Workflow HTML from the Makefile:
                         (or (:html Makefile)
                             [:ul [:li "No workflow found"]])]
@@ -1297,10 +1441,10 @@
                                            (conj (:exec-views %))))))
 
         ;; Runs `make -q` to see if the view is up to date:
-        up-to-date? #(let [[process exit-code] (cmd/run-command
+        up-to-date? #(let [[process exit-code] (branches/run-branch-command
                                                 ["make" "-q" view-path
                                                  :dir (get-workspace-dir project-name branch-name)]
-                                                nil @branch-agent)]
+                                                project-name branch-name)]
                        (or (= @exit-code 0) false))
 
         ;; Runs `make` (in the background) to rebuild the view, with output directed to the branch's
@@ -1309,15 +1453,16 @@
                       (log/info "Rebuilding view" view-path "from branch" branch-name "of project"
                                 project-name "for user" (-> request :session :user :login))
                       (let [[process exit-code]
-                            (cmd/run-command ["bash" "-c"
-                                              ;; `exec` is needed here to prevent the make process from
-                                              ;; detaching from the parent (since that would make it
-                                              ;; difficult to destroy later).
-                                              (str "exec make " view-path
-                                                   " > " (get-temp-dir project-name branch-name)
-                                                   "/console.txt 2>&1")
-                                              :dir (get-workspace-dir project-name branch-name)]
-                                             nil branch)]
+                            (branches/run-branch-command
+                             ["sh" "-c"
+                              ;; `exec` is needed here to prevent the make process from
+                              ;; detaching from the parent (since that would make it
+                              ;; difficult to destroy later).
+                              (str "exec make " view-path
+                                   " > " (get-temp-dir project-name branch-name)
+                                   "/console.txt 2>&1")
+                              :dir (get-workspace-dir project-name branch-name)]
+                             project-name branch-name)]
                         (assoc branch
                                :action view-path
                                :command (str "make " view-path)
@@ -1329,7 +1474,8 @@
         ;; Delivers an executable, possibly CGI-aware, script:
         deliver-exec-view #(let [script-path (-> (get-workspace-dir project-name branch-name)
                                                  (str "/" view-path))]
-                             (cond (not (cmd/executable? script-path @branch-agent))
+                             (cond (not (branches/path-executable?
+                                         script-path project-name branch-name))
                                    (let [error-msg (str script-path " is not executable")]
                                      (log/error error-msg)
                                      (render-4xx request 400 error-msg))
@@ -1457,7 +1603,7 @@
   call the branch's agent to potentially modify the branch."
   [{:keys [params]
     {:keys [project-name branch-name new-action new-action-param confirm-kill force-kill
-            updating-view cancel-kill-for-view cancel-update-view]} :params
+            updating-view cancel-kill-for-view cancel-update-view close-tab]} :params
     :as request}]
   (letfn [(launch-process [branch]
             (log/info "Starting action" new-action "on branch" branch-name "of project"
@@ -1476,8 +1622,8 @@
                             ;; Otherwise prefix it with "make ":
                             (str "make " new-action))
                   [process exit-code] (when-not (nil? command)
-                                        (cmd/run-command
-                                         ["bash" "-c"
+                                        (branches/run-branch-command
+                                         ["sh" "-c"
                                           ;; `exec` is needed here to prevent the make process from
                                           ;; detaching from the parent (since that would make it
                                           ;; difficult to destroy later).
@@ -1486,7 +1632,7 @@
                                            " > " (get-temp-dir project-name branch-name)
                                            "/console.txt 2>&1")
                                           :dir (get-workspace-dir project-name branch-name)]
-                                         nil branch))]
+                                         project-name branch-name))]
               (if (nil? command)
                 ;; If the command is nil just return the branch back unchanged:
                 branch
@@ -1561,11 +1707,11 @@
             (render-close-tab request)
             (redirect this-url)))
 
-        ;; If this is a cancel action related to a view; i.e., if when asked to confirm whether she
+        ;; If this is a cancel action related to a view (i.e., if when asked to confirm whether she
         ;; really wants to update the view, or kill an existing process so as to update the view,
-        ;; the user changes her mind and clicks on the "do nothing" button, then just render the
-        ;; "close this tab" page:
-        (or cancel-update-view cancel-kill-for-view)
+        ;; the user changes her mind and clicks on the "do nothing" button), or if we see the
+        ;; "close-tab" parameter, then just render the "close this tab" page:
+        (or cancel-update-view cancel-kill-for-view close-tab)
         (render-close-tab request)
 
         ;; If there is no action to be performed, or the action is unrecognised, then just render
