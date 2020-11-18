@@ -401,7 +401,7 @@
                                                                (char-array)
                                                                (count)
                                                                (str))
-                                          "CONTENT_TYPE" "application/x-www-form-urlencoded"})
+                                          "CONTENT_TYPE" (get headers "content-type" "")})
 
                                 :else
                                 (log/error "Unsupported request method:" request-method))))
