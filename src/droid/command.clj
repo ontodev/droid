@@ -103,7 +103,7 @@
                                        (local-to-docker project-name branch-name))])
                            (#(do (log/debug "Running" % "in container" container-id) %))
                            (apply sh/proc)))
-                  (do (log/debug "Running" command "without a container")
+                  (do (log/debug "Running" (vec command) "without a container")
                       (apply sh/proc command)))
         exit-code (-> process
                       (#(if timeout

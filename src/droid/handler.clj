@@ -1,5 +1,6 @@
 (ns droid.handler
   (:require [cheshire.core :as cheshire]
+            [clojure.java.io :as io]
             [compojure.core :refer [defroutes GET POST]]
             [compojure.route :as route]
             [environ.core :refer [env]]
@@ -8,6 +9,7 @@
             [ring.middleware.oauth2 :refer [wrap-oauth2]]
             [ring.middleware.session :refer [wrap-session]]
             [ring.middleware.session.cookie :refer [cookie-store]]
+            [ring.util.request :refer [body-string]]
             [ring.util.response :refer [redirect]]
             [droid.config :refer [get-config]]
             [droid.db :as db]
@@ -29,6 +31,14 @@
                  {% val})))
        ;; Merge the hashmaps corresponding to each environment variable into one hashmap:
        (apply merge)))
+
+(defn- wrap-raw-body-rdr
+  "Create a Reader corresponding to the raw request body and add it to the request."
+  [handler]
+  ;; Note that this code is adapted from: https://stackoverflow.com/a/37397991
+  (fn [request]
+    (let [raw-body (body-string request)]
+      (->> raw-body (char-array) (io/reader) (assoc request :raw-body-rdr) (handler)))))
 
 (defn- wrap-authenticated
   "If the request is to logout, then reset the session and redirect to the index page. Otherwise,
@@ -112,7 +122,8 @@
              (assoc :proxy true)
              (assoc-in [:security :anti-forgery] false)
              (assoc-in [:session :cookie-attrs :same-site] :lax)
-             (assoc-in [:session :store] (cookie-store {:key (:cookie-store-key secrets)})))))))
+             (assoc-in [:session :store] (cookie-store {:key (:cookie-store-key secrets)})))))
+      (wrap-raw-body-rdr)))
 
 (def app
   "The web app"
