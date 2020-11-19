@@ -356,7 +356,8 @@
 (defn- run-cgi
   "Run the possibly CGI-aware script located at the given path and render its response"
   [script-path
-   {:keys [request-method headers params form-params remote-addr server-name server-port]
+   {:keys [request-method headers params form-params remote-addr server-name server-port
+           raw-body-rdr]
     {:keys [project-name branch-name]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
@@ -368,6 +369,7 @@
           dirname (-> script-path (io/file) (.getParent))
           basename (-> script-path (io/file) (.getName))
           query-string (-> params (params-to-query-str))
+          raw-body (slurp raw-body-rdr)
           cgi-input-env (-> {"AUTH_TYPE" ""
                              "CONTENT_LENGTH" ""
                              "CONTENT_TYPE" ""
@@ -395,11 +397,11 @@
 
                                 (= request-method :post)
                                 (merge % {"REQUEST_METHOD" "POST"
-                                          "CONTENT_LENGTH" (-> query-string
+                                          "CONTENT_LENGTH" (-> raw-body
                                                                (char-array)
                                                                (count)
                                                                (str))
-                                          "CONTENT_TYPE" "application/x-www-form-urlencoded"})
+                                          "CONTENT_TYPE" (get headers "content-type" "")})
 
                                 :else
                                 (log/error "Unsupported request method:" request-method))))
@@ -415,7 +417,7 @@
           timeout (get-config :cgi-timeout)
           [process
            exit-code] (if (= request-method :post)
-                        (do (spit tmp-infile query-string)
+                        (do (spit tmp-infile raw-body)
                             (branches/run-branch-command
                              ["sh" "-c"
                               (str "./" basename " < " tmp-infile " > " tmp-outfile)
