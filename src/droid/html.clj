@@ -5,6 +5,7 @@
             [decorate.core :refer [decorate defdecorator]]
             [hiccup.page :refer [html5]]
             [hickory.core :as hickory]
+            [lambdaisland.ansi :as ansi]
             [me.raynes.conch.low-level :as sh]
             [ring.util.codec :as codec]
             [ring.util.http-status :as status]
@@ -1037,23 +1038,13 @@
                   ansi-commands? (and escape-index (->> escape-index (inc) (nth console) (int)
                                                         (#(and (>= % 0x40) (<= % 0x5F)))))
                   pwd (get-temp-dir project-name branch-name)
-                  render-pre-block (fn [arg]
-                                     [:pre {:class "bg-light p-2"} [:samp {:class "shell"} arg]])]
+                  render-pre-block #(into [:pre {:class "bg-light p-2"}] %)]
               (if ansi-commands?
-                (let [[process
-                       a2h-exit-code] (do (log/debug "Colourizing console using ansi2html ...")
-                                          ;; TODO: once we eliminate the ansi2html dependency, this
-                                          ;; command should run in the branch container.
-                                          (cmd/run-command
-                                           ["sh" "-c"
-                                            (str "ansi2html -i < console.txt > console.html")
-                                            :dir pwd]))
-                      colourized-console (if (not= @a2h-exit-code 0)
-                                           (do (log/error "Unable to colourize console.")
-                                               console)
-                                           (slurp (str pwd "/console.html")))]
-                  (io/delete-file (str pwd "/console.html"))
-                  (render-pre-block colourized-console))
+                (-> console
+                    (string/replace "<" "&lt;")
+                    (string/replace ">" "&gt;")
+                    (ansi/text->hiccup)
+                    (render-pre-block))
                 (-> console
                     (string/replace #"\u001b\[.*?m" "")
                     (string/replace "<" "&lt;")

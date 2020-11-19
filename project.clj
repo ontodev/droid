@@ -9,7 +9,7 @@
                  [compojure "1.6.1"]
                  [decorate "0.1.3"]
                  [environ "1.1.0"]
-                 [hiccup "1.0.5"]
+                 [hiccup "2.0.0-alpha2"]
                  [hickory "0.7.1"]
                  [http-kit "2.3.0"]
                  [jdbc-ring-session "1.3"]
@@ -19,7 +19,8 @@
                  [com.h2database/h2 "1.4.200"]
                  [ring/ring-defaults "0.3.2"]
                  [ring-oauth2 "0.1.4"]
-                 [tentacles "0.5.1"]]
+                 [tentacles "0.5.1"]
+                 [lambdaisland/ansi "0.1.6"]]
   ;; Increase the timeout value when loading the repl via Leiningen. We need this in a dev setting
   ;; because it is possible that we will have to build multiple docker images at startup and this
   ;; may take awhile. The default is 600000 (10 minutes), which we increase here:
