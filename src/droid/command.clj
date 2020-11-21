@@ -124,3 +124,9 @@
             (str (sh/stream-to-string process :err))
             (Exception.)
             (throw))))))
+
+(defn program-exists?
+  "Returns true if the given program can be found in the command $PATH"
+  [program]
+  (let [[process exit-code] (run-command ["which" program])]
+    (or (= @exit-code 0) false)))

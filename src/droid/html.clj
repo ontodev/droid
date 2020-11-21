@@ -29,6 +29,7 @@
         action (:action this-branch)
         exit-code (:exit-code this-branch)]
     (and this-branch
+         exit-code
          (= action "create-docker-image")
          (not (realized? exit-code)))))
 
@@ -493,7 +494,7 @@
             ;; If the response does not have a valid header, then all of it is treated as valid
             ;; output. In this case we write this output to the console, modify the values for
             ;; `command` and `action` in the branch, and then redirect back to the branch page:
-            (let [console-path (-> (get-temp-dir project-name branch-name) (str "/console.txt"))]
+            (let [console-path (-> (get-temp-dir project-name branch-name) (str "/console.html"))]
               (->> response-sections
                    (apply concat)
                    (vec)
@@ -1031,34 +1032,21 @@
           (render-console-text []
             ;; Look for ANSI escape sequences in the console text. (see:
             ;; https://en.wikipedia.org/wiki/ANSI_escape_code#Escape_sequences). If any are found,
-            ;; then launch the python program `ansi2html` in the shell to convert them all to HTML.
-            ;; Either way wrap the console text in a pre-formatted block and return it.
+            ;; remove them. This should only happen if DROID was not able to automatically convert
+            ;; these escape codes into HTML previously. Either way wrap the console text in a
+            ;; pre-formatted block and return it.
             (let [escape-index (when console (->> 0x1B (char) (string/index-of console)))
                   ansi-commands? (and escape-index (->> escape-index (inc) (nth console) (int)
                                                         (#(and (>= % 0x40) (<= % 0x5F)))))
-                  pwd (get-temp-dir project-name branch-name)
                   render-pre-block (fn [arg]
                                      [:pre {:class "bg-light p-2"} [:samp {:class "shell"} arg]])]
               (if ansi-commands?
-                (let [[process
-                       a2h-exit-code] (do (log/debug "Colourizing console using ansi2html ...")
-                                          ;; TODO: once we eliminate the ansi2html dependency, this
-                                          ;; command should run in the branch container.
-                                          (cmd/run-command
-                                           ["sh" "-c"
-                                            (str "ansi2html -i < console.txt > console.html")
-                                            :dir pwd]))
-                      colourized-console (if (not= @a2h-exit-code 0)
-                                           (do (log/error "Unable to colourize console.")
-                                               console)
-                                           (slurp (str pwd "/console.html")))]
-                  (io/delete-file (str pwd "/console.html"))
-                  (render-pre-block colourized-console))
                 (-> console
                     (string/replace #"\u001b\[.*?m" "")
                     (string/replace "<" "&lt;")
                     (string/replace ">" "&gt;")
-                    (render-pre-block)))))]
+                    (render-pre-block))
+                (render-pre-block console))))]
 
     [:div {:id "console"}
      (if (nil? exit-code)
@@ -1086,7 +1074,10 @@
        (when (<= 35 (->> console
                          (filter #(= \newline  %))
                          (count)))
-         (render-status-bar)))
+         [:div
+          [:br]
+          [:hr {:class "line1"}]
+          (render-status-bar)]))
      ;; An anchor for the bottom of the page (used for auto-refresh):
      [:a {:id "bottom"}]]))
 
@@ -1460,9 +1451,12 @@
                               ;; `exec` is needed here to prevent the make process from
                               ;; detaching from the parent (since that would make it
                               ;; difficult to destroy later).
-                              (str "exec make " view-path
-                                   " > " (get-temp-dir project-name branch-name)
-                                   "/console.txt 2>&1")
+                              (str "exec make " view-path " 2>&1 "
+                                   ;; If aha is installed, use it to colourise the console output:
+                                   (when (branches/can-colourize? project-name branch-name)
+                                     " | aha --no-header")
+                                   " | tee " (get-temp-dir project-name branch-name)
+                                   "/console.html")
                               :dir (get-workspace-dir project-name branch-name)]
                              project-name branch-name)]
                         (assoc branch
@@ -1630,9 +1624,12 @@
                                           ;; detaching from the parent (since that would make it
                                           ;; difficult to destroy later).
                                           (str
-                                           "exec " command
-                                           " > " (get-temp-dir project-name branch-name)
-                                           "/console.txt 2>&1")
+                                           "exec " command " 2>&1 "
+                                           ;; If aha is installed, use it to colourise the output:
+                                           (when (branches/can-colourize? project-name branch-name)
+                                             " | aha --no-header")
+                                           " | tee " (get-temp-dir project-name branch-name)
+                                           "/console.html")
                                           :dir (get-workspace-dir project-name branch-name)]
                                          project-name branch-name))]
               (if (nil? command)
