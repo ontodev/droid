@@ -563,7 +563,7 @@
         ;; We send the rebuild jobs through container-serializer so that they will run in the
         ;; background one after another:
         (send-off branches/container-serializer
-                  branches/rebuild-container-images project-name remove-containers?))
+                  branches/rebuild-images-and-containers project-name remove-containers?))
       (redirect "/?rebuild-launched=1"))
 
     ;; Otherwise just render the page:
@@ -608,8 +608,8 @@
                        "Reset branch data"]
                       [:a {:class "btn btn-sm btn-warning" :href "/?rebuild-images=1"
                            :data-toggle "tooltip"
-                           :title "(Re)build all container images for managed projects"}
-                       "Rebuild container images"]]
+                           :title "(Re)build all images and containers for managed projects"}
+                       "Rebuild images and containers"]]
                      (when (not (nil? reset))
                        [:div {:class "alert alert-danger"}
                         "Are you sure you want to reset branch data for all projects? Note that "
@@ -726,7 +726,7 @@
           ;; We send the rebuild job through container-serializer so that it will run in the
           ;; background:
           (send-off branches/container-serializer
-                    branches/rebuild-container-images project-name remove-containers?)
+                    branches/rebuild-images-and-containers project-name remove-containers?)
           (redirect (str this-url "?rebuild-launched=1")))
 
         ;; Refresh local and remote branches:
@@ -843,8 +843,8 @@
                        [:a {:class "btn btn-sm btn-warning ml-2"
                             :href (str this-url "?rebuild-images=1")
                             :data-toggle "tooltip"
-                            :title "Rebuild container images for this project"}
-                        "Rebuild container images"])]
+                            :title "Rebuild images and containers for this project"}
+                        "Rebuild images and containers"])]
                     (->> request (read-only?) (render-project-branches project-name))]})))))
 
 (defn- render-status-bar-for-action
