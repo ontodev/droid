@@ -92,6 +92,10 @@
         get-working-dir #(->> (or (get-option-value command :dir)
                                   (:default-working-dir docker-config))
                               (str "/"))
+        ;; Only log the string portions of the command as the other parts (especially :env) may
+        ;; contain secrets:
+        command-log (->> command (filter string?) (string/join " "))
+        ;; Run the process in the given container if one is provided, otherwise run it on the server
         process (if container-id
                   (do (->> docker-cmd-base
                            (local-to-docker project-name branch-name)
@@ -101,9 +105,9 @@
                            (into ["docker" "exec" "--workdir"
                                   (->> (get-working-dir)
                                        (local-to-docker project-name branch-name))])
-                           (#(do (log/debug "Running" % "in container" container-id) %))
+                           (#(do (log/debug "Running" command-log "in container" container-id) %))
                            (apply sh/proc)))
-                  (do (log/debug "Running" (vec command) "without a container")
+                  (do (log/debug "Running" command-log "without a container")
                       (apply sh/proc command)))
         exit-code (-> process
                       (#(if timeout
