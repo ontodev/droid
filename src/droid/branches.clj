@@ -147,13 +147,13 @@
                   (string/trim-newline)
                   (not-empty))))]
 
-    ;; Wait for whatever process is currently running to finish:
-    (deref exit-code)
     ;; Only create a new container if one doesn't already exist for the branch:
     (when-not (container-exists?)
+      ;; Wait for whatever process is currently running to finish:
+      (deref exit-code)
       (create-container)
       (start-container))
-    ;; return the branch for threading through (this function will typically be passed tthrough an
+    ;; return the branch for threading through (this function will typically be passed through an
     ;; agent):
     branch))
 
@@ -322,9 +322,8 @@
         (if image-id
           (log/debug "An image (ID:" image-id ") for branch:" branch-name "of project:"
                      project-name "already exists. No need to create one.")
-          (do
-            (send-off branch-agent create-image-for-branch (str project-name "-" branch-name))
-            (send-off branch-agent create-and-start-branch-container))))
+          (send-off branch-agent create-image-for-branch (str project-name "-" branch-name)))
+        (send-off branch-agent create-and-start-branch-container))
 
       ;; The keyword identifying the watcher is composed of its project and branch names joined by
       ;; a '-'. This can be used if the watcher needs to be removed via `remove-watch` later.
