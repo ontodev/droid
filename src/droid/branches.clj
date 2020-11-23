@@ -78,7 +78,7 @@
               ;; The above command will have exit status 0 even if it doesn't find an image, so
               ;; throw an exception if anything else is received:
               (when-not (= @exit-code 0)
-                (cmd/throw-process-exception process "Error looking up image"))
+                (cmd/throw-process-exception process "Error looking up docker image"))
               ;; If there is no such image the output will be an empty string, otherwise it will be
               ;; the image id. In the former case log this, implicitly sending back the ID as nil:
               (-> (sh/stream-to-string process :out)
@@ -93,69 +93,6 @@
       ;; Otherwise the ref is the project default:
       (-> :projects (get-config) (get project-name) :docker-config :image
           (lookup-image)))))
-
-(defn- create-and-start-branch-container
-  "If a container for the given branch doesn't exist, lookup the image assigned to the branch and
-  use it to create a new container."
-  [{:keys [branch-name project-name exit-code] :as branch}]
-  (letfn [(create-container []
-            ;; Creates a docker container encapsulating a shell:
-            (let [image-id (get-image-for-branch project-name branch-name)
-                  container-name (str project-name "-" branch-name)
-                  docker-config (-> :projects (get-config) (get project-name) :docker-config)]
-              (if-not image-id
-                ;; We should have found an image id. If we did not, throw an exception:
-                (throw (Exception. (str "Could not find an image for branch:" branch-name
-                                        "of project:" project-name)))
-                (let [ws-dir (-> (get-workspace-dir project-name branch-name) (str "/"))
-                      tmp-dir (-> (get-temp-dir project-name branch-name) (str "/"))
-                      [process
-                       exit-code] (cmd/run-command
-                                   ["docker" "create" "--interactive" "--tty"
-                                    "--name" container-name
-                                    "--volume" (str ws-dir ":" (:workspace-dir docker-config))
-                                    "--volume" (str tmp-dir ":" (:temp-dir docker-config))
-                                    image-id
-                                    (:shell-command docker-config)])]
-                  (log/info "Creating container for" container-name "with docker config:"
-                            docker-config)
-                  (when-not (= @exit-code 0)
-                    (cmd/throw-process-exception process "Error creating container"))
-                  ;; The container id can be retrieved from STDOUT:
-                  (-> (sh/stream-to-string process :out)
-                      (string/trim-newline))))))
-
-          (start-container []
-            ;; Starts the docker container for the given branch of the given project
-            (let [container-name (str project-name "-" branch-name)
-                  [process exit-code] (cmd/run-command ["docker" "start" container-name])]
-              (log/info "Starting container:" container-name)
-              (when-not (= @exit-code 0)
-                (cmd/throw-process-exception process "Error starting container"))
-              ;; Return the container name, in case the function needs to be used for threading:
-              container-name))
-
-          (container-exists? []
-            (let [container-name (str project-name "-" branch-name)
-                  [process exit-code] (cmd/run-command ["docker" "ps" "-q" "-f"
-                                                        (str "name=" container-name)])]
-              (when-not (= @exit-code 0)
-                (cmd/throw-process-exception process "Error retrieving container"))
-              ;; If there is no such container the output will be an empty string otherwise it will be
-              ;; the container id.
-              (-> (sh/stream-to-string process :out)
-                  (string/trim-newline)
-                  (not-empty))))]
-
-    ;; Only create a new container if one doesn't already exist for the branch:
-    (when-not (container-exists?)
-      ;; Wait for whatever process is currently running to finish:
-      (deref exit-code)
-      (create-container)
-      (start-container))
-    ;; return the branch for threading through (this function will typically be passed through an
-    ;; agent):
-    branch))
 
 (defn run-branch-command
   "Runs the given command. If docker has been activated for the given project, then run the
@@ -253,19 +190,34 @@
               (assoc % :run-time (->> branch :start-time (- (System/currentTimeMillis))))
               %))))))
 
-(defn- create-image-for-branch
+(defn- create-image-and-container-for-branch
   "Create a new branch-specific docker image using the given image reference as the argument
   to --tag, and attach the build process to the given branch so that its output can be
   monitored in the console"
   [{:keys [branch-name project-name] :as branch} image-ref]
-  (log/info "Creating docker image" image-ref "...")
-  (let [command-base (str "docker build --tag " image-ref " .")
-        command ["sh" "-c" (str command-base " > " (get-temp-dir project-name branch-name)
-                                "/console.txt 2>&1")
+  (log/info "Creating docker image and container for branch:" branch-name "of project:"
+            project-name)
+  (let [container-name (str project-name "-" branch-name)
+        docker-config (-> :projects (get-config) (get project-name) :docker-config)
+        ws-dir (-> (get-workspace-dir project-name branch-name) (str "/"))
+        tmp-dir (-> (get-temp-dir project-name branch-name) (str "/"))
+        output-redirect (str "> " (get-temp-dir project-name branch-name)
+                             "/console.txt 2>&1")
+        command-base (str "docker build --tag " image-ref " . " output-redirect
+                          " &&"
+                          " docker create --interactive --tty"
+                          " --name " container-name
+                          " --volume " (str ws-dir ":" (:workspace-dir docker-config))
+                          " --volume " (str tmp-dir ":" (:temp-dir docker-config))
+                          " " image-ref " "
+                          (:shell-command docker-config) " >" output-redirect
+                          " &&"
+                          " docker start " container-name " >" output-redirect)
+        command ["sh" "-c" command-base
                  :dir (get-workspace-dir project-name branch-name)]
         [process exit-code] (cmd/run-command command)]
     (assoc branch
-           :action "create-docker-image"
+           :action "create-docker-image-and-container"
            :command command-base
            :process process
            :start-time (System/currentTimeMillis)
@@ -322,8 +274,8 @@
         (if image-id
           (log/debug "An image (ID:" image-id ") for branch:" branch-name "of project:"
                      project-name "already exists. No need to create one.")
-          (send-off branch-agent create-image-for-branch (str project-name "-" branch-name)))
-        (send-off branch-agent create-and-start-branch-container))
+          (send-off branch-agent create-image-and-container-for-branch
+                    (str project-name "-" branch-name))))
 
       ;; The keyword identifying the watcher is composed of its project and branch names joined by
       ;; a '-'. This can be used if the watcher needs to be removed via `remove-watch` later.
@@ -643,6 +595,5 @@
                                  (get (keyword branch-name)))]
             (when branch-agent
               (when (-> ws-dir (str "/" branch-name "/Dockerfile") (io/file) (.exists))
-                (send-off branch-agent create-image-for-branch (str project-name "-" branch-name)))
-              ;; Rebuild the container:
-              (send-off branch-agent create-and-start-branch-container))))))))
+                (send-off branch-agent create-image-and-container-for-branch
+                          (str project-name "-" branch-name))))))))))

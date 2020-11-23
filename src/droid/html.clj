@@ -30,7 +30,7 @@
         exit-code (:exit-code this-branch)]
     (and this-branch
          exit-code
-         (= action "create-docker-image")
+         (= action "create-docker-image-and-container")
          (not (realized? exit-code)))))
 
 (defn- site-admin?
