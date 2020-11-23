@@ -129,4 +129,6 @@
   "Returns true if the given program can be found in the command $PATH"
   [program]
   (let [[process exit-code] (run-command ["which" program])]
+    (when (not= @exit-code 0)
+      (log/debug "Program:" program "does not exist"))
     (or (= @exit-code 0) false)))

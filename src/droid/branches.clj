@@ -182,12 +182,6 @@
                                                          :branch-name branch-name
                                                          :container-id container-id}))))
 
-(defn can-colourize?
-  "Returns true if the given branch can colourize the console or false if it cannot"
-  [project-name branch-name]
-  (let [[process exit-code] (run-branch-command ["which" "aha"] project-name branch-name)]
-    (or (= @exit-code 0) false)))
-
 (defn path-executable?
   "Determine whether the given path is executable. If docker has been activated for the given
   project, then check whether the script is executable in the container for the branch,
@@ -260,7 +254,7 @@
           ;; Add the git status of the branch:
           (assoc :git-status git-status)
           ;; Add the console contents and info about the running process, if any:
-          (assoc :console (-> branch-temp-dir (str "/console.html") (slurp)))
+          (assoc :console (-> branch-temp-dir (str "/console.txt") (slurp)))
           (#(if (and (not (->> % :process nil?))
                      (not (->> % :exit-code nil?))
                      (not (->> % :exit-code realized?)))
@@ -274,12 +268,8 @@
   [{:keys [branch-name project-name] :as branch} image-ref]
   (log/info "Creating docker image" image-ref "...")
   (let [command-base (str "docker build --tag " image-ref " .")
-        command ["sh" "-c" (str command-base " 2>&1 "
-                                ;; If aha is installed, use it to colourise the console output:
-                                (when (cmd/program-exists? "aha")
-                                  " | aha --no-header")
-                                " | tee " (get-temp-dir project-name branch-name)
-                                "/console.html")
+        command ["sh" "-c" (str command-base " > " (get-temp-dir project-name branch-name)
+                                "/console.txt 2>&1")
                  :dir (get-workspace-dir project-name branch-name)]
         [process exit-code] (cmd/run-command command)]
     (assoc branch
@@ -309,11 +299,11 @@
     ;; If a subdirectory with the given branch name doesn't exist in the temp dir,
     ;; recreate it:
     (-> project-temp-dir (str "/" branch-name) (recreate-dir-if-not-exists))
-    ;; If the console.html file doesn't already exist in the branch's temp dir, then initialize an
+    ;; If the console.txt file doesn't already exist in the branch's temp dir, then initialize an
     ;; empty one:
-    (when-not (-> project-temp-dir (str "/" branch-name "/console.html") (io/file) (.isFile))
+    (when-not (-> project-temp-dir (str "/" branch-name "/console.txt") (io/file) (.isFile))
       (-> project-temp-dir (str "/" branch-name) (io/file) (.mkdir))
-      (-> project-temp-dir (str "/" branch-name "/console.html") (spit nil)))
+      (-> project-temp-dir (str "/" branch-name "/console.txt") (spit nil)))
 
     ;; Create a hashmap entry mapping the keywordized version of the branch name to a "branch",
     ;; i.e., the contents of its corresponding workspace directory. These contents are represented

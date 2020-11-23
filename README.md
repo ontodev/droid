@@ -103,4 +103,4 @@ The `project1/`, `project2/`, etc. directories (and their subdirectories) should
 
 ## aha - Ansi HTML Adapter
 
-In order to colourize the console output, DROID requires the command-line program `aha` to be installed, which is available on Debian and Ubuntu via `apt` and on Mac via `homebrew`. For more info, see: https://github.com/theZiz/aha. *Note that if DROID is being run with Docker then you must make sure that `aha` will be installed in the Dockerfile for every project DROID manages.*
+In order to colourize the console output, DROID requires the command-line program `aha` to be installed, which is available on Debian and Ubuntu via `apt` and on Mac via `homebrew`. For more info, see: https://github.com/theZiz/aha.

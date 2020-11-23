@@ -494,7 +494,7 @@
             ;; If the response does not have a valid header, then all of it is treated as valid
             ;; output. In this case we write this output to the console, modify the values for
             ;; `command` and `action` in the branch, and then redirect back to the branch page:
-            (let [console-path (-> (get-temp-dir project-name branch-name) (str "/console.html"))]
+            (let [console-path (-> (get-temp-dir project-name branch-name) (str "/console.txt"))]
               (->> response-sections
                    (apply concat)
                    (vec)
@@ -1030,23 +1030,49 @@
               (render-status-bar-for-action branch params)))
 
           (render-console-text []
-            ;; Look for ANSI escape sequences in the console text. (see:
+            ;; Look for ANSI escape sequences in the updated console text. (see:
             ;; https://en.wikipedia.org/wiki/ANSI_escape_code#Escape_sequences). If any are found,
-            ;; remove them. This should only happen if DROID was not able to automatically convert
-            ;; these escape codes into HTML previously. Either way wrap the console text in a
-            ;; pre-formatted block and return it.
-            (let [escape-index (when console (->> 0x1B (char) (string/index-of console)))
-                  ansi-commands? (and escape-index (->> escape-index (inc) (nth console) (int)
-                                                        (#(and (>= % 0x40) (<= % 0x5F)))))
+            ;; then launch the python program `aha` in the shell to convert them all to HTML.
+            ;; Either way wrap the console text in a pre-formatted block and return it.
+            (let [pwd (get-temp-dir project-name branch-name)
+                  console-updated? (when console
+                                     ;; Note that .lastModified returns 0 if a file doesn't exist.
+                                     (>= (-> pwd (str "/console.txt") (io/file) (.lastModified))
+                                         (-> pwd (str "/console.html") (io/file) (.lastModified))))
+                  escape-index (when console-updated? (->> 0x1B (char) (string/index-of console)))
+                  ansi-commands? (when console-updated?
+                                   (and escape-index (->> escape-index (inc) (nth console) (int)
+                                                          (#(and (>= % 0x40) (<= % 0x5F))))))
                   render-pre-block (fn [arg]
                                      [:pre {:class "bg-light p-2"} [:samp {:class "shell"} arg]])]
-              (if ansi-commands?
+              (cond
+                ;; If the console has been updated since the last time we generated a colourised
+                ;; HTML file, and if it contains ANSI, then colourise it if "aha" is installed:
+                (and console-updated? ansi-commands? (cmd/program-exists? "aha"))
+                (let [[process
+                       a2h-exit-code] (do (log/debug "Colourizing console using aha ...")
+                                          (cmd/run-command
+                                           ["sh" "-c"
+                                            (str "aha --no-header < console.txt > console.html")
+                                            :dir pwd]))
+                      colourized-console (if (not= @a2h-exit-code 0)
+                                           (do (log/error "Unable to colourize console.")
+                                               console)
+                                           (slurp (str pwd "/console.html")))]
+                  (render-pre-block colourized-console))
+
+                ;; Otherwise if a colourised version of the console already exists, and it is not
+                ;; older than the raw file, serve it:
+                (and (not console-updated?) (-> pwd (str "/console.html") (io/file) (.exists)))
+                (-> pwd (str "/console.html") (slurp) (render-pre-block))
+
+                ;; Otherwise render the raw file, filtering out the ANSI commands:
+                :else
                 (-> console
                     (string/replace #"\u001b\[.*?m" "")
                     (string/replace "<" "&lt;")
                     (string/replace ">" "&gt;")
-                    (render-pre-block))
-                (render-pre-block console))))]
+                    (render-pre-block)))))]
 
     [:div {:id "console"}
      (if (nil? exit-code)
@@ -1074,10 +1100,7 @@
        (when (<= 35 (->> console
                          (filter #(= \newline  %))
                          (count)))
-         [:div
-          [:br]
-          [:hr {:class "line1"}]
-          (render-status-bar)]))
+         (render-status-bar)))
      ;; An anchor for the bottom of the page (used for auto-refresh):
      [:a {:id "bottom"}]]))
 
@@ -1451,12 +1474,9 @@
                               ;; `exec` is needed here to prevent the make process from
                               ;; detaching from the parent (since that would make it
                               ;; difficult to destroy later).
-                              (str "exec make " view-path " 2>&1 "
-                                   ;; If aha is installed, use it to colourise the console output:
-                                   (when (branches/can-colourize? project-name branch-name)
-                                     " | aha --no-header")
-                                   " | tee " (get-temp-dir project-name branch-name)
-                                   "/console.html")
+                              (str "exec make " view-path
+                                   " > " (get-temp-dir project-name branch-name)
+                                   "/console.txt 2>&1")
                               :dir (get-workspace-dir project-name branch-name)]
                              project-name branch-name)]
                         (assoc branch
@@ -1624,12 +1644,9 @@
                                           ;; detaching from the parent (since that would make it
                                           ;; difficult to destroy later).
                                           (str
-                                           "exec " command " 2>&1 "
-                                           ;; If aha is installed, use it to colourise the output:
-                                           (when (branches/can-colourize? project-name branch-name)
-                                             " | aha --no-header")
-                                           " | tee " (get-temp-dir project-name branch-name)
-                                           "/console.html")
+                                           "exec " command
+                                           " > " (get-temp-dir project-name branch-name)
+                                           "/console.txt 2>&1")
                                           :dir (get-workspace-dir project-name branch-name)]
                                          project-name branch-name))]
               (if (nil? command)
