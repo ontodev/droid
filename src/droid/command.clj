@@ -82,36 +82,45 @@
   [command & [timeout {:keys [project-name branch-name container-id] :as container-info}]]
   (let [;; Only log string portions of the command since other parts may contain secrets:
         command-log (->> command (filter string?) (string/join " "))
-        process (if-not container-id
-                  (do (log/debug "Running" command-log "without a container")
-                      (apply sh/proc command))
-                  (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
-                        docker-cmd-base (->> docker-config :env (supplement-command-env command))
-                        ;; For each key in the environment map, {:VAR1 "var1-value" :VAR2 "var2-value" ...},
-                        ;; generate command-line arguments for docker like:
-                        ;;   -e VAR1 -e VAR2 -e VAR3 ...
-                        ;; (we don't need to specify the values of these variables because sh/proc will make those
-                        ;; available to the docker container through the environment map):
-                        env-map-to-cli-opts (fn [env-map]
-                                              (->> env-map
-                                                   (map #(key %))
-                                                   (map #(into ["-e"] [%]))
-                                                   (apply concat)
-                                                   (vec)))
-                        ;; Get the working dir from `command`, defaulting to whatever is in the docker config:
-                        get-working-dir #(->> (or (get-option-value command :dir)
-                                                  (:default-working-dir docker-config))
-                                              (str "/"))]
-                    (log/debug "Running" command-log "in container" container-id)
-                    (->> docker-cmd-base
-                         (local-to-docker project-name branch-name)
-                         (into [container-id])
-                         (into (-> docker-config :env (env-map-to-cli-opts)))
-                         (into (-> (get-option-value command :env) (env-map-to-cli-opts)))
-                         (into ["docker" "exec" "--workdir"
-                                (->> (get-working-dir)
-                                     (local-to-docker project-name branch-name))])
-                         (apply sh/proc))))
+        process (try
+                  (if-not container-id
+                    (do (log/debug "Running" command-log "without a container")
+                        (apply sh/proc command))
+                    (let [docker-config (-> :projects (get-config) (get project-name)
+                                            :docker-config)
+                          docker-cmd-base (->> docker-config :env (supplement-command-env command))
+                          ;; For each key in the environment map,
+                          ;; {:VAR1 "var1-value" :VAR2 "var2-value" ...}, generate command-line
+                          ;; arguments for docker like: -e VAR1 -e VAR2 -e VAR3 ...
+                          ;; (we don't need to specify the values of these variables because sh/proc
+                          ;; will make those available to the docker container through the map):
+                          env-map-to-cli-opts (fn [env-map]
+                                                (->> env-map
+                                                     (map #(key %))
+                                                     (map #(into ["-e"] [%]))
+                                                     (apply concat)
+                                                     (vec)))
+                          ;; Get the working dir from `command`, defaulting to whatever is in the
+                          ;; docker config:
+                          get-working-dir #(->> (or (get-option-value command :dir)
+                                                    (:default-working-dir docker-config))
+                                                (str "/"))]
+                      (log/debug "Running" command-log "in container" container-id)
+                      (->> docker-cmd-base
+                           (local-to-docker project-name branch-name)
+                           (into [container-id])
+                           (into (-> docker-config :env (env-map-to-cli-opts)))
+                           (into (-> (get-option-value command :env) (env-map-to-cli-opts)))
+                           (into ["docker" "exec" "--workdir"
+                                  (->> (get-working-dir)
+                                       (local-to-docker project-name branch-name))])
+                           (apply sh/proc))))
+                  (catch Exception e
+                    ;; If an exception is thrown by sh/proc, launch an echo command with the
+                    ;; exception message, which the caller can use to write to the console:
+                    (apply sh/proc ["sh" "-c" (str "echo \"" (-> e (str)
+                                                                 (string/escape char-escape-string))
+                                                   "\" 1>&2; exit 1")])))
         exit-code (-> process
                       (#(if timeout
                           (sh/exit-code % timeout)

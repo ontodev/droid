@@ -845,7 +845,7 @@
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
-  [{:keys [branch-name project-name run-time exit-code cancelled console] :as branch}
+  [{:keys [branch-name project-name run-time exit-code process cancelled console] :as branch}
    {:keys [follow updating-view] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
         follow-span [:span {:class "col-sm-2"}
@@ -899,6 +899,12 @@
       ;; The last process completed unsuccessfully:
       :else
       [:p {:class "alert alert-danger mr-3"} (str "ERROR: Exit code " @exit-code)
+       (when (and process (realized? exit-code))
+         ;; If there was a docker error (e.g., missing container), then it won't be written
+         ;; to the console, but it will be present in the process's error stream. The
+         ;; console contents themselves will be old, so we overwrite them with the error:
+         (let [error-output (sh/stream-to-string process :err)]
+           (cmd/write-to-console project-name branch-name error-output)))
        (when follow unfollow-span)])))
 
 (defn- prompt-to-kill-for-action
@@ -1010,7 +1016,7 @@
 (defn- render-console
   "Given some branch data, and a number of parameters related to an action or a view, render
   the console on the branch page."
-  [{:keys [branch-name project-name action process start-time command exit-code console] :as branch}
+  [{:keys [branch-name project-name action start-time command exit-code console] :as branch}
    {:keys [new-action view-path confirm-update confirm-kill updating-view] :as params}]
   (letfn [(render-status-bar []
             (cond
@@ -1031,14 +1037,6 @@
             ;; then launch the python program `aha` in the shell to convert them all to HTML.
             ;; Either way wrap the console text in a pre-formatted block and return it.
             (let [pwd (get-temp-dir project-name branch-name)
-                  ;; If there was a docker error (e.g., missing container), then it won't be written
-                  ;; to the console, but it will be present in the process's error stream. The
-                  ;; console contents themselves will be old, so we overwrite them with the error:
-                  error-output (when process (sh/stream-to-string process :err))
-                  console (if-not (empty? error-output)
-                            (do (cmd/write-to-console project-name branch-name error-output)
-                                error-output)
-                            console)
                   console-updated? (when console
                                      ;; Note that .lastModified returns 0 if a file doesn't exist.
                                      (>= (-> pwd (str "/console.txt") (io/file) (.lastModified))
