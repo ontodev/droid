@@ -522,17 +522,13 @@
   for forward links"
   [base-url]
   [:div {:class "alert alert-warning"}
-   "Would you like to remove any running containers before rebuilding images? Note that if you "
-   "choose not to do this, then any currently running containers will continue to use the old "
-   "version of an image if an image version is upgraded."
+   "In addition to pulling (new versions of) images, all containers that depend on those images "
+   "will be removed before being recreated and restarted. Please confirm that you want to do this."
    [:div {:class "pt-2"}
     [:a {:class "btn btn-sm btn-primary" :href base-url} "Cancel"]
     [:span "&nbsp;"]
     [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild=1")}
-     "Remove containers before rebuilding"]
-    [:span "&nbsp;"]
-    [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild=2")}
-     "Rebuild without removing containers"]]])
+     "Confirm"]]])
 
 (defn render-index
   "Render the index page"
@@ -558,12 +554,12 @@
       (redirect "/"))
 
     (and (site-admin? request) (not (nil? really-rebuild)))
-    (let [remove-containers? (= really-rebuild "1")]
+    (do
       (doseq [project-name (->> :projects (get-config) (keys) (map name))]
         ;; We send the rebuild jobs through container-serializer so that they will run in the
         ;; background one after another:
         (send-off branches/container-serializer
-                  branches/rebuild-images-and-containers project-name remove-containers?))
+                  branches/rebuild-images-and-containers project-name))
       (redirect "/?rebuild-launched=1"))
 
     ;; Otherwise just render the page:
@@ -722,11 +718,11 @@
 
         ;; Rebuild the project's containers:
         (and (site-admin? request) (not (nil? really-rebuild)))
-        (let [remove-containers? (= really-rebuild "1")]
+        (do
           ;; We send the rebuild job through container-serializer so that it will run in the
           ;; background:
           (send-off branches/container-serializer
-                    branches/rebuild-images-and-containers project-name remove-containers?)
+                    branches/rebuild-images-and-containers project-name)
           (redirect (str this-url "?rebuild-launched=1")))
 
         ;; Refresh local and remote branches:

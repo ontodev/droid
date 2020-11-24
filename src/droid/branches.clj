@@ -564,19 +564,17 @@
 (defn rebuild-images-and-containers
   "Given a project name, if the project has been configured to use docker, pull the image specified
   in the config file. If there are Dockerfiles on any of the local branches, use them to build
-  branch-specific images. Additionally, create the containers for all of the local branches. If
-  remove-containers? has been set to true, then remove any existing containers before doing the
-  above. The first argument to this function, `_`, exists to make it possible to serialize calls to
-  this function through an agent, but is otherwise unused."
-  [_ project-name remove-containers?]
+  branch-specific images. Additionally, create the containers for all of the local branches. The
+  first argument to this function, `_`, exists to make it possible to serialize calls to this
+  function through an agent, but is otherwise unused."
+  [_ project-name]
   (let [ws-dir (get-workspace-dir project-name)
         docker-config (-> :projects (get-config) (get project-name) :docker-config)]
     (if (not (:active? docker-config))
       (log/info "Docker configuration is inactive for project:" project-name)
       (do
-        (when remove-containers?
-          (log/info "Removing branch containers for project:" project-name)
-          (remove-branch-containers-for-project project-name))
+        (log/info "Removing branch containers for project:" project-name)
+        (remove-branch-containers-for-project project-name)
         (log/info "Retrieving project-level images for project" project-name)
         (let [command ["docker" "pull" (:image docker-config)]
               process (apply sh/proc command)
