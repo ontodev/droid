@@ -29,7 +29,8 @@
         action (:action this-branch)
         exit-code (:exit-code this-branch)]
     (and this-branch
-         (= action "create-docker-image")
+         exit-code
+         (= action "create-docker-image-and-container")
          (not (realized? exit-code)))))
 
 (defn- site-admin?
@@ -521,17 +522,13 @@
   for forward links"
   [base-url]
   [:div {:class "alert alert-warning"}
-   "Would you like to remove any running containers before rebuilding images? Note that if you "
-   "choose not to do this, then any currently running containers will continue to use the old "
-   "version of an image if an image version is upgraded."
+   "In addition to pulling (new versions of) images, all containers that depend on those images "
+   "will be removed before being recreated and restarted. Please confirm that you want to do this."
    [:div {:class "pt-2"}
     [:a {:class "btn btn-sm btn-primary" :href base-url} "Cancel"]
     [:span "&nbsp;"]
     [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild=1")}
-     "Remove containers before rebuilding"]
-    [:span "&nbsp;"]
-    [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild=2")}
-     "Rebuild without removing containers"]]])
+     "Confirm"]]])
 
 (defn render-index
   "Render the index page"
@@ -557,12 +554,12 @@
       (redirect "/"))
 
     (and (site-admin? request) (not (nil? really-rebuild)))
-    (let [remove-containers? (= really-rebuild "1")]
+    (do
       (doseq [project-name (->> :projects (get-config) (keys) (map name))]
         ;; We send the rebuild jobs through container-serializer so that they will run in the
         ;; background one after another:
         (send-off branches/container-serializer
-                  branches/rebuild-container-images project-name remove-containers?))
+                  branches/rebuild-images-and-containers project-name))
       (redirect "/?rebuild-launched=1"))
 
     ;; Otherwise just render the page:
@@ -607,8 +604,8 @@
                        "Reset branch data"]
                       [:a {:class "btn btn-sm btn-warning" :href "/?rebuild-images=1"
                            :data-toggle "tooltip"
-                           :title "(Re)build all container images for managed projects"}
-                       "Rebuild container images"]]
+                           :title "(Re)build all images and containers for managed projects"}
+                       "Rebuild images and containers"]]
                      (when (not (nil? reset))
                        [:div {:class "alert alert-danger"}
                         "Are you sure you want to reset branch data for all projects? Note that "
@@ -721,11 +718,11 @@
 
         ;; Rebuild the project's containers:
         (and (site-admin? request) (not (nil? really-rebuild)))
-        (let [remove-containers? (= really-rebuild "1")]
+        (do
           ;; We send the rebuild job through container-serializer so that it will run in the
           ;; background:
           (send-off branches/container-serializer
-                    branches/rebuild-container-images project-name remove-containers?)
+                    branches/rebuild-images-and-containers project-name)
           (redirect (str this-url "?rebuild-launched=1")))
 
         ;; Refresh local and remote branches:
@@ -842,13 +839,13 @@
                        [:a {:class "btn btn-sm btn-warning ml-2"
                             :href (str this-url "?rebuild-images=1")
                             :data-toggle "tooltip"
-                            :title "Rebuild container images for this project"}
-                        "Rebuild container images"])]
+                            :title "Rebuild images and containers for this project"}
+                        "Rebuild images and containers"])]
                     (->> request (read-only?) (render-project-branches project-name))]})))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
-  [{:keys [branch-name project-name run-time exit-code cancelled console] :as branch}
+  [{:keys [branch-name project-name run-time exit-code process cancelled console] :as branch}
    {:keys [follow updating-view] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
         follow-span [:span {:class "col-sm-2"}
@@ -902,6 +899,12 @@
       ;; The last process completed unsuccessfully:
       :else
       [:p {:class "alert alert-danger mr-3"} (str "ERROR: Exit code " @exit-code)
+       (when (and process (realized? exit-code))
+         ;; If there was a docker error (e.g., missing container), then it won't be written
+         ;; to the console, but it will be present in the process's error stream. The
+         ;; console contents themselves will be old, so we overwrite them with the error:
+         (let [error-output (sh/stream-to-string process :err)]
+           (cmd/write-to-console project-name branch-name error-output)))
        (when follow unfollow-span)])))
 
 (defn- prompt-to-kill-for-action
@@ -1029,31 +1032,44 @@
               (render-status-bar-for-action branch params)))
 
           (render-console-text []
-            ;; Look for ANSI escape sequences in the console text. (see:
+            ;; Look for ANSI escape sequences in the updated console text. (see:
             ;; https://en.wikipedia.org/wiki/ANSI_escape_code#Escape_sequences). If any are found,
-            ;; then launch the python program `ansi2html` in the shell to convert them all to HTML.
+            ;; then launch the python program `aha` in the shell to convert them all to HTML.
             ;; Either way wrap the console text in a pre-formatted block and return it.
-            (let [escape-index (when console (->> 0x1B (char) (string/index-of console)))
-                  ansi-commands? (and escape-index (->> escape-index (inc) (nth console) (int)
-                                                        (#(and (>= % 0x40) (<= % 0x5F)))))
-                  pwd (get-temp-dir project-name branch-name)
+            (let [pwd (get-temp-dir project-name branch-name)
+                  console-updated? (when console
+                                     ;; Note that .lastModified returns 0 if a file doesn't exist.
+                                     (>= (-> pwd (str "/console.txt") (io/file) (.lastModified))
+                                         (-> pwd (str "/console.html") (io/file) (.lastModified))))
+                  escape-index (when console-updated? (->> 0x1B (char) (string/index-of console)))
+                  ansi-commands? (when console-updated?
+                                   (and escape-index (->> escape-index (inc) (nth console) (int)
+                                                          (#(and (>= % 0x40) (<= % 0x5F))))))
                   render-pre-block (fn [arg]
                                      [:pre {:class "bg-light p-2"} [:samp {:class "shell"} arg]])]
-              (if ansi-commands?
+              (cond
+                ;; If the console has been updated since the last time we generated a colourised
+                ;; HTML file, and if it contains ANSI, then colourise it if "aha" is installed:
+                (and console-updated? ansi-commands? (cmd/program-exists? "aha"))
                 (let [[process
-                       a2h-exit-code] (do (log/debug "Colourizing console using ansi2html ...")
-                                          ;; TODO: once we eliminate the ansi2html dependency, this
-                                          ;; command should run in the branch container.
+                       a2h-exit-code] (do (log/debug "Colourizing console using aha ...")
                                           (cmd/run-command
                                            ["sh" "-c"
-                                            (str "ansi2html -i < console.txt > console.html")
+                                            (str "aha --no-header < console.txt > console.html")
                                             :dir pwd]))
                       colourized-console (if (not= @a2h-exit-code 0)
                                            (do (log/error "Unable to colourize console.")
                                                console)
                                            (slurp (str pwd "/console.html")))]
-                  (io/delete-file (str pwd "/console.html"))
                   (render-pre-block colourized-console))
+
+                ;; Otherwise if a colourised version of the console already exists, and it is not
+                ;; older than the raw file, serve it:
+                (and (not console-updated?) (-> pwd (str "/console.html") (io/file) (.exists)))
+                (-> pwd (str "/console.html") (slurp) (render-pre-block))
+
+                ;; Otherwise render the raw file, filtering out the ANSI commands:
+                :else
                 (-> console
                     (string/replace #"\u001b\[.*?m" "")
                     (string/replace "<" "&lt;")

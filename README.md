@@ -8,35 +8,6 @@ DROID differs from Continuous Testing/Integration solutions such as Jenkins or T
 
 DROID is in early development and is designed to work on Unix (Linux, macOS) systems.
 
-## Python virtual environment and `ansi2html`
-
-DROID is implemented using [Clojure](https://clojure.org/), but uses the Python library [ansi2html](https://pypi.org/project/ansi2html/) to colourize console output.<sup>*</sup> For this to work you must set up a python virtual environment in DROID's root directory and install the dependencies specified in `requirements.txt` in the same directory. Once this is done, DROID should be run only after activating the virtual environment.
-
-<i><sup>*Note: as of 20-10-2020 we have investigated a few native java/clojure alternatives to using `ansi2html` but have not found anything nearly as performant. One possibility that still needs to be tried is `jansi` (see: https://github.com/ontodev/droid/issues/39)</sup></i>
-
-1. Create the virtual environment:
-
-   ```
-   cd <droid-root>
-   python3 -m venv _venv
-   ```
-
-2. Activate the virtual environment:
-
-   ```
-   source _venv/bin/activate
-   ```
-
-You should now see the string "`(_venv)`" prefixed to your command-line prompt, indicating that you have successfully activated the virtual environment.
-
-3. Install the dependencies in `requirements.txt`:
-
-   ```
-   pip install -r requirements.txt
-   ```
-
-Steps 1 and 3 only need to be run once at installation time. Step 2, activating the Python virtual environment, is required in order for colourization to work. You must make sure that the virtual environment is active (as indicated by the string "`(_venv)`" at the beginning of your command prompt) before starting DROID.
-
 ## GitHub App Authentication
 
 DROID uses a GitHub App to authenticate on behalf of a logged in github user (see: [Identifying and authorizing users for GitHub Apps](https://docs.github.com/en/free-pro-team@latest/developers/apps/identifying-and-authorizing-users-for-github-apps)).
@@ -129,3 +100,7 @@ projects/
 ```
 
 The `project1/`, `project2/`, etc. directories (and their subdirectories) should be writable by `DROID`.
+
+## aha - Ansi HTML Adapter
+
+In order to colourize the console output, DROID requires the command-line program `aha` to be installed, which is available on Debian and Ubuntu via `apt` and on Mac via `homebrew`. For more info, see: https://github.com/theZiz/aha.
