@@ -15,7 +15,8 @@
             [droid.fileutils :refer [get-workspace-dir get-temp-dir]]
             [droid.github :as gh]
             [droid.log :as log]
-            [droid.make :as make]))
+            [droid.make :as make]
+            [droid.secrets :refer [secrets]]))
 
 (def default-html-headers
   {"Content-Type" "text/html"})
@@ -57,6 +58,12 @@
               (not= this-project-permissions "admin")
               (not (site-admin? request)))))))
 
+(defn local-mode-enabled?
+  "Returns true if :local-mode is set to true and there is a personal access token configured in
+  secrets, and false otherwise."
+  []
+  (and (contains? secrets :personal-access-token) (get-config :local-mode)))
+
 (defn- login-status
   "Render the user's login status."
   [{{:keys [project-name]} :params,
@@ -64,15 +71,20 @@
     :as request}]
   (let [navbar-attrs {:class "p-0 navbar navbar-light bg-transparent"}]
     (if (:authenticated user)
-      ;; If the user has been authenticated, render a navbar with login info and a logout link:
+      ;; If the user has been authenticated, render a navbar with login info and (when not in
+      ;; local mode) a logout link:
       [:nav navbar-attrs
        [:small "Logged in as " [:a {:target "__blank" :href (:html_url user)} (or (:name user)
                                                                                   (:login user))]
-        ;; If the user is viewing a project page and has read-only access, indicate this:
-        (when (and (not (nil? project-name))
-                   (read-only? request))
-          " (read-only access)")]
-       [:small {:class "ml-auto"} [:a {:href "/logout"} "Logout"]]]
+        (cond
+          ;; If the user is viewing a project page and has read-only access, indicate this:
+          (and (not (nil? project-name))
+               (read-only? request)) " (read-only access)"
+          ;; If DROID is running local mode indicate this:
+          (local-mode-enabled?) " (local mode)")]
+       ;; Only render the logout link if not in local mode:
+       (when-not (local-mode-enabled?)
+         [:small {:class "ml-auto"} [:a {:href "/logout"} "Logout"]])]
       ;; Otherwise the navbar will only have a login link:
       [:nav navbar-attrs
        [:small [:a {:href "/oauth2/github"} "Login via GitHub"]]])))
@@ -506,6 +518,8 @@
                   (send #(assoc % :command basename :action basename)))
               (redirect branch-url))))))))
 
+;; TODO: THERE IS A BUG HERE WHICH CAN RESULT IN A CIRCULAR REDIRECT WHEN YOU LOG IN FROM THIS PAGE
+;; SUCH THAT THE ?JUST-LOGGED-IN QUERY PARAM IS SET:
 (defn just-logged-in
   "After logging into DROID a user is directed here, which in turn redirects the user either to the
   page she was previously on, or if that is unknown, to the index page."

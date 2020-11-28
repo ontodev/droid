@@ -3,7 +3,6 @@
             [clojure.java.io :as io]
             [compojure.core :refer [defroutes GET POST]]
             [compojure.route :as route]
-            [environ.core :refer [env]]
             [org.httpkit.client :as http]
             [ring.middleware.defaults :refer [secure-site-defaults site-defaults wrap-defaults]]
             [ring.middleware.oauth2 :refer [wrap-oauth2]]
@@ -15,22 +14,8 @@
             [droid.db :as db]
             [droid.github :as gh]
             [droid.log :as log]
-            [droid.html :as html]))
-
-(def secrets
-  "Secret IDs and passcodes, loaded from environment variables."
-  ;; Note that the env package maps an environment variable named ENV_VAR into the keyword
-  ;; :env-var, so below :github-client-id is associated with GITHUB_CLIENT_ID and similarly for
-  ;; :github-client-secret.
-  (->> [:github-client-id :github-client-secret]
-       (map #(let [val (env %)]
-               (if (nil? val)
-                 ;; Raise an error if the environment variable isn't found:
-                 (-> % (str " not set") (log/fail))
-                 ;; Otherwise return a hashmap with one entry:
-                 {% val})))
-       ;; Merge the hashmaps corresponding to each environment variable into one hashmap:
-       (apply merge)))
+            [droid.html :as html]
+            [droid.secrets :refer [secrets]]))
 
 (defn- wrap-raw-body-rdr
   "Create a Reader corresponding to the raw request body and add it to the request."
@@ -56,35 +41,49 @@
   [handler]
   (fn [request]
     (handler
-     (cond
-       ;; If the user is already authenticated, just send the request back unchanged:
-       (-> request :session :user :authenticated)
-       request
+     ;; If the local-mode parameter is set in the config, and there is a personal access token in
+     ;; the secrets map, use it to authenticate. Otherwise look for an access token in the request.
+     ;; Note that `token` (not `pat-token`) is used for authentication, but if `pat-token` exists
+     ;; then we overwrite any existing value of `token` with it, rendering the two identical.
+     (let [pat-token (and (get-config :local-mode) (:personal-access-token secrets))
+           token (or pat-token (-> request :oauth2/access-tokens :github :token))
+           local-mode? (not (nil? pat-token))]
+       (cond
+         ;; If the user is already authenticated, just send the request back, replacing any existing
+         ;; token with the token extracted above if we are in local mode:
+         (-> request :session :user :authenticated)
+         (if local-mode?
+           (-> request (assoc-in [:oauth2/access-tokens :github :token] token))
+           request)
 
-       ;; If the user isn't authenticated, but there's a GitHub token, fetch the user information
-       ;; from GitHub:
-       (-> request :oauth2/access-tokens :github)
-       (let [token (-> request :oauth2/access-tokens :github :token)
-             {:keys [status headers body error] :as resp} @(http/get "https://api.github.com/user"
-                                                                     {:headers
-                                                                      {"Authorization"
-                                                                       (str "token " token)}})]
-         (if error
-           (do
-             (log/error "Failed to get user information from GitHub: " status headers body error)
-             (dissoc request :oauth2/access-tokens))
-           (let [user (cheshire/parse-string body true)
-                 project-permissions (-> user :login (gh/get-project-permissions token))]
-             (log/info "Logging in" (:login user) "with permissions" project-permissions)
-             (-> request
-                 (assoc-in [:session :user] user)
-                 (assoc-in [:session :user :authenticated] true)
-                 ;; Add the user's permissions for each project managed by the instance:
-                 (assoc-in [:session :user :project-permissions] project-permissions)))))
+         ;; If the user isn't authenticated, but there is a token, fetch the user information from
+         ;; GitHub:
+         token
+         (let [{:keys [status headers body error] :as resp} @(http/get "https://api.github.com/user"
+                                                                       {:headers
+                                                                        {"Authorization"
+                                                                         (str "token " token)}})]
+           (if error
+             (do
+               (log/error "Failed to get user information from GitHub: " status headers body error)
+               (dissoc request :oauth2/access-tokens))
+             (let [user (cheshire/parse-string body true)
+                   project-permissions (-> user :login (gh/get-project-permissions token))]
+               (log/info "Logging in" (:login user) "with permissions" project-permissions)
+               (-> request
+                   ;; Overwrite any existing token with the one extracted above. If we are not in
+                   ;; local mode then the value will be the same, otherwise it will be switched
+                   ;; with the personal access token:
+                   (assoc-in [:oauth2/access-tokens :github :token] token)
+                   (assoc-in [:session :user] user)
+                   (assoc-in [:session :user :authenticated] true)
+                   ;; Add the user's permissions for each project managed by the instance:
+                   (assoc-in [:session :user :project-permissions] project-permissions)))))
 
-       ;; If the user isn't authenticated and there isn't a github token, do nothing:
-       :else
-       request))))
+         ;; If the user isn't authenticated and there isn't a github token and we are not in local
+         ;; mode, do nothing:
+         :else
+         request)))))
 
 (defroutes app-routes
   (GET "/" [] html/render-index)

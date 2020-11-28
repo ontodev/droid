@@ -45,6 +45,7 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
  :server-port {:dev 8000 :test 8001 :prod 8002}
  :log-level {:dev :info :test :info :prod :warn}
  :secure-site {:dev true :test true :prod true}
+ :local-mode false
  :site-admin-github-ids {:dev #{"user1" "user2"}
                          :test #{"user1" "user2"}
                          :prod #{"user1" "user2"}}
@@ -66,6 +67,7 @@ where:
 - `:env` specifies the environment variables to use with all commands that run in the given project.
 - `:server-port` is the port that the server will listen on.
 - `:secure-site` is either true or false and indicates whether the server will use the `https://` or `http://` protocol.
+- `:local-mode`, if set to true, will instruct DROID to authenticate to GitHub using a personal access token read from the environment variable PERSONAL_ACCESS_TOKEN. Note that if this environment variable is not set, then setting `:local-mode` to true will have no effect.
 - `:site-admin-github-ids` is a hash-set of github userids who are considered site administrators.
 - `:github-app-id` is the ID of the GitHub App to use for authentication
 - `:pem-file` is the file, relative to DROID's root directory, containing the private key to use for authenticating with the GitHub App
