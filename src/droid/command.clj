@@ -12,11 +12,6 @@
   [process summary]
   (-> summary (str ": " (sh/stream-to-string process :err)) (Exception.) (throw)))
 
-(defn write-to-console
-  [project-name branch-name msg]
-  (let [temp-dir (get-temp-dir project-name branch-name)]
-    (-> temp-dir (str "/console.txt") (spit msg))))
-
 (defn local-to-docker
   "Given a command, a project name, and a branch name, replace the local workspace and temp
   directories, wherever they appear in the command, with the docker workspace and temp directories,

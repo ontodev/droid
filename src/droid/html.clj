@@ -518,8 +518,6 @@
                   (send #(assoc % :command basename :action basename)))
               (redirect branch-url))))))))
 
-;; TODO: THERE IS A BUG HERE WHICH CAN RESULT IN A CIRCULAR REDIRECT WHEN YOU LOG IN FROM THIS PAGE
-;; SUCH THAT THE ?JUST-LOGGED-IN QUERY PARAM IS SET:
 (defn just-logged-in
   "After logging into DROID a user is directed here, which in turn redirects the user either to the
   page she was previously on, or if that is unknown, to the index page."
@@ -528,7 +526,10 @@
         pattern (re-pattern (str "https?://" host "/(.+)"))
         rel-url (-> (and referer host (re-matches pattern referer))
                     (second)
-                    (#(when % (string/replace % #"\?.+$" ""))))]
+                    (#(when % (string/replace % #"\?.+$" "")))
+                    (empty?)
+                    (not)
+                    (or "/"))]
     (redirect (or rel-url "/"))))
 
 (defn- render-rebuild-image-dialog
@@ -918,7 +919,7 @@
          ;; to the console, but it will be present in the process's error stream. The
          ;; console contents themselves will be old, so we overwrite them with the error:
          (let [error-output (sh/stream-to-string process :err)]
-           (cmd/write-to-console project-name branch-name error-output)))
+           (str " " error-output)))
        (when follow unfollow-span)])))
 
 (defn- prompt-to-kill-for-action
@@ -1665,6 +1666,9 @@
                                            "/console.txt 2>&1")
                                           :dir (get-workspace-dir project-name branch-name)]
                                          project-name branch-name))]
+              ;; Add a small sleep to allow enough time for the process to begin to write its
+              ;; output to the console:
+              (Thread/sleep 500)
               (if (nil? command)
                 ;; If the command is nil just return the branch back unchanged:
                 branch
