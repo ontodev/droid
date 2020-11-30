@@ -72,12 +72,23 @@
   (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
         ;; Use the container name instead of the actual ID (it works just as well):
         container-id (str project-name "-" branch-name)
+        git-head (-> (get-workspace-dir project-name branch-name) (str "/.git/HEAD") (slurp)
+                     (string/trim-newline))
         project-env (-> :projects (get-config) (get project-name) :env)
         ;; Redefine the command by adding in the project-level environment. The docker-specific
         ;; environment variables will be taken care of by run-command:
         command (if-not (empty? project-env)
                   (cmd/supplement-command-env command project-env)
-                  command)]
+                  command)
+        ;; Possibly redefine the command again; if the actual branch for the directory does not
+        ;; match the branch name, turn the command into an echo command for an error message:
+        command (if (-> "ref: refs/heads/" (str branch-name) (re-pattern) (re-matches git-head))
+                  command
+                  ["sh" "-c" (str "echo \"Refusing to run command: "
+                                  (->> command (filter string?) (string/join " ")) ". "
+                                  "The branch name: " branch-name
+                                  " does not match the HEAD: " git-head " for this directory\" "
+                                  "1>&2; exit 1")])]
     (cmd/run-command command timeout (when (:active? docker-config) {:project-name project-name
                                                                      :branch-name branch-name
                                                                      :container-id container-id}))))
