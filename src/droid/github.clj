@@ -10,40 +10,47 @@
             [tentacles.pulls :refer [create-pull pulls]]
             [tentacles.repos :refer [branches]]
             [droid.config :refer [get-config]]
-            [droid.log :as log]))
+            [droid.log :as log]
+            [droid.secrets :refer [secrets]]))
 
 (defn get-github-app-installation-token
   "Fetch a GitHub App installation token corresponding to the given project from GitHub"
   [project-name]
   (log/debug "Fetching GitHub App installation token for" project-name "from GitHub")
-  (let [payload {:iss (-> :github-app-id (get-config) (str))
-                 :exp (-> (now) (plus (minutes 10)))
-                 :iat (now)}
-        pem (-> :pem-file (get-config) (private-key))
-        json-web-token (-> payload jwt (sign :RS256 pem) to-str)
-        project-org (-> :projects (get-config) (get project-name) (get :github-coordinates)
-                        (string/split #"/") (first))
-        inst-id (let [{:keys [body status] :as resp}
-                      @(http/get "https://api.github.com/app/installations"
-                                 {:headers {"Authorization" (str "Bearer " json-web-token)}})]
-                  (when (or (< status 200) (> status 299))
-                    (throw
-                     (Exception.
-                      (str "Failed to get installations info from GitHub: " resp))))
-                  (->> body (#(cheshire/parse-string % true))
-                       (filter #(-> % :account :login (= project-org))) (first) :id))
-        inst-token (let [{:keys [body status] :as resp}
-                         @(http/post (str "https://api.github.com/app/installations/" inst-id
-                                          "/access_tokens")
-                                     {:headers {"Authorization" (str "Bearer " json-web-token)}})]
-                     (when (or (< status 200) (> status 299))
-                       (throw
-                        (Exception.
-                         (str "Failed to get installation token from GitHub: " resp))))
-                     ;; Note that the token has further fields, including an expiry time, which
-                     ;; we throw away since we will be deleting the token immediately:
-                     (-> body (cheshire/parse-string true) :token))]
-    inst-token))
+  ;; If we are in local mode use the PAT instead of the installation token:
+  (if (get-config :local-mode)
+    (do
+      (log/debug "Using personal access token in lieu of installation token (local mode)")
+      (:personal-access-token secrets))
+    ;; Otherwise fetch the installation token from GitHub:
+    (let [payload {:iss (-> :github-app-id (get-config) (str))
+                   :exp (-> (now) (plus (minutes 10)))
+                   :iat (now)}
+          pem (-> :pem-file (get-config) (private-key))
+          json-web-token (-> payload jwt (sign :RS256 pem) to-str)
+          project-org (-> :projects (get-config) (get project-name) (get :github-coordinates)
+                          (string/split #"/") (first))
+          inst-id (let [{:keys [body status] :as resp}
+                        @(http/get "https://api.github.com/app/installations"
+                                   {:headers {"Authorization" (str "Bearer " json-web-token)}})]
+                    (when (or (< status 200) (> status 299))
+                      (throw
+                       (Exception.
+                        (str "Failed to get installations info from GitHub: " resp))))
+                    (->> body (#(cheshire/parse-string % true))
+                         (filter #(-> % :account :login (= project-org))) (first) :id))
+          inst-token (let [{:keys [body status] :as resp}
+                           @(http/post (str "https://api.github.com/app/installations/" inst-id
+                                            "/access_tokens")
+                                       {:headers {"Authorization" (str "Bearer " json-web-token)}})]
+                       (when (or (< status 200) (> status 299))
+                         (throw
+                          (Exception.
+                           (str "Failed to get installation token from GitHub: " resp))))
+                       ;; Note that the token has further fields, including an expiry time, which
+                       ;; we throw away since we will be deleting the token immediately:
+                       (-> body (cheshire/parse-string true) :token))]
+      inst-token)))
 
 (def git-actions
   "The version control operations available in DROID"

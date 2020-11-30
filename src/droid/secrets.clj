@@ -1,5 +1,6 @@
 (ns droid.secrets
   (:require [environ.core :refer [env]]
+            [droid.config :refer [get-config]]
             [droid.log :as log]))
 
 (def secrets
@@ -9,12 +10,16 @@
   ;; others.
   (->> [:github-client-id :github-client-secret :personal-access-token]
        (map #(let [val (env %)]
-               (if (nil? val)
-                 ;; Certain environment variables will cause DROID to exit with a fatal error
-                 ;; if they do not exist.
-                 (when (not= % :personal-access-token)
-                   (-> % (str " not set") (log/fail)))
+               (if val
                  ;; If it is found return a hashmap with one entry:
-                 {% val})))
+                 {% val}
+                 ;; Otherwise handle each possible case according to the logic below:
+                 (cond (or (= % :github-client-id) (= % :github-client-secret))
+                       (when-not (get-config :local-mode)
+                         (log/fail (str % " must be set for non-local-mode")))
+
+                       (= % :personal-access-token)
+                       (when (get-config :local-mode)
+                         (log/fail (str % " must be set for local-mode")))))))
        ;; Merge the hashmaps corresponding to each environment variable into one hashmap:
        (apply merge)))

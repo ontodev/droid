@@ -8,6 +8,10 @@ DROID differs from Continuous Testing/Integration solutions such as Jenkins or T
 
 DROID is in early development and is designed to work on Unix (Linux, macOS) systems.
 
+## DROID and Docker
+
+DROID can be configured to run processes in Docker containers that are dedicated to particular project pranches (see below for configuration options). Note that if you are enabling Docker you should run DROID with root privileges by using the `sudo` command when starting it, otherwise you may run into filesystem permissions-related issues since DROID needs to share volumes between the containers and the host.
+
 ## GitHub App Authentication
 
 DROID uses a GitHub App to authenticate on behalf of a logged in github user (see: [Identifying and authorizing users for GitHub Apps](https://docs.github.com/en/free-pro-team@latest/developers/apps/identifying-and-authorizing-users-for-github-apps)).
@@ -71,7 +75,7 @@ where:
 - `:site-admin-github-ids` is a hash-set of github userids who are considered site administrators.
 - `:github-app-id` is the ID of the GitHub App to use for authentication
 - `:pem-file` is the file, relative to DROID's root directory, containing the private key to use for authenticating with the GitHub App
-- `:push-with-installation-token` If set to true, then pushes to GitHub will use an installation token provided through the GitHub App for the repo. Otherwise pushes will use the user's user access token (which is also authenticated via the GitHub App).
+- `:push-with-installation-token` If set to true, then pushes to GitHub will use an installation token provided through the GitHub App for the repo. Otherwise pushes will use the user's user access token (which is also authenticated via the GitHub App). Note that if `:local-mode` is set to true, the personal access token will be used in lieu of the installation token.
 - `:cgi-timeout` is the maximum number of milliseconds that a CGI script is allowed to run.
 - `:log-file` is the file (relative to DROID's root directory) where the log will be written to. If it is nil then log is written to `STDERR`.
 - `:remove-containers-on-shutdown` set this to true if you would like to clean up docker containers whenever the server shuts down. Note that even without this flag set, docker containers will be *paused* on server shutdown.
