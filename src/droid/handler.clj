@@ -93,6 +93,7 @@
   (GET "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)
   (POST "/:project-name/branches/:branch-name/views/:view-path{.+}" [] html/view-file)
   (GET "/:project-name/branches/:branch-name" [] html/hit-branch)
+  (GET "/:project-name/:branch-name/console" [] html/refresh-console)
   ;; all other, return 404
   (route/not-found html/render-404))
 

@@ -3,6 +3,7 @@
             [clojure.string :as string]
             [clojure.test :refer [function?]]
             [decorate.core :refer [decorate defdecorator]]
+            [hiccup.core :refer [html]]
             [hiccup.page :refer [html5]]
             [hickory.core :as hickory]
             [me.raynes.conch.low-level :as sh]
@@ -93,6 +94,7 @@
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session] :as request}
    {:keys [status headers title heading script content auto-refresh]
+    {:keys [project-name branch-name interval]} :auto-refresh,
     :as response
     :or {status 200
          headers default-html-headers
@@ -106,10 +108,6 @@
     [:head
      [:meta {:charset "utf-8"}]
      [:meta {:name "viewport" :content "width=device-width, initial-scale=1, shrink-to-fit=no"}]
-     (let [{:keys [interval anchor]} auto-refresh]
-       (when interval
-         [:meta {:http-equiv "refresh", :content (str interval (when anchor
-                                                                 (str "; " anchor)))}]))
      [:link
       {:rel "stylesheet"
        :href "https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
@@ -141,18 +139,62 @@
                :crossorigin "anonymous"}]
      ;; Handy time and date library:
      [:script {:src "https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.24.0/moment.min.js"}]
-     ;; For highlighting code:
+     ;; Library for highlighting code:
      [:script {:src "//cdn.jsdelivr.net/gh/highlightjs/cdn-release@9.16.2/build/highlight.min.js"}]
-     ;; Highlight code at load time, replace GMT dates with local dates, and replace GMT dates with
-     ;; friendly time period:
-     [:script (str "hljs.initHighlightingOnLoad();"
-                   "$('.date').each(function() {"
-                   "  $(this).text(moment($(this).text()).format('YYYY-MM-DD hh:mm:ss'));"
-                   "});"
-                   "$('.since').each(function() {"
-                   "  $(this).text(moment($(this).text()).fromNow());"
-                   "});")]
-
+     [:script (str
+               ;; Highlight code at load time:
+               "hljs.initHighlightingOnLoad();"
+               ;; Replace GMT dates with local dates, and replace GMT dates with friendly time
+               ;; period. We declare a function since we will need to use it again later during
+               ;; auto-refresh:
+               "function friendlifyMoments() { "
+               "  $('.date').each(function() {"
+               "    $(this).text(moment($(this).text()).format('YYYY-MM-DD hh:mm:ss'));"
+               "  });"
+               "  $('.since').each(function() {"
+               "    $(this).text(moment($(this).text()).fromNow());"
+               "  }); "
+               "} "
+               "friendlifyMoments();"
+               ;; Function to use for refreshing the console:
+               "var refreshInterval;"
+               "function refreshConsole() { "
+               "  var request = new XMLHttpRequest(); "
+               "  request.onreadystatechange = function() { "
+               "    if (request.readyState === 4) { "
+               "      if (!request.status) { "
+               "        console.error('Could not get console contents from endpoint'); "
+               "        clearInterval(refreshInterval); "
+               "      } else { "
+               "        var consoleHtml = request.responseText; "
+               "        var elems = $.parseHTML(consoleHtml); "
+               "        if (elems.length === 0) { "
+               "          console.error('No console contents returned from endpoint'); "
+               "          clearInterval(refreshInterval); "
+               "        } else { "
+               "          $('#console').replaceWith(elems[0]); "
+               "          friendlifyMoments(); "
+               ;;         If the "Unfollow console" span is not present, then the process is done
+               ;;         and we can stop refreshing:
+               "          var unfollowSpan = document.getElementById('unfollow-span'); "
+               "          if (!unfollowSpan) { "
+               "            clearInterval(refreshInterval); "
+               "          } "
+               "        } "
+               "      } "
+               "    } "
+               "  }; "
+               (format
+                " request.open('GET', '/%s/%s/console', true); " project-name branch-name)
+               "  request.send(); "
+               "} ")]
+     [:script
+      "$(document).ready(function() { "
+      (if auto-refresh
+        (format
+         "refreshInterval = setInterval(refreshConsole, %s); " interval)
+        " clearInterval(refreshInterval); ")
+      "});"]
      ;; If the user has read-only access, run the following jQuery script to disable any action
      ;; buttons on the page:
      (when (read-only? request)
@@ -863,12 +905,12 @@
   [{:keys [branch-name project-name run-time exit-code process cancelled console] :as branch}
    {:keys [follow updating-view] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
-        follow-span [:span {:class "col-sm-2"}
+        follow-span [:span {:id "follow-span" :class "col-sm-2"}
                      [:a {:class "btn btn-success btn-sm"
                           :href (str branch-url "?follow=1" (when updating-view
-                                                              "&updating-view=1") "#bottom")}
+                                                              "&updating-view=1"))}
                       "Follow console"]]
-        unfollow-span [:span {:class "col-sm-2"}
+        unfollow-span [:span {:id "unfollow-span" :class "col-sm-2"}
                        [:a {:class "btn btn-success btn-sm"
                             :href (str branch-url (when updating-view
                                                     "?updating-view=1"))}
@@ -1117,9 +1159,23 @@
        (when (<= 35 (->> console
                          (filter #(= \newline  %))
                          (count)))
-         (render-status-bar)))
-     ;; An anchor for the bottom of the page (used for auto-refresh):
-     [:a {:id "bottom"}]]))
+         (render-status-bar)))]))
+
+(defn refresh-console
+  "Renders the HTML fragment (i.e., not a whole page) corresponding to the console portion of the
+  branch page. Useful for automatic refreshing by javascript."
+  [{:keys [params]
+    {:keys [project-name branch-name]} :params,
+    :as request}]
+  (let [branch-url (str "/" project-name "/branches/" branch-name)
+        branch-key (keyword branch-name)
+        project-key (keyword project-name)
+        branch-agent (->> @branches/local-branches project-key branch-key)]
+    (send-off branch-agent branches/refresh-local-branch)
+    (await branch-agent)
+    (if (-> @branch-agent :exit-code (realized?))
+      (html (render-console @branch-agent {}))
+      (html (render-console @branch-agent {:follow "1"})))))
 
 (defn- render-version-control-section
   "Render the Version Control section on the page for a branch"
@@ -1360,7 +1416,8 @@
            (redirect))
 
       ;; The follow flag is set, but no process is currently running. In this case redirect back
-      ;; to the page with the flag unset:
+      ;; to the page with the flag unset. Note that this code will normally not need to be called
+      ;; since the javascript should handle this, but this is kept as a failsafe:
       (and follow (-> branch :exit-code (realized?)))
       (-> this-url (str "?" (-> params (dissoc :follow :folval) (params-to-query-str))) (redirect))
 
@@ -1376,17 +1433,9 @@
        request
        {:title (-> :projects (get-config) (get project-name) :project-title
                    (str " -- " branch-name))
-        :auto-refresh (when follow
-                        {:interval 5
-                         :anchor (-> this-url
-                                     (str "?" (-> params
-                                                  ;; A random parameter is needed to force the
-                                                  ;; browser to recognise the url as different from
-                                                  ;; the last one when refreshing; otherwise it will
-                                                  ;; maintain the previous location on the page.
-                                                  (assoc :folval (rand-int 100000))
-                                                  (params-to-query-str))
-                                          "#bottom"))})
+        ;; Set auto-refresh if the follow flag is set:
+        :auto-refresh (when (boolean follow)
+                        {:project-name project-name, :branch-name branch-name, :interval 5000})
         :heading [:div
                   [:a {:href "/"} "DROID"]
                   " / "
