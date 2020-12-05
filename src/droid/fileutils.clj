@@ -1,5 +1,6 @@
 (ns droid.fileutils
   (:require [clojure.java.io :as io]
+            [droid.config :refer [get-config]]
             [droid.log :as log]))
 
 (defn delete-recursively
@@ -32,14 +33,24 @@
 
 (defn get-workspace-dir
   "Given a project and optionally a branch name, generate the appropriate workspace path"
-  ([project-name]
-   (str (get-droid-dir) "projects/" project-name "/workspace"))
-  ([project-name branch-name]
-   (str (get-droid-dir) "projects/" project-name "/workspace/" branch-name)))
+  [project-name & [branch-name]]
+  (-> (get-droid-dir)
+      (str "projects/" project-name "/workspace")
+      (#(if-not branch-name
+          %
+          (str % "/" branch-name)))))
+
+(defn get-make-dir
+  "Given a project and branch name, get the path containing the makefile in the workspace"
+  [project-name branch-name]
+  (let [makefile-path (-> :projects (get-config) (get project-name) :makefile-path)
+        makefile-dir (when makefile-path (-> makefile-path (io/file) (.getParent)))]
+    (if makefile-dir
+      (-> (get-workspace-dir project-name branch-name) (str "/" makefile-dir))
+      (get-workspace-dir project-name branch-name))))
 
 (defn get-temp-dir
   "Given a project and optionally a branch name, generate the appropriate temp path"
-  ([project-name]
-   (str (get-droid-dir) "projects/" project-name "/temp"))
-  ([project-name branch-name]
-   (str (get-droid-dir) "projects/" project-name "/temp/" branch-name)))
+  [project-name & [branch-name]]
+  (str (get-droid-dir) "projects/" project-name "/temp"
+       (when branch-name (str "/" branch-name))))

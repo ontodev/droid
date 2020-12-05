@@ -13,7 +13,7 @@
             [droid.branches :as branches]
             [droid.config :refer [get-config]]
             [droid.command :as cmd]
-            [droid.fileutils :refer [get-workspace-dir get-temp-dir]]
+            [droid.fileutils :refer [get-workspace-dir get-make-dir get-temp-dir]]
             [droid.github :as gh]
             [droid.log :as log]
             [droid.make :as make]
@@ -989,7 +989,7 @@
   "Check whether the path corresponding to the view is in the filesystem under the branch"
   [{:keys [branch-name project-name action] :as branch}
    view-path]
-  (-> (get-workspace-dir project-name branch-name)
+  (-> (get-make-dir project-name branch-name)
       (str "/" view-path)
       (io/file)
       (.exists)))
@@ -1522,10 +1522,11 @@
                                            (conj (:dir-views %))
                                            (conj (:exec-views %))))))
 
+        makefile-name (-> @branch-agent :Makefile :name)
         ;; Runs `make -q` to see if the view is up to date:
         up-to-date? #(let [[process exit-code] (branches/run-branch-command
-                                                ["make" "-q" view-path
-                                                 :dir (get-workspace-dir project-name branch-name)]
+                                                ["make" "-f" makefile-name "-q" view-path
+                                                 :dir (get-make-dir project-name branch-name)]
                                                 project-name branch-name)]
                        (or (= @exit-code 0) false))
 
@@ -1540,21 +1541,21 @@
                               ;; `exec` is needed here to prevent the make process from
                               ;; detaching from the parent (since that would make it
                               ;; difficult to destroy later).
-                              (str "exec make " view-path
+                              (str "exec make -f " makefile-name " " view-path
                                    " > " (get-temp-dir project-name branch-name)
                                    "/console.txt 2>&1")
-                              :dir (get-workspace-dir project-name branch-name)]
+                              :dir (get-make-dir project-name branch-name)]
                              project-name branch-name)]
                         (assoc branch
                                :action view-path
-                               :command (str "make " view-path)
+                               :command (str "make -f " makefile-name " " view-path)
                                :process process
                                :start-time (System/currentTimeMillis)
                                :cancelled false
                                :exit-code (future (sh/exit-code process)))))
 
         ;; Delivers an executable, possibly CGI-aware, script:
-        deliver-exec-view #(let [script-path (-> (get-workspace-dir project-name branch-name)
+        deliver-exec-view #(let [script-path (-> (get-make-dir project-name branch-name)
                                                  (str "/" view-path))]
                              (cond (not (branches/path-executable?
                                          script-path project-name branch-name))
@@ -1571,7 +1572,7 @@
                                    (run-cgi script-path request)))
 
         ;; Serves the view from the filesystem:
-        deliver-file-view #(-> (get-workspace-dir project-name branch-name)
+        deliver-file-view #(-> (get-make-dir project-name branch-name)
                                (str "/" view-path)
                                (file-response)
                                ;; Views must not be cached by the client browser:
@@ -1701,8 +1702,8 @@
                                 (#(if (function? %)
                                     (% {:msg new-action-param, :user (-> request :session :user)})
                                     %)))
-                            ;; Otherwise prefix it with "make ":
-                            (str "make " new-action))
+                            ;; Otherwise prefix it with "make -f <makefile-name>":
+                            (str "make -f " (-> branch :Makefile :name) " " new-action))
                   [process exit-code] (when-not (nil? command)
                                         (branches/run-branch-command
                                          ["sh" "-c"
@@ -1713,7 +1714,7 @@
                                            "exec " command
                                            " > " (get-temp-dir project-name branch-name)
                                            "/console.txt 2>&1")
-                                          :dir (get-workspace-dir project-name branch-name)]
+                                          :dir (get-make-dir project-name branch-name)]
                                          project-name branch-name))]
               ;; Add a small sleep to allow enough time for the process to begin to write its
               ;; output to the console:

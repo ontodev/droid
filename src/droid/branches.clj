@@ -145,22 +145,9 @@
                             "Error retrieving git status for branch" branch-name "of project"
                             project-name ":" (sh/stream-to-string process :err))
                            {})))]
-      ;; The contents of the directory for the branch are represented by a hashmap, mapping the
-      ;; keywordized name of each file/sub-directory in the branch to nested hashmap with
-      ;; info about that file/sub-directory. This info is at a minimum the file/sub-directory's
-      ;; non-keywordized name. Other info may be added later.
-      (-> (->> branch-workspace-dir
-               (io/file)
-               (.list)
-               ;; We skip the Makefile for now. It will be populated separately later on.
-               (map #(when-not (= % "Makefile")
-                       (hash-map (keyword %) (hash-map :name %))))
-               ;; Merge the sequence of hashmaps just generated into a larger hashmap:
-               (apply merge)
-               ;; Merge the newly generated hashmap with the currently saved hashmap:
-               (merge branch)
-               ;; Merge in the Makefile info:
-               (#(merge % (make/get-makefile-info branch))))
+      (-> branch
+          ;; Merge in the Makefile info:
+          (merge (make/get-makefile-info branch))
           ;; Add the git status of the branch:
           (assoc :git-status git-status)
           ;; Add the console contents and info about the running process, if any:
