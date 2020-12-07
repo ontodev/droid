@@ -4,7 +4,7 @@
             [me.raynes.conch.low-level :as sh]
             [droid.agent :refer [default-agent-error-handler]]
             [droid.command :as cmd]
-            [droid.config :refer [get-config]]
+            [droid.config :refer [get-config get-docker-config]]
             [droid.db :as db]
             [droid.fileutils :refer [delete-recursively recreate-dir-if-not-exists
                                      get-workspace-dir get-temp-dir]]
@@ -69,7 +69,7 @@
   command in the given branch's container. Optionally exit after the given value for timeout
   (in milliseconds)."
   [command project-name branch-name & [timeout]]
-  (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
+  (let [docker-config (get-docker-config project-name)
         ;; Use the container name instead of the actual ID (it works just as well):
         container-id (str project-name "-" branch-name)
         git-head (-> (get-workspace-dir project-name branch-name) (str "/.git/HEAD") (slurp)
@@ -89,19 +89,20 @@
                                   "The branch name: " branch-name
                                   " does not match the HEAD: " git-head " for this directory\" "
                                   "1>&2; exit 1")])]
-    (cmd/run-command command timeout (when (:active? docker-config) {:project-name project-name
-                                                                     :branch-name branch-name
-                                                                     :container-id container-id}))))
+    (cmd/run-command command timeout (when-not (:disabled? docker-config)
+                                       {:project-name project-name
+                                        :branch-name branch-name
+                                        :container-id container-id}))))
 
 (defn path-executable?
   "Determine whether the given path is executable. If docker has been activated for the given
   project, then check whether the script is executable in the container for the branch,
   otherwise check if it is executable from the server's point of view."
   [script-path project-name branch-name]
-  (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
+  (let [docker-config (get-docker-config project-name)
         ;; Use the container name instead of the actual ID (it works just as well):
         container-id (str project-name "-" branch-name)]
-    (if-not (:active? docker-config)
+    (if (:disabled? docker-config)
       (-> script-path (io/file) (.canExecute))
       (let [[process exit-code]
             (cmd/run-command ["test" "-x" script-path] nil {:project-name project-name
@@ -166,7 +167,7 @@
   (log/info "Creating/pulling docker image and container for branch:" branch-name "of project:"
             project-name)
   (let [container-name (str project-name "-" branch-name)
-        docker-config (-> :projects (get-config) (get project-name) :docker-config)
+        docker-config (get-docker-config project-name)
         ws-dir (-> (get-workspace-dir project-name branch-name) (str "/"))
         tmp-dir (-> (get-temp-dir project-name branch-name) (str "/"))
         output-redirect (str "> " (get-temp-dir project-name branch-name)
@@ -245,8 +246,7 @@
                                   {:project-name project-name, :branch-name branch-name})
                               :error-mode :continue
                               :error-handler default-agent-error-handler)
-          docker-active? (-> :projects (get-config) (get project-name) :docker-config :active?)]
-
+          docker-active? (-> (get-docker-config project-name) :disabled? (not))]
       ;; Create/pull the image and container for the branch:
       (when (and docker-active? (not server-startup?))
         (if (-> (get-workspace-dir project-name branch-name) (str "/Dockerfile") (io/file)
@@ -547,8 +547,8 @@
   function through an agent, but is otherwise unused."
   [_ project-name]
   (let [ws-dir (get-workspace-dir project-name)
-        docker-config (-> :projects (get-config) (get project-name) :docker-config)]
-    (if (not (:active? docker-config))
+        docker-config (get-docker-config project-name)]
+    (if (:disabled? docker-config)
       (log/info "Docker configuration is inactive for project:" project-name)
       (do
         (log/info "Removing branch containers for project:" project-name)

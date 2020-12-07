@@ -3,7 +3,7 @@
             [clojure.string :as string]
             [me.raynes.conch.low-level :as sh]
             [droid.agent :refer [default-agent-error-handler]]
-            [droid.config :refer [get-config]]
+            [droid.config :refer [get-config get-docker-config]]
             [droid.fileutils :refer [get-workspace-dir get-temp-dir]]
             [droid.log :as log]))
 
@@ -19,7 +19,7 @@
   [project-name branch-name command]
   (let [local-workspace-dir (get-workspace-dir project-name branch-name)
         local-tmp-dir (get-temp-dir project-name branch-name)
-        docker-config (-> :projects (get-config) (get project-name) :docker-config)
+        docker-config (get-docker-config project-name)
         docker-workspace-dir (:workspace-dir docker-config)
         docker-tmp-dir (:temp-dir docker-config)
         make-switch #(if-not (string? %)
@@ -81,8 +81,7 @@
                   (if-not container-id
                     (do (log/debug "Running" command-log "without a container")
                         (apply sh/proc command))
-                    (let [docker-config (-> :projects (get-config) (get project-name)
-                                            :docker-config)
+                    (let [docker-config (get-docker-config project-name)
                           docker-cmd-base (->> docker-config :env (supplement-command-env command))
                           ;; For each key in the environment map,
                           ;; {:VAR1 "var1-value" :VAR2 "var2-value" ...}, generate command-line

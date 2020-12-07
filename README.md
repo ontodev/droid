@@ -35,7 +35,7 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
               :github-coordinates "github-org/repository-1"
               :makefile-path "src/ontology/Snakefile"
               :env {"ENV_VAR" "env_var_val"}
-              :docker-config {:active? true
+              :docker-config {:disabled? false
                               :image "debian"
                               :workspace-dir "/workspace/"
                               :temp-dir "/tmp/droid/"
@@ -47,6 +47,13 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
               :project-description "description"
               :github-coordinates "github-org/repository-2"}
               :env {"ENV_VAR" "env_var_val"}}
+ :docker-config {:disabled? false
+                 :image "debian"
+                 :workspace-dir "/workspace/"
+                 :temp-dir "/tmp/droid/"
+                 :default-working-dir "/workspace/"
+                 :shell-command "bash"
+                 :env {"ENV_VAR" "env_var_value"}}
  :op-env :dev
  :server-port {:dev 8000 :test 8001 :prod 8002}
  :log-level {:dev :info :test :info :prod :warn}
@@ -67,7 +74,7 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
 where:
 
 - `:cgi-timeout` is the maximum number of milliseconds that a CGI script is allowed to run.
-- `:docker-config` is optional. If included it must specify: (1) `:active?`: whether or not to actually use docker's container service when running commands in the project's branches; (2) `:image`: the name of the docker image to use; (3) `:workspace-dir`: the directory to map the server's local workspace directory for a branch to in the container; (4) `:temp-dir`: the directory to map the server's local temp directory for branch to in the container; (5) `:default-working-dir`: the directory relative to which DROID commands should be run by default within the container, if not otherwise specified; (6) `:shell-command`: the program name of the shell to be used when running commands; (7) `:env`: extra environment variables to pass to a container when invoking it.
+- `:docker-config` is the docker configuration. A default docker configuration for DROID needs to be specified, and optionally a docker configuration can be defined for specific projects. If one is not defined for a project, then the default configuration is uesd. Whether at the default or project-level, the docker configuration should specify: (1) `:disabled?`: whether or not to actually use docker's container service when running commands in the project's branches (note that setting this to true in the default configuration only disables docker for projects that have no docker configuration of their own); (2) `:image`: the name of the docker image to use; (3) `:workspace-dir`: the directory to map the server's local workspace directory for a branch to in the container; (4) `:temp-dir`: the directory to map the server's local temp directory for branch to in the container; (5) `:default-working-dir`: the directory relative to which DROID commands should be run by default within the container, if not otherwise specified; (6) `:shell-command`: the program name of the shell to be used when running commands; (7) `:env`: extra environment variables to pass to a container when invoking it.
 - `:env` specifies the environment variables to use with all commands that run in the given project.
 - `:github-app-id` is the ID of the GitHub App to use for authentication
 - `:github-coordinates` is used to lookup the location of the project in github, i.e., https://github.com/GITHUB_COORDINATES.

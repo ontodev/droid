@@ -11,7 +11,7 @@
             [ring.util.http-status :as status]
             [ring.util.response :refer [file-response redirect]]
             [droid.branches :as branches]
-            [droid.config :refer [get-config]]
+            [droid.config :refer [get-config get-docker-config]]
             [droid.command :as cmd]
             [droid.fileutils :refer [get-workspace-dir get-make-dir get-temp-dir]]
             [droid.github :as gh]
@@ -896,8 +896,7 @@
                             :title "Create a new local branch"}
                         "Create new"])
                      (when (and (site-admin? request)
-                                (-> :projects (get-config) (get project-name) :docker-config
-                                    :active?))
+                                (-> (get-docker-config project-name) :disabled? (not)))
                        [:a {:class "btn btn-sm btn-warning ml-2"
                             :href (str this-url "?rebuild-images=1")
                             :data-toggle "tooltip"
