@@ -416,6 +416,7 @@
     {:keys [project-name branch-name]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
+
   (if (read-only? request)
     (render-401 request)
     (let [branch-key (keyword branch-name)
@@ -441,7 +442,12 @@
                              "SERVER_PORT" (str server-port)
                              "SERVER_PROTOCOL" "HTTP/1.1"
                              "SERVER_SOFTWARE" "DROID/1.0"
-                             "HTTP_ACCEPT" (get headers "accept" "")
+                             "HTTP_ACCEPT" (-> headers (get "accept" "") (string/split #",\s*")
+                                               (set)
+                                               (#(if (some (fn [header] (= header "text/html")) %)
+                                                   (conj % "text/html-fragment")
+                                                   %))
+                                               (#(string/join "," %)))
                              "HTTP_ACCEPT_ENCODING" (get headers "accept-encoding" "")
                              "HTTP_ACCEPT_LANGUAGE" (get headers "accept-language" "")
                              "HTTP_USER_AGENT" (get headers "user-agent" "")}
@@ -528,20 +534,19 @@
             ;; correspond to (1) the headers, and (2) a blank line separating the headers from the
             ;; output proper, contained in the remaining sections of the response. In this case the
             ;; output is parsed into hiccup and embedded into a div:
-            (let [body
-                  (->> response-sections
-                       (drop 2)
-                       (apply concat)
-                       (vec)
-                       (string/join "\n"))]
-              (if (= "text/html" (headers "Content-Type"))
-                (->> body
-                     (hickory/parse-fragment)
-                     (map hickory/as-hiccup)
-                     (into [:div])
-                     (hash-map :headers headers :content)
+            (let [body (->> response-sections (drop 2) (apply concat) (vec) (string/join "\n"))]
+              (if (= "text/html-fragment" (headers "Content-Type"))
+                ;; If this is a HTML fragment, wrap it in DROID's fancy headers:
+                (->> body (hickory/parse-fragment) (map hickory/as-hiccup) (into [:div])
+                     (hash-map :headers (assoc headers "Content-Type" "text/html")
+                               :content)
                      (html-response request))
-                {:status 200 ; TODO: handle this properly
+                ;; Otherwise return it as is:
+                {:status (try
+                           (Integer/parseInt (headers "Status"))
+                           (catch Exception e
+                             ;; If the script status cannot be parsed, set it to 0 for 'unknown':
+                             0))
                  :headers headers
                  :session (:session request)
                  :body body}))
