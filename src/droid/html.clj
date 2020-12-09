@@ -22,8 +22,8 @@
 (def default-html-headers
   {"Content-Type" "text/html"})
 
-(defn- image-rebuilding?
-  "Returns true if the given branch is rebuilding a docker image"
+(defn- container-rebuilding?
+  "Returns true if the given branch is rebuilding a docker container"
   [project-name branch-name]
   (let [this-branch (when branch-name
                       (-> @branches/local-branches (get (keyword project-name))
@@ -46,14 +46,14 @@
    - The user is logged out
    - The user does not have write or admin permission on the requested project,
      and is not a site admin.
-   - The image for the given branch is currently being rebuilt."
+   - The container for the given branch is currently being rebuilt."
   ([project-name branch-name]
-   (image-rebuilding? project-name branch-name))
+   (container-rebuilding? project-name branch-name))
   ([{{:keys [project-name branch-name]} :params
      {{:keys [login project-permissions]} :user} :session,
      :as request}]
    (let [this-project-permissions (->> project-name (keyword) (get project-permissions))]
-     (or (image-rebuilding? project-name branch-name)
+     (or (container-rebuilding? project-name branch-name)
          (nil? login)
          (and (not= this-project-permissions "write")
               (not= this-project-permissions "admin")
@@ -292,9 +292,14 @@
 
 (defn- render-project-branches
   "Given the name of a project, render a list of its branches, with links. If restricted-access? is
-  set to true, do not display any links to actions that would result in changes to the workspace."
-  [project-name restricted-access?]
-  (let [local-branch-names (->> project-name
+  set to true, do not display any links to actions that would result in changes to the workspace.
+  If site-admin-access? is set to true, show the parts of the page that relate to administration.
+  Note that restricted-access?, if true, overrides site-admin-access?"
+  [project-name restricted-access? site-admin-access?]
+  (let [;; Override site-admin-access? if restricted-access? is set to true:
+        site-admin-access? (and (not restricted-access?) site-admin-access?)
+
+        local-branch-names (->> project-name
                                 (keyword)
                                 (get @branches/local-branches)
                                 (keys)
@@ -322,6 +327,53 @@
                                            -1
                                            1))))
 
+        container-list (if-not site-admin-access?
+                         ;; If the user is not a site admin return an empty map:
+                         {}
+                         ;; Otherwise run docker ps -f to get all the containers for the project:
+                         (let [[process
+                                exit-code] (cmd/run-command
+                                            ["docker" "ps" "-f" (str "name=" project-name "-*")
+                                             "--format" "{{.Names}},{{.Status}}"])]
+                           (if-not (= @exit-code 0)
+                             ;; If there was an error, log it and return an empty map:
+                             (do (log/error "Error getting container status:"
+                                            (sh/stream-to-string process :err))
+                                 {})
+                             ;; Otherwise return a hash-map mapping the container name to its status:
+                             (->> (sh/stream-to-string process :out)
+                                  (string/split-lines)
+                                  (map #(string/split % #","))
+                                  (map #(hash-map (first %) (second %)))
+                                  (apply merge)))))
+
+        render-container-indicator (fn [branch-name]
+                                     (let [status (->> (str project-name "-" branch-name)
+                                                       (get container-list)
+                                                       (#(if % % "not found"))
+                                                       (string/lower-case))
+                                           docker-disabled? (-> (get-docker-config project-name)
+                                                                :disabled?)]
+                                       [:span
+                                        (when-not docker-disabled?
+                                          [:a {:class "badge badge-warning"
+                                               :href (str project-url
+                                                          "?rebuild-single-container="
+                                                          ;; Set the branch name in the param:
+                                                          branch-name)}
+                                           "Rebuild"])
+                                        [:span
+                                         (cond (string/includes? status "(paused)")
+                                               {:class "text-primary"}
+
+                                               (string/starts-with? status "up")
+                                               {:class "text-success"}
+
+                                               (= status "not found")
+                                               {:class "text-danger font-weight-bold"})
+                                         (when-not docker-disabled? "&ensp;")
+                                         status]]))
+
         render-pr-link #(let [pr-url (:pull-request %)]
                           (when-not (nil? pr-url)
                             [:a {:href pr-url :target "__blank"}
@@ -343,7 +395,9 @@
                                                                (first))]
                                         (when remote-branch
                                           (render-pr-link remote-branch)))]
-                                     [:td (branch-status-summary project-name branch-name)]]))
+                                     [:td (branch-status-summary project-name branch-name)]
+                                     (when site-admin-access?
+                                       [:td (render-container-indicator branch-name)])]))
 
         render-remote-branch-row (fn [remote-branch]
                                    (when-not restricted-access?
@@ -361,11 +415,18 @@
                                                 :target "__blank"}
                                             (:name remote-branch)]]
                                       [:td (render-pr-link remote-branch)]
-                                      [:td]]))]
+                                      [:td]
+                                      ;; The last column is for container-status (site admins only):
+                                      (when site-admin-access? [:td])]))]
 
     [:table {:class "table table-sm table-striped table-borderless mt-3"}
      [:thead
-      [:tr (when-not restricted-access? [:th]) [:th "Branch"] [:th "Pull request"] [:th "Git status"]]]
+      [:tr (when-not restricted-access? [:th]) [:th "Branch"] [:th "Pull request"]
+       [:th "Git status"]
+       ;; Site admins can see container status:
+       (when site-admin-access?
+         [:th (str "Containers " (when (-> project-name (get-docker-config) :disabled?)
+                                   " (disabled)"))])]]
      ;; Render the local main (or master) branch first if it is present:
      (->> local-branch-names
           (filter #(or (= % "master") (= % "main")))
@@ -579,23 +640,24 @@
                     (or "/"))]
     (redirect (or rel-url "/"))))
 
-(defn- render-rebuild-image-dialog
-  "Render a dialog to ask the user if she would like to rebuild images. Use the given base-url
+(defn- render-rebuild-containers-dialog
+  "Render a dialog to ask the user if she would like to rebuild containers. Use the given base-url
   for forward links"
   [base-url]
   [:div {:class "alert alert-warning"}
-   "In addition to pulling (new versions of) images, all containers that depend on those images "
-   "will be removed before being recreated and restarted. Please confirm that you want to do this."
+   "Please confirm that you want to rebuild all containers. Note that if newer versions of the "
+   "images they depend on exist, those new image versions will be pulled/rebuilt before rebuilding "
+   "containers."
    [:div {:class "pt-2"}
     [:a {:class "btn btn-sm btn-primary" :href base-url} "Cancel"]
     [:span "&nbsp;"]
-    [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild=1")}
+    [:a {:class "btn btn-sm btn-warning" :href (str base-url "?really-rebuild-containers=1")}
      "Confirm"]]])
 
 (defn render-index
   "Render the index page"
   [{:keys [params]
-    {:keys [just-logged-out rebuild-images really-rebuild rebuild-launched
+    {:keys [just-logged-out rebuild-containers really-rebuild-containers rebuild-launched
             reset really-reset]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
@@ -615,7 +677,7 @@
       (await branches/local-branches)
       (redirect "/"))
 
-    (and (site-admin? request) (not (nil? really-rebuild)))
+    (and (site-admin? request) (not (nil? really-rebuild-containers)))
     (do
       (doseq [project-name (->> :projects (get-config) (keys) (map name))]
         ;; We send the rebuild jobs through container-serializer so that they will run in the
@@ -664,10 +726,10 @@
                            :data-toggle "tooltip"
                            :title "Clear branch data for all managed projects"}
                        "Reset branch data"]
-                      [:a {:class "btn btn-sm btn-warning" :href "/?rebuild-images=1"
+                      [:a {:class "btn btn-sm btn-warning" :href "/?rebuild-containers=1"
                            :data-toggle "tooltip"
-                           :title "(Re)build all images and containers for managed projects"}
-                       "Rebuild images and containers"]]
+                           :title "(Re)build all containers for all managed projects"}
+                       "Rebuild all containers"]]
                      (when (not (nil? reset))
                        [:div {:class "alert alert-danger"}
                         "Are you sure you want to reset branch data for all projects? Note that "
@@ -677,11 +739,11 @@
                          [:span "&nbsp;"]
                          [:a {:class "btn btn-sm btn-danger" :href "/?really-reset=1"}
                           "Yes, continue"]]])
-                     (when (not (nil? rebuild-images))
-                       (render-rebuild-image-dialog "/"))
+                     (when (not (nil? rebuild-containers))
+                       (render-rebuild-containers-dialog "/"))
                      (when (not (nil? rebuild-launched))
                        [:div {:class "alert alert-success"}
-                        "Container images are being rebuilt. This could take a few minutes "
+                        "Container(s) are being rebuilt. This could take a few minutes "
                         "to complete."
                         [:div [:a {:class "btn btn-sm btn-primary mt-2" :href "/"}
                                "Dismiss"]]])])]]]})))
@@ -691,7 +753,8 @@
   [{:keys [params]
     {:keys [project-name refresh to-delete to-really-delete to-checkout
             create invalid-name-error to-create branch-from
-            rebuild-images really-rebuild rebuild-launched]} :params,
+            rebuild-single-container really-rebuild-single-container
+            rebuild-containers really-rebuild-containers rebuild-launched]} :params,
     :as request}]
   (log/debug "Processing request in render-project with params:" params)
   (let [this-url (str "/" project-name)
@@ -779,12 +842,21 @@
           (create-branch project-name to-create))
 
         ;; Rebuild the project's containers:
-        (and (site-admin? request) (not (nil? really-rebuild)))
+        (and (site-admin? request) (not (nil? really-rebuild-containers)))
         (do
           ;; We send the rebuild job through container-serializer so that it will run in the
           ;; background:
           (send-off branches/container-serializer
                     branches/rebuild-images-and-containers project-name)
+          (redirect (str this-url "?rebuild-launched=1")))
+
+        ;; Rebuild a specific container:
+        (and (site-admin? request) (not (nil? really-rebuild-single-container)))
+        (let [;; The name of the branch is stored in the really-rebuild-single-container param:
+              branch-name really-rebuild-single-container
+              branch-agent (-> @branches/local-branches (get (keyword project-name))
+                               (get (keyword branch-name)))]
+          (send-off branch-agent branches/rebuild-branch-container)
           (redirect (str this-url "?rebuild-launched=1")))
 
         ;; Refresh local and remote branches:
@@ -868,15 +940,31 @@
                           [:a {:class "btn btn-sm btn-secondary ml-2" :href this-url}
                            "Cancel"]]]]])
 
-                    ;; Display this alert when the rebuild-images parameter is present and the user
-                    ;; is a site admin:
-                    (when (and (site-admin? request) (not (nil? rebuild-images)))
-                      (render-rebuild-image-dialog this-url))
+                    ;; Display this alert when the rebuild-containers parameter is present and the
+                    ;; user is a site admin:
+                    (when (and (site-admin? request) (not (nil? rebuild-containers)))
+                      (render-rebuild-containers-dialog this-url))
 
-                    ;; Display this alert when a rebuild of container images has been launched:
+                    ;; Display this alert when the rebuild-single-container parameter is present
+                    ;; and the user is a site admin:
+                    (when (and (site-admin? request) (not (nil? rebuild-single-container)))
+                      [:div {:class "alert alert-warning"}
+                       (str "Really rebuild container for " rebuild-single-container "? Note that "
+                            "if a newer version of the image it depends on exists, it will be "
+                            "pulled/rebuilt before rebuilding the container.")
+                       [:div {:class "pt-2"}
+                        [:a {:class "btn btn-sm btn-primary" :href this-url} "Cancel"]
+                        [:span "&nbsp;"]
+                        [:a {:class "btn btn-sm btn-warning"
+                             :href (str this-url "?really-rebuild-single-container="
+                                        ;; The branch name is in the rebuild-single-container param:
+                                        rebuild-single-container)}
+                         "Confirm"]]])
+
+                    ;; Display this alert when a rebuild of container(s) has been launched:
                     (when (not (nil? rebuild-launched))
                       [:div {:class "alert alert-success"}
-                       "Container images are being rebuilt. This could take a few minutes "
+                       "Container(s) are being rebuilt. This could take a few minutes "
                        "to complete."
                        [:div [:a {:class "btn btn-sm btn-primary mt-2" :href this-url}
                               "Dismiss"]]])
@@ -898,11 +986,13 @@
                      (when (and (site-admin? request)
                                 (-> (get-docker-config project-name) :disabled? (not)))
                        [:a {:class "btn btn-sm btn-warning ml-2"
-                            :href (str this-url "?rebuild-images=1")
+                            :href (str this-url "?rebuild-containers=1")
                             :data-toggle "tooltip"
-                            :title "Rebuild images and containers for this project"}
-                        "Rebuild images and containers"])]
-                    (->> request (read-only?) (render-project-branches project-name))]})))))
+                            :title "Rebuild all containers for this project"}
+                        "Rebuild all containers"])]
+                    (render-project-branches project-name
+                                             (read-only? request)
+                                             (site-admin? request))]})))))
 
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
@@ -1067,8 +1157,8 @@
      [:span {:class "text-monospace font-weight-bold"} view-path]
      [:span " does not exist in branch "]
      [:span {:class "text-monospace font-weight-bold"} branch-name]
-     (if (image-rebuilding? project-name branch-name)
-       [:span ". You cannot build it while the branch's image is being rebuilt. Try again later."]
+     (if (container-rebuilding? project-name branch-name)
+       [:span ". Cannot build it while the branch's container is being rebuilt. Try again later."]
        [:span ". Ask someone with write access to this project to build it for you."])]]
    [:div {:class "pt-2"}
     [:a {:class "btn btn-sm btn-primary"
@@ -1462,9 +1552,9 @@
 
                    [:hr {:class "line1"}]
 
-                   (when (image-rebuilding? project-name branch-name)
+                   (when (container-rebuilding? project-name branch-name)
                      [:p {:class "alert alert-primary"}
-                      "The image for this branch is currently being built. Access to this branch "
+                      "The container for this branch is currently being built. Access "
                       "will be read-only until it is complete."])
                    (when process-killed
                      [:p {:class "alert alert-warning"}

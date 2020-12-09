@@ -539,6 +539,27 @@
   "An agent that has no role other than to be used to serialize calls to the containers."
   (agent {} :error-mode :continue, :error-handler default-agent-error-handler))
 
+(defn rebuild-branch-container
+  "Rebuild the docker container for a single branch (unless docker is disabled for the branch's
+  project). This function is serialisable through a branch agent."
+  [{:keys [branch-name project-name] :as branch}]
+  (let [docker-name (str project-name "-" branch-name)
+        ws-dir (get-workspace-dir project-name branch-name)
+        docker-config (get-docker-config project-name)]
+    (if (:disabled? docker-config)
+      (do
+        (log/info "Docker configuration is inactive for project:" project-name)
+        branch)
+      (do
+        (log/info "Removing branch container" docker-name)
+        (remove-branch-container project-name branch-name)
+        (log/info "Building/pulling image and container for branch" docker-name)
+        (if (-> ws-dir (str "/Dockerfile") (io/file) (.exists))
+          ;; If the branch directory contains a Dockerfile, use it to create a branch-specific image
+          (create-image-and-container-for-branch branch docker-name)
+          ;; Otherwise the project-level default will be used
+          (create-image-and-container-for-branch))))))
+
 (defn rebuild-images-and-containers
   "Given a project name, if the project has been configured to use docker, pull the image specified
   in the config file. If there are Dockerfiles on any of the local branches, use them to build
