@@ -142,11 +142,16 @@
 
                             (or (some #(= href %) (set/union file-views dir-views))
                                 (some #(-> href (normalize-exec-view) (= %)) exec-views))
-                            [tag
-                             {:href (str "/" project-name "/branches/" branch-name
-                                         "/views/" href)
-                              :target "_blank"}
-                             text]
+                            ;; Replace any instances of '../' in the href with 'PREV_DIR/' which
+                            ;; DROID will then have to interpret when rendering a view. Note that
+                            ;; this is encoding is for the href only. The actual view path within
+                            ;; file-views/dir-views/exec-views still needs to contain the '../'
+                            (let [encoded-href (string/replace href #"\.\.\/" "PREV_DIR/")]
+                              [tag
+                               {:href (str "/" project-name "/branches/" branch-name
+                                           "/views/" encoded-href)
+                                :target "_blank"}
+                               text])
 
                             :else
                             [tag {:href href :target "_blank"} text]))]

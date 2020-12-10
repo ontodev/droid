@@ -225,6 +225,11 @@
   [request]
   (render-4xx request 404 "The requested resource could not be found."))
 
+(defn render-403
+  "Render the 403 - forbidden page"
+  [request]
+  (render-4xx request 403 "Access to the requested resource is forbidden."))
+
 (defn render-401
   "Render the 401 - unauthorized page"
   [request]
@@ -252,7 +257,8 @@
                  (key)
                  (name)
                  (codec/url-encode)
-                 (str "=" (-> % (val) (codec/url-encode)))))
+                 ;; Interpolate PREV_DIR/ as ../ if a view-path is present:
+                 (str "=" (-> % (val) (string/replace #"PREV_DIR/" "../") (codec/url-encode)))))
        (string/join "&")))
 
 (defn render-github-webook-response
@@ -477,7 +483,6 @@
     {:keys [project-name branch-name]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
-
   (if (read-only? request)
     (render-401 request)
     (let [branch-key (keyword branch-name)
@@ -1094,11 +1099,12 @@
   [{:keys [branch-name project-name action] :as branch}
    {:keys [view-path] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
-        view-url (str "/" project-name "/branches/" branch-name "/views/" view-path)]
+        view-url (str "/" project-name "/branches/" branch-name "/views/" view-path)
+        decoded-view-path (when view-path (string/replace view-path #"PREV_DIR\/" "../"))]
     [:div {:class "alert alert-warning"}
      [:p [:span {:class "text-monospace font-weight-bold"} action]
       " is still not complete. You must cancel it before updating or running "
-      [:span {:class "text-monospace font-weight-bold"} view-path]
+      [:span {:class "text-monospace font-weight-bold"} decoded-view-path]
       ". Do you really want to do this?"]
      [:span [:a {:class "btn btn-secondary btn-sm" :href (str branch-url "?cancel-kill-for-view=1")}
              "No, do nothing"]]
@@ -1106,8 +1112,8 @@
      [:span [:a {:class "btn btn-danger btn-sm" :href (str view-url "?force-kill=1")}
              "Yes, go ahead"]]
      ;; If the view exists and it is not executable, provide the option to view a stale version:
-     (when (and (->> branch :Makefile :exec-views (not-any? #(= view-path %)))
-                (view-exists? branch view-path))
+     (when (and (->> branch :Makefile :exec-views (not-any? #(= decoded-view-path %)))
+                (view-exists? branch decoded-view-path))
        [:span
         [:span {:class "col-sm-1"}]
         [:span [:a {:class "btn btn-warning btn-sm" :href (str view-url "?force-old=1")}
@@ -1119,10 +1125,11 @@
   [{:keys [branch-name project-name action] :as branch}
    {:keys [view-path] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
-        view-url (str "/" project-name "/branches/" branch-name "/views/" view-path)]
+        view-url (str "/" project-name "/branches/" branch-name "/views/" view-path)
+        decoded-view-path (when view-path (string/replace view-path #"PREV_DIR\/" "../"))]
     [:div
      [:div {:class "alert alert-warning"}
-      [:p [:span {:class "font-weight-bold text-monospace"} view-path]
+      [:p [:span {:class "font-weight-bold text-monospace"} decoded-view-path]
        " is not up to date. What would you like to do?"]
 
       [:span [:a {:class "btn btn-secondary btn-sm" :href (str branch-url "?cancel-update-view=1")}
@@ -1130,11 +1137,12 @@
       [:span {:class "col-sm-1"}]
       [:span [:a {:class "btn btn-danger btn-sm" :href (str view-url "?force-update=1")}
               "Rebuild the view"]]
-      (when (view-exists? branch view-path)
+      (when (view-exists? branch decoded-view-path)
         [:span
          [:span {:class "col-sm-1"}]
          [:span [:a (-> {:class "btn btn-warning btn-sm"}
-                        (#(if (->> branch :Makefile :exec-views (not-any? (fn [v] (= view-path v))))
+                        (#(if (->> branch :Makefile :exec-views
+                                   (not-any? (fn [v] (= decoded-view-path v))))
                             ;; If this isn't an executable view simply add the force-old flag to the
                             ;; query string:
                             (assoc % :href (str view-url "?force-old=1"))
@@ -1151,18 +1159,19 @@
   the user that it is not there."
   [{:keys [branch-name project-name] :as branch}
    view-path]
-  [:div {:class "alert alert-warning"}
-   [:div
-    [:span
-     [:span {:class "text-monospace font-weight-bold"} view-path]
-     [:span " does not exist in branch "]
-     [:span {:class "text-monospace font-weight-bold"} branch-name]
-     (if (container-rebuilding? project-name branch-name)
-       [:span ". Cannot build it while the branch's container is being rebuilt. Try again later."]
-       [:span ". Ask someone with write access to this project to build it for you."])]]
-   [:div {:class "pt-2"}
-    [:a {:class "btn btn-sm btn-primary"
-         :href (str "/" project-name "/branches/" branch-name "?close-tab=1")} "Dismiss"]]])
+  (let [decoded-view-path (when view-path (string/replace view-path #"PREV_DIR\/" "../"))]
+    [:div {:class "alert alert-warning"}
+     [:div
+      [:span
+       [:span {:class "text-monospace font-weight-bold"} decoded-view-path]
+       [:span " does not exist in branch "]
+       [:span {:class "text-monospace font-weight-bold"} branch-name]
+       (if (container-rebuilding? project-name branch-name)
+         [:span ". Cannot build it while the branch's container is being rebuilt. Try again later."]
+         [:span ". Ask someone with write access to this project to build it for you."])]]
+     [:div {:class "pt-2"}
+      [:a {:class "btn btn-sm btn-primary"
+           :href (str "/" project-name "/branches/" branch-name "?close-tab=1")} "Dismiss"]]]))
 
 (defn- render-console
   "Given some branch data, and a number of parameters related to an action or a view, render
@@ -1519,7 +1528,10 @@
       (and updating-view
            (-> branch :exit-code (realized?))
            (-> branch :exit-code (deref) (= 0)))
-      (->> branch :action (str this-url "/views/") (redirect))
+      ;; Note that we need to encode any instances of '../' into 'PREV_DIR/' to avoid the browser
+      ;; interpolating these incorrectly:
+      (->> branch :action (#(string/replace % #"\.\.\/" "PREV_DIR/"))
+           (str this-url "/views/") (redirect))
 
       ;; Otherwise process the request as normal:
       :else
@@ -1600,6 +1612,11 @@
         branch-agent (->> @branches/local-branches project-key branch-key)
         branch-url (str "/" project-name "/branches/" branch-name)
         this-url (str branch-url "/views/" view-path)
+        ;; In some cases we need DROID to be able to navigate to parent directories, but because
+        ;; most browsers' will 'smartly' remove '../' elements in the path, we need to circumvent
+        ;; this by replacing those strings with 'PREV_DIR/'. When we come to fetch the view, we then
+        ;; need to replace 'PREV_DIR' with '../' again in order to determine the filesystem path:
+        decoded-view-path (when view-path (string/replace view-path #"PREV_DIR\/" "../"))
         ;; Kick off a job to refresh the branch information, wait for it to complete, and then
         ;; finally retrieve the views from the branch's Makefile. Only a request to retrieve
         ;; one of these allowed views will be honoured:
@@ -1619,7 +1636,7 @@
         makefile-name (-> @branch-agent :Makefile :name)
         ;; Runs `make -q` to see if the view is up to date:
         up-to-date? #(let [[process exit-code] (branches/run-branch-command
-                                                ["make" "-f" makefile-name "-q" view-path
+                                                ["make" "-f" makefile-name "-q" decoded-view-path
                                                  :dir (get-make-dir project-name branch-name)]
                                                 project-name branch-name)]
                        (or (= @exit-code 0) false))
@@ -1627,22 +1644,23 @@
         ;; Runs `make` (in the background) to rebuild the view, with output directed to the branch's
         ;; console.txt file:
         update-view (fn [branch]
-                      (log/info "Rebuilding view" view-path "from branch" branch-name "of project"
-                                project-name "for user" (-> request :session :user :login))
+                      (log/info "Rebuilding view" decoded-view-path "from branch" branch-name
+                                "of project" project-name "for user"
+                                (-> request :session :user :login))
                       (let [[process exit-code]
                             (branches/run-branch-command
                              ["sh" "-c"
                               ;; `exec` is needed here to prevent the make process from
                               ;; detaching from the parent (since that would make it
                               ;; difficult to destroy later).
-                              (str "exec make -f " makefile-name " " view-path
+                              (str "exec make -f " makefile-name " " decoded-view-path
                                    " > " (get-temp-dir project-name branch-name)
                                    "/console.txt 2>&1")
                               :dir (get-make-dir project-name branch-name)]
                              project-name branch-name)]
                         (assoc branch
-                               :action view-path
-                               :command (str "make -f " makefile-name " " view-path)
+                               :action decoded-view-path
+                               :command (str "make -f " makefile-name " " decoded-view-path)
                                :process process
                                :start-time (System/currentTimeMillis)
                                :cancelled false
@@ -1650,7 +1668,7 @@
 
         ;; Delivers an executable, possibly CGI-aware, script:
         deliver-exec-view #(let [script-path (-> (get-make-dir project-name branch-name)
-                                                 (str "/" view-path))]
+                                                 (str "/" decoded-view-path))]
                              (cond (not (branches/path-executable?
                                          script-path project-name branch-name))
                                    (let [error-msg (str script-path " is not executable")]
@@ -1667,25 +1685,39 @@
 
         ;; Serves the view from the filesystem:
         deliver-file-view #(-> (get-make-dir project-name branch-name)
-                               (str "/" view-path)
+                               (str "/" decoded-view-path)
                                (file-response)
                                ;; Views must not be cached by the client browser:
-                               (assoc :headers {"Cache-Control" "no-store"}))]
+                               (assoc :headers {"Cache-Control" "no-store"}))
+
+        ;; Used for checking whether the requested view is in the workspace directory:
+        canonical-ws-dir (-> (get-workspace-dir project-name branch-name) (io/file)
+                             (.getCanonicalPath))
+        canonical-view-path (-> (get-make-dir project-name branch-name) (str "/" decoded-view-path)
+                                (io/file) (.getCanonicalPath))]
 
     ;; Note that below we do not call (await) after calling (send-off), because below we
     ;; always then redirect back to the view page, which results in another call to this function,
     ;; which always calls await when it starts (see above).
     (cond
-      ;; If the view-path isn't in the sets of allowed file and exec views, and it isn't inside
+      ;; If the view-path is not in the workspace directory, render a 403 forbidden
+      (-> (str canonical-view-path "/") (string/starts-with? canonical-ws-dir) (not))
+      (do
+        (log/warn "Attempt to access directory:" canonical-view-path "(outside workspace directory)"
+                  "from page" branch-name "of project" project-name
+                  (let [login (-> request :session :user :login)] (when login (str "by " login))))
+        (render-403 request))
+
+      ;; If the decoded-view-path isn't in the sets of allowed file and exec views, and it isn't inside
       ;; one of the allowed directory views, then render a 404:
-      (and (not-any? #(= view-path %) allowed-file-views)
-           (not-any? #(= view-path %) allowed-exec-views)
-           (not-any? #(-> view-path (string/starts-with? %)) allowed-dir-views))
+      (and (not-any? #(= decoded-view-path %) allowed-file-views)
+           (not-any? #(= decoded-view-path %) allowed-exec-views)
+           (not-any? #(-> decoded-view-path (string/starts-with? %)) allowed-dir-views))
       (render-404 request)
 
       ;; If the view is a directory, assume that the user wants a file called index.html inside
       ;; that directory:
-      (and view-path (-> view-path (string/ends-with? "/")))
+      (and decoded-view-path (-> decoded-view-path (string/ends-with? "/")))
       (redirect (-> this-url (str "index.html")))
 
       ;; If the 'missing-view' parameter is present (which can only happen if the user has
@@ -1700,18 +1732,19 @@
       ;; view does not exist, redirect back to this page with the missing-view parameter set.
       (read-only? request)
       (cond
-        (some #(= view-path %) allowed-exec-views)
+        (some #(= decoded-view-path %) allowed-exec-views)
         (render-401 request)
 
-        (view-exists? @branch-agent view-path)
+        (view-exists? @branch-agent decoded-view-path)
         (deliver-file-view)
 
         :else
+        ;; Note that we use the non-decoded viewpath since this is a URL:
         (redirect (-> this-url (str "?missing-view=") (str view-path))))
 
       ;; If the view isn't an executable, then render the current version of the view if either the
       ;; 'force-old' parameter is present, or if the view is already up-to-date:
-      (and (not-any? #(= view-path %) allowed-exec-views)
+      (and (not-any? #(= decoded-view-path %) allowed-exec-views)
            (or (not (nil? force-old))
                (up-to-date?)))
       (deliver-file-view)
@@ -1737,7 +1770,7 @@
 
         ;; If the action currently running is an update of the very view we are requesting,
         ;; then do nothing and redirect back to the branch page:
-        (->> @branch-agent :action (= view-path))
+        (->> @branch-agent :action (= decoded-view-path))
         (redirect branch-url)
 
         ;; Otherwise redirect back to the page with the confirm-kill flag set:
@@ -1746,7 +1779,7 @@
 
       ;; If the view is an executable, then render the current version of the view if either the
       ;; 'force-old' parameter is present, or if the view is already up-to-date:
-      (and (some #(= view-path %) allowed-exec-views)
+      (and (some #(= decoded-view-path %) allowed-exec-views)
            (or (not (nil? force-old))
                (up-to-date?)))
       (deliver-exec-view)
