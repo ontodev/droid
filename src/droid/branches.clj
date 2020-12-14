@@ -306,7 +306,8 @@
 
 (defn kill-process
   "Kill the running process associated with the given branch and return the branch to the caller."
-  [{:keys [process action branch-name project-name] :as branch} & [{:keys [login] :as user}]]
+  [{:keys [process action command branch-name project-name] :as branch}
+   & [{:keys [login] :as user}]]
   (if-not (nil? process)
     (do
       (-> (str "Cancelling process " action " on branch " branch-name " of " project-name)
@@ -314,6 +315,31 @@
               (str % " on behalf of " login)
               %))
           (log/info))
+      ;; If docker is configured for this project, then first kill the docker process corresponding
+      ;; to the command within the container:
+      (when (-> project-name (get-docker-config) :disabled? (not))
+        (let [docker-container (str project-name "-" branch-name)
+              [docker-process docker-exit-code] (cmd/run-command ["docker" "exec" docker-container
+                                                                  "ps" "-o" "pid,args"])]
+          (if-not (= 0 @docker-exit-code)
+            (cmd/throw-process-exception docker-process (str "Error finding PID to kill in "
+                                                             "container " docker-container))
+            (let [ps-line (->> (sh/stream-to-string docker-process :out) (string/split-lines)
+                               (some #(when (-> command (re-pattern) (re-find %))
+                                        %)))]
+              (if-not ps-line
+                (log/info "Process for '" command "' not found within container" docker-container)
+                (do
+                  (log/info "Killing process: '" ps-line "' in container" docker-container)
+                  (let [pid (-> ps-line (string/trim) (string/split #"\s+") (first))]
+                    (let [[docker-kill-proc
+                           docker-kill-exit-code] (cmd/run-command ["docker" "exec" docker-container
+                                                                    "kill" pid])]
+                      (when-not (= 0 @docker-kill-exit-code)
+                        (cmd/throw-process-exception
+                         docker-kill-proc (str "Can't kill process" pid "in container"
+                                               docker-container)))))))))))
+      ;; Now destroy the parent process attached to the branch and mark it as cancelled:
       (sh/destroy process)
       (assoc branch :cancelled true))
     branch))
@@ -558,7 +584,7 @@
           ;; If the branch directory contains a Dockerfile, use it to create a branch-specific image
           (create-image-and-container-for-branch branch docker-name)
           ;; Otherwise the project-level default will be used
-          (create-image-and-container-for-branch))))))
+          (create-image-and-container-for-branch branch))))))
 
 (defn rebuild-images-and-containers
   "Given a project name, if the project has been configured to use docker, pull the image specified
