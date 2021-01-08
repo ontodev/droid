@@ -358,7 +358,7 @@
   "Run the possibly CGI-aware script located at the given path and render its response"
   [script-path
    {:keys [request-method headers params form-params remote-addr server-name server-port
-           raw-body-rdr]
+           body-bytes]
     {:keys [project-name branch-name]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
@@ -370,7 +370,6 @@
           dirname (-> script-path (io/file) (.getParent))
           basename (-> script-path (io/file) (.getName))
           query-string (-> params (params-to-query-str))
-          raw-body (slurp raw-body-rdr)
           cgi-input-env (-> {"AUTH_TYPE" ""
                              "CONTENT_LENGTH" ""
                              "CONTENT_TYPE" ""
@@ -398,10 +397,7 @@
 
                                 (= request-method :post)
                                 (merge % {"REQUEST_METHOD" "POST"
-                                          "CONTENT_LENGTH" (-> raw-body
-                                                               (char-array)
-                                                               (count)
-                                                               (str))
+                                          "CONTENT_LENGTH" (-> body-bytes (alength) (str))
                                           "CONTENT_TYPE" (get headers "content-type" "")})
 
                                 :else
@@ -418,7 +414,8 @@
           timeout (get-config :cgi-timeout)
           [process
            exit-code] (if (= request-method :post)
-                        (do (spit tmp-infile raw-body)
+                        (do (with-open [w (io/output-stream tmp-infile)]
+                                (.write w body-bytes))
                             (branches/run-branch-command
                              ["sh" "-c"
                               (str "./" basename " < " tmp-infile " > " tmp-outfile)
