@@ -15,15 +15,23 @@
             [droid.github :as gh]
             [droid.log :as log]
             [droid.html :as html]
-            [droid.secrets :refer [secrets]]))
+            [droid.secrets :refer [secrets]])
+  (:import (java.io ByteArrayInputStream
+                    ByteArrayOutputStream)))
 
-(defn- wrap-raw-body-rdr
-  "Create a Reader corresponding to the raw request body and add it to the request."
+(defn- wrap-body-bytes
+  "Copy the bytes of the request body to :body-bytes."
   [handler]
-  ;; Note that this code is adapted from: https://stackoverflow.com/a/37397991
+  ;; Note that this code is adapted from: https://stackoverflow.com/a/20570399
   (fn [request]
-    (let [raw-body (body-string request)]
-      (->> raw-body (char-array) (io/reader) (assoc request :raw-body-rdr) (handler)))))
+    (let [buffer (ByteArrayOutputStream.)
+          _ (when (:body request) (io/copy (:body request) buffer))
+          bytes (.toByteArray buffer)]
+      (handler
+       (assoc
+        request
+        :body (ByteArrayInputStream. bytes)
+        :body-bytes bytes)))))
 
 (defn- wrap-authenticated
   "If the request is to logout, then reset the session and redirect to the index page. Otherwise,
@@ -123,7 +131,7 @@
              (assoc-in [:security :anti-forgery] false)
              (assoc-in [:session :cookie-attrs :same-site] :lax)
              (assoc-in [:session :store] (cookie-store {:key (:cookie-store-key secrets)})))))
-      (wrap-raw-body-rdr)))
+      (wrap-body-bytes)))
 
 (def app
   "The web app"
