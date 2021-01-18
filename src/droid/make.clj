@@ -3,6 +3,7 @@
             [clojure.set :as set]
             [clojure.string :as string]
             [markdown-to-hiccup.core :as m2h]
+            [droid.config :refer [get-config]]
             [droid.fileutils :refer [get-workspace-dir]]
             [droid.github :as gh]
             [droid.log :as log]))
@@ -12,16 +13,14 @@
   a map called `makefile`. This map begins as nil, but will eventually contain two entries:
   `:markdown`, which contains the markdown in the 'Workflow' part of the Makefile, and
   `:phony-targets`, which is a set containing all of the .PHONY targets in the Makefile."
-  [project-name branch-name]
-  (if-not (->> "/Makefile"
-               (str (get-workspace-dir project-name branch-name))
+  [makefile-path project-name branch-name]
+  (if-not (->> makefile-path
                (io/file)
                (.exists))
     ;; If there is no Makefile in the workspace for the branch, then log a warning and return nil:
     (log/warn "Branch" branch-name "does not contain a Makefile.")
     ;; Otherwise, parse the Makefile:
-    (->> "/Makefile"
-         (str (get-workspace-dir project-name branch-name))
+    (->> makefile-path
          (slurp)
          (string/split-lines)
          (reduce (fn [makefile next-line]
@@ -143,11 +142,16 @@
 
                             (or (some #(= href %) (set/union file-views dir-views))
                                 (some #(-> href (normalize-exec-view) (= %)) exec-views))
-                            [tag
-                             {:href (str "/" project-name "/branches/" branch-name
-                                         "/views/" href)
-                              :target "_blank"}
-                             text]
+                            ;; Replace any instances of '../' in the href with 'PREV_DIR/' which
+                            ;; DROID will then have to interpret when rendering a view. Note that
+                            ;; this is encoding is for the href only. The actual view path within
+                            ;; file-views/dir-views/exec-views still needs to contain the '../'
+                            (let [encoded-href (string/replace href #"\.\.\/" "PREV_DIR/")]
+                              [tag
+                               {:href (str "/" project-name "/branches/" branch-name
+                                           "/views/" encoded-href)
+                                :target "_blank"}
+                               text])
 
                             :else
                             [tag {:href href :target "_blank"} text]))]
@@ -209,17 +213,21 @@
   than the Makefile actually residing on disk, then return an updated version of the Makefile record
   back to the caller."
   [{:keys [project-name branch-name Makefile] :as branch}]
-  (let [last-known-mod (when-not (nil? Makefile)
+  (let [makefile-path (-> :projects (get-config) (get project-name) :makefile-path)
+        makefile-path (str (get-workspace-dir project-name branch-name)
+                           (if makefile-path
+                             (str "/" makefile-path)
+                             "/Makefile"))
+        last-known-mod (when-not (nil? Makefile)
                          (:modified Makefile))
-        actual-last-mod (->> "/Makefile"
-                             (str (get-workspace-dir project-name branch-name))
+        actual-last-mod (->> makefile-path
                              (io/file)
                              (.lastModified))]
     ;; Return nothing unless the Makefile has been modified since we read it last:
     (when (or (nil? last-known-mod)
               (>= actual-last-mod last-known-mod))
-      {:Makefile (merge {:name "Makefile"
+      {:Makefile (merge {:name (-> makefile-path (io/file) (.getName))
                          :modified actual-last-mod}
                         (->> branch-name
-                             (get-markdown-and-phonies project-name)
+                             (get-markdown-and-phonies makefile-path project-name)
                              (process-markdown)))})))

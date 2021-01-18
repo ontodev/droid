@@ -51,3 +51,11 @@
              (contains? param-rec op-env))
       (get param-rec op-env)
       (get config param-keyword))))
+
+(defn get-docker-config
+  "Returns the docker config for a project, or if no docker config is defined for the project,
+  returns the default docker config"
+  [project-name]
+  (or (-> :projects (get-config) (get project-name) :docker-config)
+      (get-config :docker-config)))
+

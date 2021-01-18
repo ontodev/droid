@@ -4,7 +4,7 @@
             [me.raynes.conch.low-level :as sh]
             [droid.agent :refer [default-agent-error-handler]]
             [droid.command :as cmd]
-            [droid.config :refer [get-config]]
+            [droid.config :refer [get-config get-docker-config]]
             [droid.db :as db]
             [droid.fileutils :refer [delete-recursively recreate-dir-if-not-exists
                                      get-workspace-dir get-temp-dir]]
@@ -69,28 +69,40 @@
   command in the given branch's container. Optionally exit after the given value for timeout
   (in milliseconds)."
   [command project-name branch-name & [timeout]]
-  (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
+  (let [docker-config (get-docker-config project-name)
         ;; Use the container name instead of the actual ID (it works just as well):
         container-id (str project-name "-" branch-name)
+        git-head (-> (get-workspace-dir project-name branch-name) (str "/.git/HEAD") (slurp)
+                     (string/trim-newline))
         project-env (-> :projects (get-config) (get project-name) :env)
         ;; Redefine the command by adding in the project-level environment. The docker-specific
         ;; environment variables will be taken care of by run-command:
         command (if-not (empty? project-env)
                   (cmd/supplement-command-env command project-env)
-                  command)]
-    (cmd/run-command command timeout (when (:active? docker-config) {:project-name project-name
-                                                                     :branch-name branch-name
-                                                                     :container-id container-id}))))
+                  command)
+        ;; Possibly redefine the command again; if the actual branch for the directory does not
+        ;; match the branch name, turn the command into an echo command for an error message:
+        command (if (-> "ref: refs/heads/" (str branch-name) (re-pattern) (re-matches git-head))
+                  command
+                  ["sh" "-c" (str "echo \"Refusing to run command: "
+                                  (->> command (filter string?) (string/join " ")) ". "
+                                  "The branch name: " branch-name
+                                  " does not match the HEAD: " git-head " for this directory\" "
+                                  "1>&2; exit 1")])]
+    (cmd/run-command command timeout (when-not (:disabled? docker-config)
+                                       {:project-name project-name
+                                        :branch-name branch-name
+                                        :container-id container-id}))))
 
 (defn path-executable?
   "Determine whether the given path is executable. If docker has been activated for the given
   project, then check whether the script is executable in the container for the branch,
   otherwise check if it is executable from the server's point of view."
   [script-path project-name branch-name]
-  (let [docker-config (-> :projects (get-config) (get project-name) :docker-config)
+  (let [docker-config (get-docker-config project-name)
         ;; Use the container name instead of the actual ID (it works just as well):
         container-id (str project-name "-" branch-name)]
-    (if-not (:active? docker-config)
+    (if (:disabled? docker-config)
       (-> script-path (io/file) (.canExecute))
       (let [[process exit-code]
             (cmd/run-command ["test" "-x" script-path] nil {:project-name project-name
@@ -134,22 +146,9 @@
                             "Error retrieving git status for branch" branch-name "of project"
                             project-name ":" (sh/stream-to-string process :err))
                            {})))]
-      ;; The contents of the directory for the branch are represented by a hashmap, mapping the
-      ;; keywordized name of each file/sub-directory in the branch to nested hashmap with
-      ;; info about that file/sub-directory. This info is at a minimum the file/sub-directory's
-      ;; non-keywordized name. Other info may be added later.
-      (-> (->> branch-workspace-dir
-               (io/file)
-               (.list)
-               ;; We skip the Makefile for now. It will be populated separately later on.
-               (map #(when-not (= % "Makefile")
-                       (hash-map (keyword %) (hash-map :name %))))
-               ;; Merge the sequence of hashmaps just generated into a larger hashmap:
-               (apply merge)
-               ;; Merge the newly generated hashmap with the currently saved hashmap:
-               (merge branch)
-               ;; Merge in the Makefile info:
-               (#(merge % (make/get-makefile-info branch))))
+      (-> branch
+          ;; Merge in the Makefile info:
+          (merge (make/get-makefile-info branch))
           ;; Add the git status of the branch:
           (assoc :git-status git-status)
           ;; Add the console contents and info about the running process, if any:
@@ -168,7 +167,7 @@
   (log/info "Creating/pulling docker image and container for branch:" branch-name "of project:"
             project-name)
   (let [container-name (str project-name "-" branch-name)
-        docker-config (-> :projects (get-config) (get project-name) :docker-config)
+        docker-config (get-docker-config project-name)
         ws-dir (-> (get-workspace-dir project-name branch-name) (str "/"))
         tmp-dir (-> (get-temp-dir project-name branch-name) (str "/"))
         output-redirect (str "> " (get-temp-dir project-name branch-name)
@@ -247,8 +246,7 @@
                                   {:project-name project-name, :branch-name branch-name})
                               :error-mode :continue
                               :error-handler default-agent-error-handler)
-          docker-active? (-> :projects (get-config) (get project-name) :docker-config :active?)]
-
+          docker-active? (-> (get-docker-config project-name) :disabled? (not))]
       ;; Create/pull the image and container for the branch:
       (when (and docker-active? (not server-startup?))
         (if (-> (get-workspace-dir project-name branch-name) (str "/Dockerfile") (io/file)
@@ -308,7 +306,8 @@
 
 (defn kill-process
   "Kill the running process associated with the given branch and return the branch to the caller."
-  [{:keys [process action branch-name project-name] :as branch} & [{:keys [login] :as user}]]
+  [{:keys [process action command branch-name project-name] :as branch}
+   & [{:keys [login] :as user}]]
   (if-not (nil? process)
     (do
       (-> (str "Cancelling process " action " on branch " branch-name " of " project-name)
@@ -316,6 +315,31 @@
               (str % " on behalf of " login)
               %))
           (log/info))
+      ;; If docker is configured for this project, then first kill the docker process corresponding
+      ;; to the command within the container:
+      (when (-> project-name (get-docker-config) :disabled? (not))
+        (let [docker-container (str project-name "-" branch-name)
+              [docker-process docker-exit-code] (cmd/run-command ["docker" "exec" docker-container
+                                                                  "ps" "-o" "pid,args"])]
+          (if-not (= 0 @docker-exit-code)
+            (cmd/throw-process-exception docker-process (str "Error finding PID to kill in "
+                                                             "container " docker-container))
+            (let [ps-line (->> (sh/stream-to-string docker-process :out) (string/split-lines)
+                               (some #(when (-> command (re-pattern) (re-find %))
+                                        %)))]
+              (if-not ps-line
+                (log/info "Process for '" command "' not found within container" docker-container)
+                (do
+                  (log/info "Killing process: '" ps-line "' in container" docker-container)
+                  (let [pid (-> ps-line (string/trim) (string/split #"\s+") (first))]
+                    (let [[docker-kill-proc
+                           docker-kill-exit-code] (cmd/run-command ["docker" "exec" docker-container
+                                                                    "kill" pid])]
+                      (when-not (= 0 @docker-kill-exit-code)
+                        (cmd/throw-process-exception
+                         docker-kill-proc (str "Can't kill process" pid "in container"
+                                               docker-container)))))))))))
+      ;; Now destroy the parent process attached to the branch and mark it as cancelled:
       (sh/destroy process)
       (assoc branch :cancelled true))
     branch))
@@ -541,6 +565,27 @@
   "An agent that has no role other than to be used to serialize calls to the containers."
   (agent {} :error-mode :continue, :error-handler default-agent-error-handler))
 
+(defn rebuild-branch-container
+  "Rebuild the docker container for a single branch (unless docker is disabled for the branch's
+  project). This function is serialisable through a branch agent."
+  [{:keys [branch-name project-name] :as branch}]
+  (let [docker-name (str project-name "-" branch-name)
+        ws-dir (get-workspace-dir project-name branch-name)
+        docker-config (get-docker-config project-name)]
+    (if (:disabled? docker-config)
+      (do
+        (log/info "Docker configuration is inactive for project:" project-name)
+        branch)
+      (do
+        (log/info "Removing branch container" docker-name)
+        (remove-branch-container project-name branch-name)
+        (log/info "Building/pulling image and container for branch" docker-name)
+        (if (-> ws-dir (str "/Dockerfile") (io/file) (.exists))
+          ;; If the branch directory contains a Dockerfile, use it to create a branch-specific image
+          (create-image-and-container-for-branch branch docker-name)
+          ;; Otherwise the project-level default will be used
+          (create-image-and-container-for-branch branch))))))
+
 (defn rebuild-images-and-containers
   "Given a project name, if the project has been configured to use docker, pull the image specified
   in the config file. If there are Dockerfiles on any of the local branches, use them to build
@@ -549,8 +594,8 @@
   function through an agent, but is otherwise unused."
   [_ project-name]
   (let [ws-dir (get-workspace-dir project-name)
-        docker-config (-> :projects (get-config) (get project-name) :docker-config)]
-    (if (not (:active? docker-config))
+        docker-config (get-docker-config project-name)]
+    (if (:disabled? docker-config)
       (log/info "Docker configuration is inactive for project:" project-name)
       (do
         (log/info "Removing branch containers for project:" project-name)
