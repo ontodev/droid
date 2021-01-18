@@ -33,7 +33,7 @@ DROID assumes that a file called 'config.edn' exists in DROID's root directory, 
               :project-welcome "welcome message" 
               :project-description "description"
               :github-coordinates "github-org/repository-1"
-              :makefile-path "src/ontology/Snakefile"
+              :makefile-path "src/ontology/Makefile"
               :env {"ENV_VAR" "env_var_val"}
               :docker-config {:disabled? false
                               :image "debian"
