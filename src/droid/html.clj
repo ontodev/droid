@@ -637,8 +637,7 @@
         rel-url (-> (and referer host (re-matches pattern referer))
                     (second)
                     (#(when % (string/replace % #"\?.+$" "")))
-                    (empty?)
-                    (not)
+                    (not-empty)
                     (or "/"))]
     (redirect (or rel-url "/"))))
 
@@ -880,6 +879,8 @@
                     " / "
                     (-> project :project-title)]
           :content [:div
+                    (let [gh-url (->> project :github-coordinates (str "github.com/"))]
+                      [:p [:a {:href (str "https://" gh-url) :target "__blank"} gh-url]])
                     [:p (->> project :project-description)]
 
                     ;; Display this alert and question when to-delete parameter is present:
