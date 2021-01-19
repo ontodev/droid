@@ -116,9 +116,10 @@
      [:link
       {:rel "stylesheet"
        :href "//cdn.jsdelivr.net/gh/highlightjs/cdn-release@9.16.2/build/styles/default.min.css"}]
+     ;; Users with read-only access are not be able to click on restricted-access links:
+     (when (read-only? request) [:style ".restricted-access { pointer-events: none; }"])
      [:title title]
-     (when script
-       [:script script])]
+     (when script [:script script])]
     [:body (when (get-config :html-body-colors) {:class (get-config :html-body-colors)})
      [:div {:id "content" :class "container p-3"}
       (login-status request)
@@ -194,15 +195,7 @@
         (format
          "refreshInterval = setInterval(refreshConsole, %s); " interval)
         " clearInterval(refreshInterval); ")
-      "});"]
-     ;; If the user has read-only access, run the following jQuery script to disable any action
-     ;; buttons on the page:
-     (when (read-only? request)
-       [:script
-        "$('.action-btn').each(function() {"
-        "  $(this).addClass('disabled');"
-        "  $(this).removeAttr('href');"
-        "});"])])})
+      "});"]])})
 
 (defn render-4xx
   "Render a page displaying an error message"
@@ -1903,10 +1896,7 @@
         ;; here:
         (and (not (nil? new-action))
              (read-only? request))
-        (do
-          (log/warn "User" (-> request :session :user :login) "with read-only access attempted to"
-                    "start action" new-action "and was prevented from doing so.")
-          (render-branch-page @branch-agent request))
+        (render-401 request)
 
         ;; If this is a cancel process action, kill the existing process. If the cancelled process
         ;; was an update of a view, then render the "close tab" page; otherwise redirect to the

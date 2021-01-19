@@ -122,22 +122,22 @@
                 ;; as the link, and the second word is to be interpreted as the title. In our case
                 ;; we'll be using such links for git actions, e.g., [Don't be afraid to](git commit)
                 ;; so we must capture the title here in order to grab the 'commit' part of the link.
+                ;; Links for general-actions, exec-views, and GitHub actions are marked as
+                ;; restricted-access links. This is a custom class which is used by the html module
+                ;; to prevent certain users from clicking on the corresponding link.
                 (letfn [(process-link [[tag {href :href title :title} text :as link]]
                           (cond
                             (some #(= href %) general-actions)
                             [tag {:href (str "/" project-name "/branches/" branch-name
                                              "?new-action=" href)
-                                  ;; The 'action-btn' class is a custom one to identify action
-                                  ;; buttons which we will later want to conditionally restrict
-                                  ;; access to.
-                                  :class "mb-1 mt-1 btn btn-primary btn-sm action-btn"} text]
+                                  :class "mb-1 mt-1 btn btn-primary btn-sm restricted-access"} text]
 
                             (some #(= (str href "-" title) %) git-actions)
                             (let [git-keyword (-> href (str "-" title) (keyword))]
                               [tag
                                {:href (-> gh/git-actions (get git-keyword) :html-param)
                                 :class (-> gh/git-actions (get git-keyword) :html-class
-                                           (str " mt-1 mb-1 action-btn"))}
+                                           (str " mt-1 mb-1 restricted-access"))}
                                (-> gh/git-actions (get git-keyword) :html-btn-label)])
 
                             (or (some #(= href %) (set/union file-views dir-views))
@@ -148,9 +148,12 @@
                             ;; file-views/dir-views/exec-views still needs to contain the '../'
                             (let [encoded-href (string/replace href #"\.\.\/" "PREV_DIR/")]
                               [tag
-                               {:href (str "/" project-name "/branches/" branch-name
-                                           "/views/" encoded-href)
-                                :target "_blank"}
+                               (merge
+                                {:href (str "/" project-name "/branches/" branch-name
+                                            "/views/" encoded-href)
+                                 :target "_blank"}
+                                (when (some #(-> href (normalize-exec-view) (= %)) exec-views)
+                                  {:class "restricted-access"}))
                                text])
 
                             :else
