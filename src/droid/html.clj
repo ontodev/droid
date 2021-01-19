@@ -796,8 +796,7 @@
                   (await branches/local-branches)
                   (send-off branches/remote-branches
                             branches/refresh-remote-branches-for-project project-name request)
-                  (await branches/remote-branches)
-                  (redirect this-url))))]
+                  (await branches/remote-branches))))]
 
       ;; Perform an action based on the parameters present in the request:
       (cond
@@ -825,7 +824,7 @@
           (send-off branches/local-branches
                     branches/checkout-remote-branch-to-local project-name to-checkout)
           (await branches/local-branches)
-          (redirect this-url))
+          (redirect (-> this-url (str "/branches/" to-checkout))))
 
         ;; Create a new branch:
         (and (not (nil? to-create))
@@ -833,7 +832,8 @@
         (do
           (log/info "Creation of a new branch:" to-create "in project" project-name
                     "initiated by" (-> request :session :user :login))
-          (create-branch project-name to-create))
+          (create-branch project-name to-create)
+          (redirect (-> this-url (str "/branches/" to-create))))
 
         ;; Rebuild the project's containers:
         (and (site-admin? request) (not (nil? really-rebuild-containers)))
