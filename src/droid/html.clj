@@ -744,11 +744,12 @@
 
 (defn render-project
   "Render the home page for a project"
-  [{:keys [params]
+  [{:keys [params session]
     {:keys [project-name refresh to-delete to-really-delete to-checkout
             create invalid-name-error to-create branch-from
             rebuild-single-container really-rebuild-single-container
             rebuild-containers really-rebuild-containers rebuild-launched]} :params,
+    {{:keys [login]} :user} :session,
     :as request}]
   (log/debug "Processing request in render-project with params:" params)
   (let [this-url (str "/" project-name)
@@ -758,6 +759,17 @@
               (let [[process exit-code] (cmd/run-command
                                          ["git" "check-ref-format" "--allow-onelevel" refname])]
                 (or (= @exit-code 0) false)))
+
+            (suggest-next-branch []
+              ;; Suggests a name for a new branch based on the remote branches that currently exist:
+              (let [pattern (-> (str "^" login "-patch-(\\d+)$") (re-pattern))
+                    prev-patches (->> project-name (keyword) (get @branches/remote-branches)
+                                      (map #(:name %)) (filter #(re-matches pattern %))
+                                      (map #(string/replace % pattern "$1"))
+                                      (map #(Integer/parseInt %)))]
+                (if (empty? prev-patches)
+                  (str login "-patch-1")
+                  (->> prev-patches (apply max) (+ 1) (str login "-patch-")))))
 
             (create-branch [project-name branch-name]
               ;; Creates a new branch with the given name in the given project's workspace
@@ -791,12 +803,15 @@
                   ;; Create the branch, then refresh the local branch collection so that it shows up
                   ;; on the page, and also refresh the remote branches since the new local branch
                   ;; will have been pushed to the remote upon creation:
+                  (log/info "Creation of a new branch:" branch-name "in project" project-name
+                            "initiated by" login)
                   (send-off branches/local-branches branches/create-local-branch project-name
                             branch-name branch-from request)
                   (await branches/local-branches)
                   (send-off branches/remote-branches
                             branches/refresh-remote-branches-for-project project-name request)
-                  (await branches/remote-branches))))]
+                  (await branches/remote-branches)
+                  (redirect (-> this-url (str "/branches/" branch-name))))))]
 
       ;; Perform an action based on the parameters present in the request:
       (cond
@@ -808,8 +823,7 @@
         (and (not (nil? to-really-delete))
              (not (read-only? request)))
         (do
-          (log/info "Deletion of branch" to-really-delete "from" project-name "initiated by"
-                    (-> request :session :user :login))
+          (log/info "Deletion of branch" to-really-delete "from" project-name "initiated by" login)
           (send-off branches/local-branches branches/delete-local-branch project-name
                     to-really-delete)
           (await branches/local-branches)
@@ -820,7 +834,7 @@
              (not (read-only? request)))
         (do
           (log/info "Checkout of remote branch" to-checkout "into workspace for" project-name
-                    "initiated by" (-> request :session :user :login))
+                    "initiated by" login)
           (send-off branches/local-branches
                     branches/checkout-remote-branch-to-local project-name to-checkout)
           (await branches/local-branches)
@@ -829,11 +843,7 @@
         ;; Create a new branch:
         (and (not (nil? to-create))
              (not (read-only? request)))
-        (do
-          (log/info "Creation of a new branch:" to-create "in project" project-name
-                    "initiated by" (-> request :session :user :login))
-          (create-branch project-name to-create)
-          (redirect (-> this-url (str "/branches/" to-create))))
+        (create-branch project-name to-create)
 
         ;; Rebuild the project's containers:
         (and (site-admin? request) (not (nil? really-rebuild-containers)))
@@ -922,7 +932,8 @@
                            [:label {:for "to-create" :class "mb-n1 text-secondary"}
                             "Branch name"]]
                           [:div
-                           [:input {:id "to-create" :name "to-create" :type "text"}]]
+                           [:input {:id "to-create" :name "to-create" :type "text"
+                                    :value (suggest-next-branch) :onClick "this.select();"}]]
                           ;; If the user previously tried to create a branch with an invalid
                           ;; name, show an alert:
                           (when-not (nil? invalid-name-error)
