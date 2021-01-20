@@ -269,11 +269,13 @@
   [server-startup? project-name current-branches]
   (let [project-workspace-dir (get-workspace-dir project-name)
         project-temp-dir (get-temp-dir project-name)]
-    (when-not (->> project-workspace-dir (io/file) (.isDirectory))
-      (log/fail (str project-workspace-dir " doesn't exist or isn't a directory.")))
 
-    ;; If the temp directory doesn't exist or it isn't a directory, recreate it:
-    (recreate-dir-if-not-exists project-temp-dir)
+    ;; Recreate the temp and workspace directories if they don't exist:
+    (try
+      (recreate-dir-if-not-exists project-workspace-dir)
+      (recreate-dir-if-not-exists project-temp-dir)
+      (catch Exception e
+        (log/fail (.getMessage e))))
 
     ;; Each sub-directory of the workspace represents a branch with the same name.
     (let [branch-names (->> project-workspace-dir (io/file) (.list))]
