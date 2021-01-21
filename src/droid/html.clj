@@ -567,9 +567,9 @@
               ;; Every line in the header must be of the form: <something>: <something else>
               ;; and one of the headers must be for Content-Type
               valid-header? (and (->> (first response-sections)
-                                      (some #(re-matches #"^\s*Content-Type:\s+\S+\s*$" %)))
+                                      (some #(re-matches #"^\s*Content-Type:(\s+\S+)+\s*$" %)))
                                  (->> (first response-sections)
-                                      (every? #(re-matches #"^\s*\S+:\s+\S+\s*$" %))))
+                                      (every? #(re-matches #"^\s*\S+:(\s+\S+)+\s*$" %))))
               headers (if-not valid-header?
                         ;; If the raw header isn't valid just use the default headers defined above:
                         default-html-headers
@@ -598,11 +598,16 @@
                                :content)
                      (html-response request))
                 ;; Otherwise return it as is:
-                {:status (try
-                           (Integer/parseInt (headers "Status"))
-                           (catch Exception e
-                             ;; If the script status cannot be parsed, set it to 0 for 'unknown':
-                             0))
+                {:status (let [status (headers "Status")]
+                           (if-not status
+                             (log/info "CGI script returned no status. Assuming 200.")
+                             (log/info "CGI script returned status:" status))
+                           (try
+                             (-> (or status "200") (string/split #"\s+") (first) (Integer/parseInt))
+                             (catch java.lang.NumberFormatException e
+                               (log/warn "Unable to parse integer status from:" status
+                                         "- assuming 200.")
+                               200)))
                  :headers headers
                  :session (:session request)
                  :body body}))
