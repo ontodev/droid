@@ -1,43 +1,15 @@
-(ns droid.config)
-
-(def default-config
-  "The default configuration that will be used if the configuration file cannot be found."
-  {:projects {}
-
-   ;; Application settings (should be one of :dev, :test, :prod)
-   :op-env :dev
-
-   :server-port {:dev 8090, :test 8090, :prod 8090}
-
-   ;; Should be one of :debug, :info, :warn, :error, :fatal
-   :log-level {:dev :debug, :test :info, :prod :info}
-
-   ;; false for http, true for https
-   :secure-site {:dev false, :test true, :prod true}
-
-   ;; List of userids that are considered site administrators:
-   :site-admin-github-ids {:dev #{""}, :test #{""}, :prod #{""}}
-
-   ;; Time in milliseconds to wait for a CGI script to finish:
-   :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
-
-   ;; File to write logging output to. If nil, stderr is used:
-   :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
-
-   ;; Bootstrap colors to use for background and text in <body>
-   :html-body-colors "bg-white"})
+(ns droid.config
+  (:require [clojure.java.io :as io]))
 
 (def config
   "A map of configuration parameters, loaded from the config.edn file in the data directory.
-  If that file does not exist, return a default configuration hashmap that is suitable for
-  unit (dev) testing."
-  (let [config-filename "config.edn"]
-    (try
-      (->> config-filename
-           (slurp)
-           (clojure.edn/read-string))
-      (catch java.io.FileNotFoundException e
-        default-config))))
+  If that file does not exist, use the example-config.edn file as a fallback."
+  (let [config-filename (if (-> (io/file "config.edn") (.exists))
+                          "config.edn"
+                          (binding [*out* *err*]
+                            (println "config.edn not found. Using example-config.edn.")
+                            "example-config.edn"))]
+    (->> config-filename (slurp) (clojure.edn/read-string))))
 
 (defn get-config
   "Get the configuration parameter corresponding to the given keyword. If the parameter has

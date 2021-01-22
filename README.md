@@ -31,7 +31,7 @@ DROID assumes that a file called `config.edn` exists in DROID's root directory. 
 
 then edit the newly created `config.edn` file as necessary.
 
-## `projects/` directory
+## The `projects/` directory
 
 DROID assumes that there exists a directory called `projects/` within its root directory. Within `projects/` there should be a subdirectory corresponding to each project defined in `config.edn` (see above). Within each individual project directory there should be a `workspace/` directory. Within each project's `workspace/` directory there should be a subdirectory corresponding to each branch managed by the project. Finally, each branch directory should contain, at a minimum, a Makefile. For example:
 
