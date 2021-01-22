@@ -25,9 +25,9 @@ To obtain the values for the first two settings, send an email to james@overton.
 
 ## Configuration file
 
-DROID assumes that a file called `config.edn` exists in DROID's root directory. You can find an example in: [example-config.md](example-config.md). Before running DROID for the first time, you must create `config.edn`. To do so using the example file as a template, run the following command in DROID's root directory:
+DROID assumes that a file called `config.edn` exists in DROID's root directory. You can find an example in: [example-config.edn](example-config.edn). Before running DROID for the first time, you must create `config.edn`. To do so using the example file as a template, run the following command in DROID's root directory:
 
-    grep -v "\`\`\`" default-config.md > config.edn
+    cp example-config.edn config.edn
 
 then edit the newly created `config.edn` file as necessary.
 

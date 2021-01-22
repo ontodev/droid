@@ -1,4 +1,3 @@
-```
 {;; `:op-env` should be one of `:dev`, `:test`, `:prod`. If `:op-env` is defined as (for example)
  ;; `:dev`, then the `:dev` key will be used when looking up other configuration parameters that
  ;; provide alternate configurations for `:dev`, `:test`, and `:prod`.
@@ -119,4 +118,3 @@
                         :project-description "description"
                         :github-coordinates "github-org/repository-2"}
             :env {"ENV_VAR" "env_var_val"}}}
-```
