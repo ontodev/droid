@@ -530,7 +530,7 @@
           ;; export REQUEST_METHOD="POST"; \
           ;;   export CONTENT_TYPE="application/x-www-form-urlencoded"; \
           ;;   export CONTENT_LENGTH=16;echo "cgi-input-py=bar" | build/hobbit-script.py
-          timeout (get-config :cgi-timeout)
+          timeout (or (get-config :cgi-timeout) 10000)
           [process
            exit-code] (if (= request-method :post)
                         (do (with-open [w (io/output-stream tmp-infile)]
