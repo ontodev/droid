@@ -73,7 +73,7 @@
  ;; If set to true, then pushes to GitHub will use an installation token provided through the GitHub
  ;; App for the repository. Otherwise pushes will use the user's user access token (which is also
  ;; authenticated via the GitHub App). Note that if `:local-mode` is set to true, the personal
- ;; access token will be used in lieu of the installation token. (Optional; defaults to dalse)
+ ;; access token will be used in lieu of the installation token. (Optional; defaults to false)
  :push-with-installation-token false
 
  ;; A valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color)
