@@ -2,14 +2,24 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as string]))
 
+(defn- notify
+  [first-word & other-words]
+  (binding [*out* *err*]
+    (->> other-words (string/join " ") (str first-word " ") (println))))
+
+(defn- fail
+  [first-word & other-words]
+  (binding [*out* *err*]
+    (->> other-words (string/join " ") (str first-word " ") (println))
+    (System/exit 1)))
+
 (def config
   "A map of configuration parameters, loaded from the config.edn file in the data directory.
   If that file does not exist, use the example-config.edn file as a fallback."
   (let [config-filename (if (-> (io/file "config.edn") (.exists))
                           "config.edn"
-                          (binding [*out* *err*]
-                            (println "config.edn not found. Using example-config.edn.")
-                            "example-config.edn"))]
+                          (do (notify "WARNING - config.edn not found. Using example-config.edn.")
+                              "example-config.edn"))]
     (->> config-filename (slurp) (clojure.edn/read-string))))
 
 (defn get-config
@@ -37,12 +47,7 @@
 (defn- check-config
   "Runs a series of tests on the configuration map"
   []
-  (let [notify
-        (fn [first-word & other-words]
-          (binding [*out* *err*]
-            (->> other-words (string/join " ") (str first-word " ") (println))))
-
-        root-constraints
+  (let [root-constraints
         {:cgi-timeout {:allowed-types [Long]}
          :docker-config {:required-always? true, :allowed-types [clojure.lang.PersistentArrayMap
                                                                  clojure.lang.PersistentHashMap]}
@@ -100,8 +105,8 @@
 
         crosscheck-config-constraints
         (fn [config-to-check constraints]
-          "Checks the given config against the given constraints, and then checks to see if any
-           parameters required by the constraints are in the config."
+          "Checks the given config against the given constraints, and then checks to see if every
+           parameter required by the constraints is in the config."
           (let [config-keys (keys config-to-check)
                 constraint-keys (keys constraints)]
             ;; Check that each config parameter satisfies the above constraints:
@@ -112,13 +117,16 @@
                       (notify "WARNING - Unexpected parameter:" config-key "found in configuration."
                               "It will be ignored.")
                       (not-any? #(= param-type %) allowed-types)
-                      (notify "ERROR - configuration parameter" config-key "has invalid type:"
-                              param-type "It should be one of" allowed-types))))
+                      (fail "ERROR - configuration parameter" config-key "has invalid type:"
+                            param-type "It should be one of" allowed-types))))
             ;; Check whether any configuration parameters are missing:
             (doseq [constraint-key constraint-keys]
               (when (and (is-required? constraint-key constraints config-to-check)
                          (->> constraint-key (get config-to-check) (nil?)))
-                (notify "ERROR - missing configuration parameter:" constraint-key)))))]
+                (fail "ERROR - missing required configuration parameter:" constraint-key
+                      (let [conditional-clause (-> (constraint-key constraints) :required-when)]
+                        (when conditional-clause
+                          (str " (required when: " conditional-clause ")"))))))))]
 
     ;; Check root-level configuration:
     (notify "INFO - checking root-level configuration ...")
@@ -135,12 +143,48 @@
               docker-config (get-docker-config project-name project-config)]
           (notify "INFO - checking configuration for project" project-name "...")
           (when (-> (type project-name) (= String) (not))
-            (notify "ERROR - project identifier" project-name "should be of type String"))
+            (fail "ERROR - project identifier:" project-name "should be of type String"))
           (crosscheck-config-constraints project-config project-constraints)
           ;; Check the project-level docker-config:
           (when docker-config
             (notify "INFO - checking docker configuration for project" project-name "...")
             (crosscheck-config-constraints docker-config docker-constraints)))))))
+
+(defn dump-config
+  "Dumps the actually configured parameters being used by DROID. In the case where a configuration
+  parameter defines multiple options corresponding to an operating environment
+  (e.g, {:dev value-1 :test value-2 :prod value-3}), then :op-env will be used to determine the
+  right value to print."
+  [depth & [alt-config]]
+  (let [config (or alt-config config)
+        depth (if (< depth 1) 1 depth)
+        write (fn [str-to-write]
+                (->> (repeat "    ") (take depth) (string/join "") (#(println % str-to-write))))]
+    (when (<= depth 1)
+      (println "Dumping current DROID configuration ...")
+      (println "{"))
+    (->> (seq config)
+         (#(doseq [[config-key _] %]
+             (let [config-val (get-config config-key config)]
+               (if (or (= (type config-val) clojure.lang.PersistentArrayMap)
+                       (= (type config-val) clojure.lang.PersistentHashMap))
+                 (do
+                   (write (str (if (= (type config-key) String)
+                                 (str "\"" config-key "\"")
+                                 config-key)
+                               " {"))
+                   (dump-config (+ depth 1) config-val)
+                   (write "}"))
+                 (write (str (if (= (type config-key) String)
+                               (str "\"" config-key "\"")
+                               config-key)
+                             " "
+                             (let [config-val (get-config config-key config)]
+                               (if (= (type config-val) String)
+                                 (str "\"" config-val "\"")
+                                 config-val)))))))))
+    (when (<= depth 1)
+      (println "}"))))
 
 ;; Validate the configuration map at startup:
 (check-config)
