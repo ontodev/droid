@@ -165,24 +165,18 @@
       (println "{"))
     (->> (seq config)
          (#(doseq [[config-key _] %]
-             (let [config-val (get-config config-key config)]
+             (let [config-val (get-config config-key config)
+                   stringify (fn [arg] (if (= (type arg) String)
+                                         (str "\"" arg "\"")
+                                         arg))]
                (if (or (= (type config-val) clojure.lang.PersistentArrayMap)
                        (= (type config-val) clojure.lang.PersistentHashMap))
                  (do
-                   (write (str (if (= (type config-key) String)
-                                 (str "\"" config-key "\"")
-                                 config-key)
-                               " {"))
+                   (-> config-key (stringify) (str "{") (write))
                    (dump-config (+ depth 1) config-val)
                    (write "}"))
-                 (write (str (if (= (type config-key) String)
-                               (str "\"" config-key "\"")
-                               config-key)
-                             " "
-                             (let [config-val (get-config config-key config)]
-                               (if (= (type config-val) String)
-                                 (str "\"" config-val "\"")
-                                 config-val)))))))))
+                 (write (str (stringify config-key) " "
+                             (-> config-key (get-config config) (stringify)))))))))
     (when (<= depth 1)
       (println "}"))))
 
