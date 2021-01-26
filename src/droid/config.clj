@@ -20,7 +20,10 @@
                           "config.edn"
                           (do (notify "WARNING - config.edn not found. Using example-config.edn.")
                               "example-config.edn"))]
-    (->> config-filename (slurp) (clojure.edn/read-string))))
+    (try
+      (->> config-filename (slurp) (clojure.edn/read-string))
+      (catch Exception e
+        (fail "Parsing error:" (.getMessage e))))))
 
 (defn get-config
   "Get the configuration parameter corresponding to the given keyword. If the parameter has
@@ -165,6 +168,9 @@
       (println "{"))
     (->> (seq config)
          (#(doseq [[config-key _] %]
+             ;; Config values may have multiple entries for different operating environments
+             ;; (e.g., {:dev dev_value, :test test_value, :prod prod_value}). We call (get-config )
+             ;; below to extract the value for the actually configured operating environment.
              (let [config-val (get-config config-key config)
                    stringify (fn [arg] (if (= (type arg) String)
                                          (str "\"" arg "\"")
@@ -172,8 +178,8 @@
                (if (or (= (type config-val) clojure.lang.PersistentArrayMap)
                        (= (type config-val) clojure.lang.PersistentHashMap))
                  (do
-                   (-> config-key (stringify) (str "{") (write))
-                   (dump-config (+ depth 1) config-val)
+                   (-> config-key (stringify) (str " {") (write))
+                   (-> depth (+ 1) (dump-config config-val))
                    (write "}"))
                  (write (str (stringify config-key) " "
                              (-> config-key (get-config config) (stringify)))))))))

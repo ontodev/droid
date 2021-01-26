@@ -36,8 +36,14 @@
     (cond
       (= cli-option "--help")
       (do (println "Command-line options:\n"
-                   " --dump-config Output the configuration parameters and exit")
+                   " --check-config Check the validity of the configuration file and exit\n"
+                   " --dump-config  Output the configuration parameters and exit")
           (System/exit 0))
+
+      ;; We don't need to explicitly call the check-config function here since it is automatically
+      ;; called when the config module is loaded at statup.
+      (= cli-option "--check-config")
+      (System/exit 0)
 
       (= cli-option "--dump-config")
       (do (dump-config 1)

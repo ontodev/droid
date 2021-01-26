@@ -31,6 +31,12 @@ DROID assumes that a file called `config.edn` exists in DROID's root directory. 
 
 then edit the newly created `config.edn` file as necessary.
 
+Attempting to start the server with an invalid configuration (required parameters are missing or given in the wrong format) file will result in an error and the server will fail to start.
+
+To dump the currently configured parameters to STDOUT, call the server executable using the command-line switch: `--dump-config`. Note that doing so will output the configuration parameters for the configured operating environment only (dev, test, or prod). See the documentation in [example-config.edn](example-config.edn) for more on operating environments.
+
+To check a configuration file's validity, call the server executable using the command-line switch: `--check-config`.
+
 ## The `projects/` directory
 
 DROID assumes that there exists a directory called `projects/` within its root directory. Within `projects/` there should be a subdirectory corresponding to each project defined in `config.edn` (see above). Within each individual project directory there should be a `workspace/` directory. Within each project's `workspace/` directory there should be a subdirectory corresponding to each branch managed by the project. Finally, each branch directory should contain, at a minimum, a Makefile. For example:
