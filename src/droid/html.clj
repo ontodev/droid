@@ -1409,7 +1409,11 @@
                         :required true :onClick "this.select();" :value (get-last-commit-msg)}]]
               [:button {:type "submit" :class "btn btn-sm btn-primary mr-2"}
                "Create a pull request"]
-              [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]]]
+              [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]
+             [:div {:class "form-check"}
+              [:input {:class "form-check-input" :type "checkbox" :value "1" :id "draft-mode"
+                       :name "draft-mode"}]
+              [:label {:class "form-check-label" :for "draft-mode"} "Create as draft"]]]]
 
            ;; Otherwise display a link to the current PR:
            :else
@@ -1428,7 +1432,8 @@
            (send-off branches/remote-branches
                      branches/refresh-remote-branches-for-project project-name request)
            [:div {:class "alert alert-success"}
-            [:div "PR created successfully. To view it click " [:a {:href pr-added} "here."]]
+            [:div "PR created successfully. To view it click " [:a {:href pr-added
+                                                                    :target "__blank"} "here."]]
             [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]])
          [:div {:class "alert alert-warning"}
           [:div "Your PR could not be created. Contact an administrator for assistance."]
@@ -1483,7 +1488,7 @@
   [{:keys [branch-name project-name Makefile] :as branch}
    {:keys [params]
     {:keys [view-path missing-view confirm-kill confirm-update updating-view process-killed
-            follow commit-msg commit-amend-msg pr-to-add]} :params
+            follow commit-msg commit-amend-msg pr-to-add draft-mode]} :params
     :as request}]
   (let [this-url (str "/" project-name "/branches/" branch-name)]
     (cond
@@ -1520,7 +1525,8 @@
                          branch-name
                          (branches/get-remote-main project-name)
                          (-> request :session :user :login)
-                         (-> request :oauth2/access-tokens :github :token))
+                         (-> request :oauth2/access-tokens :github :token)
+                         (boolean draft-mode))
            (codec/url-encode)
            (str this-url "?pr-added=")
            (redirect))
