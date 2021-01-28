@@ -35,6 +35,25 @@
     (->> (initialize-remote-branches-for-project project-name login password)
          (merge all-current-branches))))
 
+(defn delete-remote-branch
+  "Deletes the remote branch with the given name from the given project. Accepts the branch list
+  as the first argument and threads it through with the deleted branch removed. Can be used with
+  an agent."
+  [all-current-branches project-name branch-name
+   {{{:keys [login]} :user} :session,
+    {{:keys [token]} :github} :oauth2/access-tokens
+    :as request}]
+  (log/info "Deleting remote branch:" branch-name "of project:" project-name)
+  (-> (gh/delete-branch project-name branch-name login token)
+      ;; If the delete was successful, remove the deleted branch from the branch list:
+      ((fn [success?]
+         (when success?
+           (->> (keyword project-name)
+                (get all-current-branches)
+                (filter #(not= (:name %) branch-name))
+                (vec)
+                (hash-map (keyword project-name))))))))
+
 (def remote-branches
   "The remote branches, per project, that are available to be checked out from GitHub."
   ;; We begin with an empty hash-map:

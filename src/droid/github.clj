@@ -204,3 +204,20 @@
       (->> remote-branches
            (map #(assoc % :pull-request (-> % :name (get-branch-pr))))
            (vec)))))
+
+(defn delete-branch
+  "Calls the GitHub API to delete the given branch of the given project. Returns true if the delete
+  was successful and false otherwise."
+  [project-name branch-name login token]
+  (log/debug "Sending DELETE request for branch:" branch-name "of project" project-name
+             "to GitHub on behalf of" login)
+  (-> :projects (get-config) (get project-name) :github-coordinates (string/split #"/")
+      (#(api-call :delete "repos/%s/%s/git/refs/heads/%s"
+                  [(first %) (second %) branch-name] {:oauth-token token}))
+      (#(if (or (< (:status %) 200)
+                (> (:status %) 299))
+          (do
+            (log/error "Received error when trying to delete branch:"
+                       (:status %) (-> % :body :message))
+            false)
+          true))))
