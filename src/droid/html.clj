@@ -750,8 +750,8 @@
 (defn render-project
   "Render the home page for a project"
   [{:keys [params session]
-    {:keys [project-name refresh to-delete to-really-delete delete-remote to-checkout
-            create invalid-name-error to-create branch-from
+    {:keys [project-name refresh to-delete to-really-delete delete-remote make-clean
+            to-checkout create invalid-name-error to-create branch-from
             rebuild-single-container really-rebuild-single-container
             rebuild-containers really-rebuild-containers rebuild-launched]} :params,
     {{:keys [login]} :user} :session,
@@ -830,7 +830,7 @@
         (do
           (log/info "Deletion of branch" to-really-delete "from" project-name "initiated by" login)
           (send-off branches/local-branches branches/delete-local-branch project-name
-                    to-really-delete)
+                    to-really-delete make-clean)
           (when delete-remote
             (send-off branches/remote-branches
                       branches/refresh-remote-branches-for-project project-name request)
@@ -902,20 +902,31 @@
                                (not (read-only? request)))
                       [:div {:class "alert alert-danger"}
                        [:form {:action this-url :method "get"}
-                        "Are you sure you want to delete the branch "
+                        [:span {:class "ml-1"} "Are you sure you want to delete the branch "]
                         [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
-                        [:div {:class "pt-2"}
+                        [:div {:class "pt-2 ml-1"}
                          [:a {:class "btn btn-sm btn-primary" :href this-url} "No, cancel"]
                          [:span "&nbsp;"]
                          [:input {:type "hidden" :id "to-really-delete" :name "to-really-delete"
                                   :value to-delete}]
                          [:button {:class "btn btn-sm btn-danger" :type "submit"}
                           "Yes, continue"]]
-                        [:div {:class "form-check pt-2"}
-                         [:input {:class "form-check-input" :type "checkbox" :value "1"
-                                  :id "delete-remote" :name "delete-remote"}]
-                         [:label {:class "form-check-label" :for "delete-remote"}
-                          "Also delete remote branch"]]]])
+                        [:div {:class "row ml-1"}
+                         [:div {:class "form-check pt-2 mr-3"}
+                          [:input {:class "form-check-input" :type "checkbox" :value "1"
+                                   :id "delete-remote" :name "delete-remote"}]
+                          [:label {:class "form-check-label" :for "delete-remote"}
+                           "Also delete remote branch"]]
+                         ;; If the Makefile has a 'clean' target, give the user the option to run
+                         ;; `make clean` after deleting the branch:
+                         (when (->> (keyword project-name) (get @branches/local-branches)
+                                    (#(get % (keyword to-delete))) (deref) :Makefile :targets
+                                    (some #(= % "clean")))
+                           [:div {:class "form-check pt-2"}
+                            [:input {:class "form-check-input" :type "checkbox" :value "1"
+                                     :id "make-clean" :name "make-clean"}]
+                            [:label {:class "form-check-label" :for "make-clean"}
+                             "Run `make clean` before deleting"]])]]])
 
                     ;; Display this alert and question when the create parameter is present:
                     (when (and (not (nil? create))

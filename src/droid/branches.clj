@@ -7,7 +7,7 @@
             [droid.config :refer [get-config get-docker-config]]
             [droid.db :as db]
             [droid.fileutils :refer [delete-recursively recreate-dir-if-not-exists
-                                     get-workspace-dir get-temp-dir]]
+                                     get-workspace-dir get-temp-dir get-make-dir]]
             [droid.github :as gh]
             [droid.log :as log]
             [droid.make :as make]))
@@ -422,9 +422,21 @@
 ;; TODO: This doesn't work well with docker unless the server is run with sudo. The problem has to
 ;; do with filesystem permissions for shared folders.
 (defn delete-local-branch
-  "Deletes the given branch of the given project from the given managed server branches,
-  and deletes the workspace and temporary directories for the branch in the filesystem."
-  [all-branches project-name branch-name]
+  "Deletes the given branch of the given project from the given managed server branches, and deletes
+  the workspace and temporary directories for the branch in the filesystem. If make-clean? is true,
+  then run make clean in the branch's workspace, ignoring any errors, before deleting the branch."
+  [all-branches project-name branch-name make-clean?]
+  (when make-clean?
+    (log/info "Runing `make clean` in branch:" branch-name "of project" project-name)
+    (let [makefile-name (-> all-branches (get (keyword project-name)) (get (keyword branch-name))
+                            (deref) :Makefile :name)
+          [process exit-code] (run-branch-command
+                               ["make" "-i" "-k" "-f" makefile-name "clean"
+                                :dir (get-make-dir project-name branch-name)]
+                               project-name branch-name)]
+      (or (= @exit-code 0) (cmd/throw-process-exception
+                            process "Error while running `make clean`"))))
+
   (remove-branch-container project-name branch-name)
   (-> project-name (get-workspace-dir) (str "/" branch-name) (delete-recursively))
   (-> project-name (get-temp-dir) (str "/" branch-name) (delete-recursively))
