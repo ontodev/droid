@@ -280,14 +280,25 @@
 
     (send-off branch-agent branches/refresh-local-branch)
     (await branch-agent)
-    (if-not (-> @branch-agent :git-status :remote)
-      [:span {:class "text-muted"} "No remote found"]
-      [:span
-       (str (-> @branch-agent :git-status :ahead) " ahead, "
-            (-> @branch-agent :git-status :behind) " behind ")
-       (-> @branch-agent :git-status :remote (render-remote))
-       (when (-> @branch-agent :git-status :uncommitted?)
-         ", with uncommitted changes")])))
+    (let [git-file (-> (get-workspace-dir project-name branch-name)
+                       (str "/.git/FETCH_HEAD") (io/file))]
+      (cond
+        (-> @branch-agent :git-status :remote (not))
+        [:span {:class "text-muted"} "No remote found"]
+
+        (not (.exists git-file))
+        [:span {:class "text-muted"} "Not yet fetched"]
+
+        :else
+        [:span
+         (str (-> @branch-agent :git-status :ahead) " ahead, "
+              (-> @branch-agent :git-status :behind) " behind ")
+         (-> @branch-agent :git-status :remote (render-remote))
+         (when (-> @branch-agent :git-status :uncommitted?)
+           ", with uncommitted changes")
+         " (" [:span {:class "since"} (-> git-file (.lastModified)
+                                          (java.time.Instant/ofEpochMilli)
+                                          (str))] ")"]))))
 
 (defn- render-project-branches
   "Given the name of a project, render a list of its branches, with links. If restricted-access? is
@@ -420,7 +431,7 @@
 
     [:table {:class "table table-sm table-striped table-borderless mt-3"}
      [:thead
-      [:tr (when-not restricted-access? [:th]) [:th "Branch"] [:th "Pull request"]
+      [:tr (when-not restricted-access? [:th]) [:th "Branch"] [:th "Open PR"]
        [:th "Git status"]
        ;; Site admins can see container status:
        (when site-admin-access?
@@ -1595,7 +1606,7 @@
                                       (first)
                                       :pull-request)]
                       (when pr-url
-                        [:span " &ndash; pull request "
+                        [:span " &ndash; open pull request "
                          [:a {:href pr-url :target "__blank"}
                           "#" (-> pr-url (string/split #"/") (last))]]))]
 
