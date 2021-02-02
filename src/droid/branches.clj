@@ -294,7 +294,7 @@
       (recreate-dir-if-not-exists project-workspace-dir)
       (recreate-dir-if-not-exists project-temp-dir)
       (catch Exception e
-        (log/fail (.getMessage e))))
+        (log/critical (.getMessage e))))
 
     ;; Each sub-directory of the workspace represents a branch with the same name.
     (let [branch-names (->> project-workspace-dir (io/file) (.list))]

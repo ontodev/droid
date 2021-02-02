@@ -26,18 +26,11 @@
         (fail "Parsing error:" (.getMessage e))))))
 
 (defn get-config
-  "Get the configuration parameter corresponding to the given keyword. If the parameter has
-  entries for different operating environments, get the one corresponding to the currently
-  configured operating environment (:dev, :test, or :prod), given by the :op-env parameter in the
-  config file."
+  "Get the configuration parameter corresponding to the given keyword. If alt-config is specified,
+  look there for the parameter, otherwise look for it in the static config."
   [param-keyword & [alt-config]]
-  (let [config (or alt-config config)
-        op-env (:op-env config)
-        param-rec (-> config (get param-keyword))]
-    (if (and (map? param-rec)
-             (contains? param-rec op-env))
-      (get param-rec op-env)
-      (get config param-keyword))))
+  (let [config (or alt-config config)]
+    (get config param-keyword)))
 
 (defn get-docker-config
   "Returns the docker config for a project, or if no docker config is defined for the project,
@@ -57,15 +50,14 @@
          :github-app-id {:required-when {:local-mode false}, :allowed-types [Long]}
          :html-body-colors {:allowed-types [String]}
          :local-mode {:allowed-types [Boolean]}
-         :log-file {:required-always? true, :allowed-types [String nil]}
+         :log-file {:allowed-types [String]}
          :log-level {:required-always? true, :allowed-types [clojure.lang.Keyword]}
-         :op-env {:required-always? true, :allowed-types [clojure.lang.Keyword]}
          :pem-file {:required-when {:local-mode false}, :allowed-types [String]}
          :projects {:required-always? true, :allowed-types [clojure.lang.PersistentArrayMap
                                                             clojure.lang.PersistentHashMap]}
          :push-with-installation-token {:allowed-types [Boolean]}
          :remove-containers-on-shutdown {:allowed-types [Boolean]}
-         :secure-site {:required-always? true, :allowed-types [Boolean]}
+         :insecure-site {:allowed-types [Boolean]}
          :server-port {:required-always? true, :allowed-types [Long]}
          :site-admin-github-ids {:allowed-types [clojure.lang.PersistentHashSet]}}
 
@@ -86,8 +78,8 @@
          :temp-dir {:required-when {:disabled? false}, :allowed-types [String]}
          :default-working-dir {:required-when {:disabled? false}, :allowed-types [String]}
          :shell-command {:required-when {:disabled? false}, :allowed-types [String]}
-         :env {:required-when {:disabled? false}, :allowed-types [clojure.lang.PersistentArrayMap,
-                                                                  clojure.lang.PersistentHashMap]}}
+         :env {:allowed-types [clojure.lang.PersistentArrayMap,
+                               clojure.lang.PersistentHashMap]}}
 
         is-required?
         (fn [constraint-key constraints actual-config]
@@ -154,17 +146,14 @@
             (crosscheck-config-constraints docker-config docker-constraints)))))))
 
 (defn dump-config
-  "Dumps the actually configured parameters being used by DROID. In the case where a configuration
-  parameter defines multiple options corresponding to an operating environment
-  (e.g, {:dev value-1 :test value-2 :prod value-3}), then :op-env will be used to determine the
-  right value to print."
+  "Dumps the actually configured parameters being used by DROID."
   [depth & [alt-config]]
   (let [config (or alt-config config)
         depth (if (< depth 1) 1 depth)
         write (fn [str-to-write]
                 (->> (repeat "    ") (take depth) (string/join "") (#(println % str-to-write))))]
     (when (<= depth 1)
-      (println "Dumping current DROID configuration ...")
+      (notify "INFO - Dumping current DROID configuration ...")
       (println "{"))
     (->> (seq config)
          (#(doseq [[config-key _] %]

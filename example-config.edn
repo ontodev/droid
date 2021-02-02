@@ -1,128 +1,129 @@
-{;; `:op-env` should be one of `:dev`, `:test`, `:prod`. If `:op-env` is defined as (for example)
- ;; `:dev`, then the `:dev` key will be used when looking up other configuration parameters that
- ;; provide alternate configurations for `:dev`, `:test`, and `:prod`. (Required)
- :op-env :dev
+{;;;; Set this to one of `:debug`, `:info`, `:warn`, `:error`, `:critical`. The higher the specified
+ ;;;; level, the fewer messages will be written to the log. (Required)
+ :log-level :info
 
- ;; Set this to one of `:debug`, `:info`, `:warn`, `:error`, `:fatal`. The higher the specified
- ;; level, the fewer messages will be written to the log. (Required)
- :log-level {:dev :debug, :test :info, :prod :info}
+ ;;;; The filename (relative to DROID's root directory) where the log will be written to (Optional;
+ ;;;; if unspecified or set to nil, DROID's log is written to `STDERR`).
+ ;; :log-file "droid.log"
 
- ;; The file (relative to DROID's root directory) where the log will be written to.
- ;; If this is nil then DROID's log is written to `STDERR`. (Required)
- :log-file {:dev nil, :test "droid.log", :prod "droid.log"}
+ ;;;; If set to true, `https:` protocol will be used, otherwise DROID will use `http:`. (Optional;
+ ;;;; default: true).
+ ;; :insecure-site true
 
- ;; If set to true, `https:` protocol will be used, otherwise DROID will assume `http:`. (Required).
- :secure-site {:dev true :test true :prod true}
+ ;;;; The port that the server will listen on. (Required)
+ :server-port 8000
 
- ;; The port that the server will listen on. (Required)
- :server-port {:dev 8000, :test 8001, :prod 8002}
+ ;;;; GitHub userids that are considered as DROID site administrators and are to be granted special
+ ;;;; permissions. (Optional; default: no site administrators)
+ ;; :site-admin-github-ids #{"user1", "user2"}
 
- ;; GitHub userids that are considered as DROID site administrators and are to be granted special
- ;; permissions. (Optional; default: no site administrators)
- :site-admin-github-ids {:dev #{"user1", "user2"}
-                         :test #{"user1", "user2"}
-                         :prod #{"user1", "user2"}}
-
- ;; The maximum number of milliseconds that a CGI script is allowed to run (optional; default:
- ;; 10000 milliseconds):
- :cgi-timeout {:dev 60000, :test 60000, :prod 60000}
+ ;;;; The maximum number of milliseconds that a CGI script is allowed to run (optional; default:
+ ;;;; 10000 milliseconds):
+ ;; :cgi-timeout 10000
 
  ;; Fallback docker configuration for projects that do not include their own. (Required)
- :docker-config {;; If set to true, projects that do not define their own docker configuration
-                 ;; will not use docker containers. Projects that _do_ specify their own docker
-                 ;; configuration, with `:disabled?` set to `false` in their project-specific docker
-                 ;; configuration, will still use docker containers. (Required)
-                 :disabled? true
-                 ;; The docker image to use when creating containers. Individual
-                 ;; branches of a project may override this by including a `Dockerfile`
-                 ;; at the root of their workspace directory. (Required)
+ :docker-config {;;;; If set to true, projects that do not define their own docker configuration
+                 ;;;; will not use docker containers. Projects that _do_ specify their own docker
+                 ;;;; configuration, with `:disabled?` set to `false` in their project-specific
+                 ;;;; docker configuration, will still use docker containers. (Optional; docker is
+                 ;;;; enabled by default).
+                 ;; :disabled? false
+                 ;;;; The docker image to use when creating containers. Individual
+                 ;;;; branches of a project may override this by including a `Dockerfile`
+                 ;;;; at the root of their workspace directory. (Required when docker is enabled)
                  :image "debian"
-                 ;; The path to the root workspace directory within a container. (Required)
+                 ;;;; The path to the root workspace directory within a container. (Required when
+                 ;;;; :docker is enabled)
                  :workspace-dir "/workspace/"
-                 ;; The path to the temporary directory within a container. (Required)
+                 ;;;; The path to the temporary directory within a container. (Required when
+                 ;;;; docker is enabled).
                  :temp-dir "/tmp/droid/"
-                 ;; The directory relative to which DROID commands should be run by
-                 ;; default within the container, if not otherwise specified. (Required)
+                 ;;;; The directory relative to which DROID commands should be run by
+                 ;;;; default within the container, if not otherwise specified. (Required when
+                 ;;;; docker is enabled).
                  :default-working-dir "/workspace/"
-                 ;; The program name of the shell to be used when running commands. (Required)
+                 ;;;; The program name of the shell to be used when running commands. (Required when
+                 ;;;; :disabled? is false).
                  :shell-command "sh"
-                 ;; Extra environment variables passed to containers when running
-                 ;; commands. (Required; if no environment variables are needed, set it as follows:
-                 ;; :env {})
-                 :env {"ENV_VAR1" "env_var1_value",
-                       "ENV_VAR2" "env_var2_value"}}
+                 ;;;; Extra environment variables passed to containers when running
+                 ;;;; commands. (Optional; defaults to no environment variables).
+                 ;; :env {"ENV_VAR1" "env_var1_value",
+                 ;;       "ENV_VAR2" "env_var2_value"}
+                 }
 
- ;; Set to true if you would like to remove docker containers automatically at server shut down.
- ;; Note that even without this flag set, docker containers will be *paused* on server shutdown.
- ;; (Optional; default: false)
- :remove-containers-on-shutdown {:dev true, :test false, :prod false}
+ ;;;; Set to true if you would like to remove docker containers automatically at server shut down.
+ ;;;; Note that even without this flag set, docker containers will be *paused* on server shutdown.
+ ;;;; (Optional; default: false)
+ ;; :remove-containers-on-shutdown false
 
- ;; If set to true, DROID will authenticate to GitHub using a personal access token read from the
- ;; environment variable PERSONAL_ACCESS_TOKEN, which must be set. (Optional; defaults to false)
- :local-mode false
+ ;;;; If set to true, DROID will authenticate to GitHub using a personal access token read from the
+ ;;;; environment variable PERSONAL_ACCESS_TOKEN, which must be set. (Optional; defaults to false)
+ ;; :local-mode false
 
- ;; The ID of the GitHub App to use for authentication to GitHub when not running in local mode.
- ;; (Required when :local-mode is set to false)
- :github-app-id {:dev 55555, :test 66666, :prod 77777}
+ ;;;; The ID of the GitHub App to use for authentication to GitHub when not running in local mode.
+ ;;;; (Required when :local-mode is set to false; comment out otherwise)
+ :github-app-id 55555
 
- ;; The file, relative to DROID's root directory, containing the private key to use for
- ;; authenticating with the GitHub App when not running in local mode. (Required when :local-mode
- ;; is set to false)
+ ;;;; The file, relative to DROID's root directory, containing the private key to use for
+ ;;;; authenticating with the GitHub App when not running in local mode. (Required when :local-mode
+ ;;;; is set to false; comment out otherwise)
  :pem-file "FILE.pem"
 
- ;; If set to true, then pushes to GitHub will use an installation token provided through the GitHub
- ;; App for the repository. Otherwise pushes will use the user's user access token (which is also
- ;; authenticated via the GitHub App). Note that if `:local-mode` is set to true, the personal
- ;; access token will be used in lieu of the installation token. (Optional; defaults to false)
- :push-with-installation-token false
+ ;;;; If set to true, then pushes to GitHub will use an installation token provided through the
+ ;;;; GitHub App for the repository. Otherwise pushes will use the user's user access token
+ ;;;; (which is also authenticated via the GitHub App). Note that if `:local-mode` is set to true,
+ ;;;; the personal access token will be used in lieu of the installation token. (Optional; defaults
+ ;;;; to false)
+ ;; :push-with-installation-token false
 
- ;; A valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color)
- ;; to use for DROID's pages. (Optional; if unspecified the bootstrap default (white) will be used)
- :html-body-colors "bg-white"
+ ;;;; A valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color)
+ ;;;; to use for DROID's pages. (Optional; if unspecified the bootstrap default (white) will be used)
+ ;; :html-body-colors "bg-white"
 
  ;; Configuration parameters specific to individual projects:
- :projects {"project1" {;; This is displayed on the browser's window frame and in the banner
-                        ;; whenever the browser is on one of the project's pages. (Required)
+ :projects {"project1" {;;;; This is displayed on the browser's window frame and in the banner
+                        ;;;; whenever the browser is on one of the project's pages. (Required)
                         :project-title "PROJECT1"
 
-                        ;; A welcome message for the project (currently unused):
-                        :project-welcome "welcome message"
+                        ;;;; A welcome message for the project (currently unused):
+                        ;; :project-welcome "welcome message"
 
-                        ;; Displayed below the banner on the main project page. (Required)
+                        ;;;; Displayed below the banner on the main project page. (Required)
                         :project-description "description"
 
-                        ;; Location of the project in github, i.e.,
-                        ;; https://github.com/GITHUB_COORDINATES. (Required)
+                        ;;;; Location of the project in github, i.e.,
+                        ;;;; https://github.com/GITHUB_COORDINATES. (Required)
                         :github-coordinates "github-org/repository-1"
 
-                        ;; The complete path of the makefile for which all workflow actions,
-                        ;; views, and scripts will be assumed by DROID to be relative to.
-                        ;; (Optional; defaults to the root of the project's workspace)
-                        :makefile-path "src/ontology/custom.Makefile"
+                        ;;;; The complete path of the makefile for which all workflow actions,
+                        ;;;; views, and scripts will be assumed by DROID to be relative to.
+                        ;;;; (Optional; defaults to the root of the project's workspace)
+                        ;; :makefile-path "src/ontology/custom.Makefile"
 
-                        ;; Environment variables to use with all commands that run in this project
-                        ;; (optional):
-                        :env {"ENV_VAR" "env_var_val"}
+                        ;;;; Environment variables to use with all commands that run in this project
+                        ;;;; (optional):
+                        ;; :env {"ENV_VAR" "env_var_val"}
 
-                        ;; Docker configuration for the project "project1" (optional). If not
-                        ;; included, the fallback configuration will be used (see above). Note that
-                        ;; although specifying a :docker-config block is optional for a project,
-                        ;; when specified, all of the individual fields below are required.
-                        :docker-config {;; If set to true, docker containers won't be used for this
-                                        ;; project:
-                                        :disabled? true
-                                        ;; For the meaning of the other parameters below, see the
-                                        ;; example docker-config for "project1" above.
-                                        :image "debian"
-                                        :workspace-dir "/workspace/"
-                                        :temp-dir "/tmp/droid/"
-                                        :default-working-dir "/workspace/"
-                                        :shell-command "sh"
-                                        :env {"ENV_VAR1" "env_var1_value",
-                                              "ENV_VAR2" "env_var2_value"}}}
+                        ;;;; Docker configuration for the project "project1" (optional). If not
+                        ;;;; included, the fallback configuration will be used (see above). Note
+                        ;;;; that although specifying a :docker-config block is optional for a
+                        ;;;; project. When specified, required/optional fields are the same as in
+                        ;;;; the fallback configuration (see above).
+                        ;; :docker-config {;;;; If set to true, docker containers won't be used for
+                        ;;                 ;;;; this project:
+                        ;;                 :disabled? false
+                        ;;                 ;;;; For the meaning of the other parameters below, see the
+                        ;;                 ;;;; example fallback docker-config above.
+                        ;;                 :image "debian"
+                        ;;                 :workspace-dir "/workspace/"
+                        ;;                 :temp-dir "/tmp/droid/"
+                        ;;                 :default-working-dir "/workspace/"
+                        ;;                 :shell-command "sh"
+                        ;;                 :env {"ENV_VAR1" "env_var1_value",
+                        ;;                       "ENV_VAR2" "env_var2_value"}}
+                        }
 
             "project2" {:project-title "PROJECT2"
                         :project-welcome "welcome message"
                         :project-description "description"
-                        :github-coordinates "github-org/repository-2"
-                        :env {"ENV_VAR" "env_var_val"}}}}
+                        :github-coordinates "github-org/repository-2"}}}

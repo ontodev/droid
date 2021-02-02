@@ -1,7 +1,7 @@
 (ns droid.log
   (:require [droid.config :refer [get-config]]))
 
-(def log-levels {:debug 0 :info 1 :warn 2 :warning 2 :error 3 :fatal 4})
+(def log-levels {:debug 0 :info 1 :warn 2 :warning 2 :error 3 :critical 4})
 
 (defn- screened-out?
   "Given a keword representing the log-level, check to see whether the application configuration
@@ -55,15 +55,7 @@
   (when (not (screened-out? :error))
     (apply log "ERROR" first-word other-words)))
 
-(defn fatal
+(defn critical
   [first-word & other-words]
-  (when (not (screened-out? :fatal))
-    (apply log "FATAL" first-word other-words)))
-
-(defn fail
-  "Logs a fatal error and then exits with a failure status (unless the server is running in
-  development mode."
-  [errorstr]
-  (fatal errorstr)
-  (when-not (= (get-config :op-env) :dev)
-    (System/exit 1)))
+  (when (not (screened-out? :critical))
+    (apply log "CRITICAL" first-word other-words)))

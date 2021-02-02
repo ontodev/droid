@@ -125,8 +125,8 @@
       (wrap-session
        {:store db/session-store})
       (wrap-defaults
-       (let [secure-site? (get-config :secure-site)]
-         (-> (if secure-site? secure-site-defaults site-defaults)
+       (let [insecure-site? (get-config :insecure-site)]
+         (-> (if insecure-site? site-defaults secure-site-defaults)
              (assoc :proxy true)
              (assoc-in [:security :anti-forgery] false)
              (assoc-in [:session :cookie-attrs :same-site] :lax)
