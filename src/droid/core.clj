@@ -48,7 +48,7 @@
       (System/exit 0)
 
       (= cli-option "--dump-config")
-      (do (dump-config 1)
+      (do (dump-config)
           (System/exit 0))
 
       ;; If there is no command line option, do nothing:

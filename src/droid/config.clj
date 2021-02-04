@@ -1,5 +1,6 @@
 (ns droid.config
   (:require [clojure.java.io :as io]
+            [clojure.pprint :refer [pprint]]
             [clojure.string :as string]))
 
 (defn- notify
@@ -13,17 +14,40 @@
     (->> other-words (string/join " ") (str first-word " ") (println))
     (System/exit 1)))
 
-(def config
-  "A map of configuration parameters, loaded from the config.edn file in the data directory.
-  If that file does not exist, use the example-config.edn file as a fallback."
-  (let [config-filename (if (-> (io/file "config.edn") (.exists))
-                          "config.edn"
-                          (do (notify "WARNING - config.edn not found. Using example-config.edn.")
-                              "example-config.edn"))]
-    (try
-      (->> config-filename (slurp) (clojure.edn/read-string))
-      (catch Exception e
-        (fail "Parsing error:" (.getMessage e))))))
+(def ^:private config
+  "A map of configuration parameters, loaded from the config.edn file in the data directory, with
+  defaults filled in from example-config.edn. If config.edn doesn't exist, use example-config.edn."
+  (let [actual-config (when (-> (io/file "config.edn") (.exists))
+                        (try (->> "config.edn" (slurp) (clojure.edn/read-string))
+                             (catch Exception e
+                               (fail "ERROR reading config.edn:" (.getMessage e)))))
+        default-config (try (-> "example-config.edn" (slurp) (clojure.edn/read-string))
+                            (catch Exception e
+                              (fail "ERROR reading example-config.edn:" (.getMessage e))))
+        default-docker-config (:docker-config default-config)
+        default-project-config (-> default-config (:projects) (get "project1"))]
+    ;; Begin with the default configuration, then override the root-level parameters, docker
+    ;; configuration, and individual project configurations:
+    (if-not actual-config
+      (do (notify "WARNING - config.edn not found. Using example-config.edn.")
+          default-config)
+      (-> default-config
+          (merge actual-config)
+          (assoc :docker-config (-> default-docker-config
+                                    (merge (:docker-config actual-config))))
+          (assoc :projects
+                 (->> actual-config
+                      :projects
+                      (seq)
+                      (map (fn [map-entry]
+                             (hash-map (first map-entry)
+                                       (-> (second map-entry)
+                                           (assoc :docker-config
+                                                  (->> (second map-entry)
+                                                       :docker-config
+                                                       (merge default-docker-config)))
+                                           (#(merge default-project-config %))))))
+                      (apply merge)))))))
 
 (defn get-config
   "Get the configuration parameter corresponding to the given keyword. If alt-config is specified,
@@ -40,8 +64,8 @@
     (or (-> :projects (get-config config) (get project-name) :docker-config)
         (get-config :docker-config config))))
 
-(defn- check-config
-  "Runs a series of tests on the configuration map"
+(defn- check-explicit-config
+  "Runs a series of tests on the explicitly defined configuration parameters."
   []
   (let [root-constraints
         {:cgi-timeout {:allowed-types [Long]}
@@ -108,12 +132,14 @@
             (doseq [config-key config-keys]
               (let [param-type (-> config-key (get-config config-to-check) (type))
                     allowed-types (-> (config-key constraints) (get :allowed-types))]
-                (cond (= allowed-types nil)
-                      (notify "WARNING - Unexpected parameter:" config-key "found in configuration."
-                              "It will be ignored.")
-                      (not-any? #(= param-type %) allowed-types)
-                      (fail "ERROR - configuration parameter" config-key "has invalid type:"
-                            param-type "It should be one of" allowed-types))))
+                ;; Only validate the config-key if it is present (if not, param-type will be nil):
+                (when param-type
+                  (cond (= allowed-types nil)
+                        (notify "WARNING - Unexpected parameter:" config-key
+                                "found in configuration. It will be ignored.")
+                        (not-any? #(= param-type %) allowed-types)
+                        (fail "ERROR - configuration parameter" config-key "has invalid type:"
+                              param-type "It should be one of" allowed-types)))))
             ;; Check whether any configuration parameters are missing:
             (doseq [constraint-key constraint-keys]
               (when (and (is-required? constraint-key constraints config-to-check)
@@ -123,57 +149,37 @@
                         (when conditional-clause
                           (str " (required when: " conditional-clause ")"))))))))]
 
-    ;; Check root-level configuration:
-    (notify "INFO - checking root-level configuration ...")
-    (crosscheck-config-constraints config root-constraints)
-    ;; Check root-level docker-configuration:
-    (let [docker-config (get-config :docker-config)]
-      (notify "INFO - checking root-level docker configuration ...")
-      (crosscheck-config-constraints docker-config docker-constraints))
-    ;; Check project-level configuration:
-    (let [project-configs (-> (get-config :projects) (seq))]
-      (doseq [project-keyval project-configs]
-        (let [project-name (first project-keyval)
-              project-config (second project-keyval)
-              docker-config (get-docker-config project-name project-config)]
-          (notify "INFO - checking configuration for project" project-name "...")
-          (when (-> (type project-name) (= String) (not))
-            (fail "ERROR - project identifier:" project-name "should be of type String"))
-          (crosscheck-config-constraints project-config project-constraints)
-          ;; Check the project-level docker-config:
-          (when docker-config
-            (notify "INFO - checking docker configuration for project" project-name "...")
-            (crosscheck-config-constraints docker-config docker-constraints)))))))
+    (let [explicit-config (-> (if (-> (io/file "config.edn") (.exists))
+                                "config.edn"
+                                "example-config.edn")
+                              (slurp)
+                              (clojure.edn/read-string))]
+      ;; Check root-level configuration:
+      (notify "INFO - checking root-level configuration ...")
+      (crosscheck-config-constraints explicit-config root-constraints)
+      ;; Check root-level docker-configuration:
+      (let [docker-config (get-config :docker-config explicit-config)]
+        (notify "INFO - checking root-level docker configuration ...")
+        (crosscheck-config-constraints docker-config docker-constraints))
+      ;; Check project-level configuration:
+      (let [project-configs (-> (get-config :projects explicit-config) (seq))]
+        (doseq [project-keyval project-configs]
+          (let [project-name (first project-keyval)
+                project-config (second project-keyval)
+                docker-config (get-docker-config project-name project-config)]
+            (notify "INFO - checking configuration for project" project-name "...")
+            (when (-> (type project-name) (= String) (not))
+              (fail "ERROR - project identifier:" project-name "should be of type String"))
+            (crosscheck-config-constraints project-config project-constraints)
+            ;; Check the project-level docker-config:
+            (when docker-config
+              (notify "INFO - checking docker configuration for project" project-name "...")
+              (crosscheck-config-constraints docker-config docker-constraints))))))))
 
 (defn dump-config
   "Dumps the actually configured parameters being used by DROID."
-  [depth & [alt-config]]
-  (let [config (or alt-config config)
-        depth (if (< depth 1) 1 depth)
-        write (fn [str-to-write]
-                (->> (repeat "    ") (take depth) (string/join "") (#(println % str-to-write))))]
-    (when (<= depth 1)
-      (notify "INFO - Dumping current DROID configuration ...")
-      (println "{"))
-    (->> (seq config)
-         (#(doseq [[config-key _] %]
-             ;; Config values may have multiple entries for different operating environments
-             ;; (e.g., {:dev dev_value, :test test_value, :prod prod_value}). We call (get-config )
-             ;; below to extract the value for the actually configured operating environment.
-             (let [config-val (get-config config-key config)
-                   stringify (fn [arg] (if (= (type arg) String)
-                                         (str "\"" arg "\"")
-                                         arg))]
-               (if (or (= (type config-val) clojure.lang.PersistentArrayMap)
-                       (= (type config-val) clojure.lang.PersistentHashMap))
-                 (do
-                   (-> config-key (stringify) (str " {") (write))
-                   (-> depth (+ 1) (dump-config config-val))
-                   (write "}"))
-                 (write (str (stringify config-key) " "
-                             (-> config-key (get-config config) (stringify)))))))))
-    (when (<= depth 1)
-      (println "}"))))
+  []
+  (pprint config))
 
 ;; Validate the configuration map at startup:
-(check-config)
+(check-explicit-config)
