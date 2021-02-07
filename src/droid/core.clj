@@ -2,6 +2,7 @@
   (:require [clojure.repl :as repl]
             [org.httpkit.server :refer [run-server]]
             [droid.branches :refer [pause-branch-containers remove-branch-containers]]
+            [droid.cli-handler :as cli-handler]
             [droid.config :refer [get-config dump-config]]
             [droid.handler :as handler]
             [droid.log :as log])
@@ -32,35 +33,8 @@
 (repl/set-break-handler! shutdown)
 
 (defn -main [& args]
-  (let [cli-option (first args)
-        usage-message (str "Command-line options:\n"
-                           " --check-config Check the validity of the configuration file and exit\n"
-                           " --dump-config  Output the configuration parameters and exit")]
-    (cond
-      (= cli-option "--help")
-      (binding [*out* *err*]
-        (println usage-message)
-        (System/exit 0))
-
-      ;; We don't need to explicitly call the check-config function here since it is automatically
-      ;; called when the config module is loaded at statup.
-      (= cli-option "--check-config")
-      (System/exit 0)
-
-      (= cli-option "--dump-config")
-      (do (dump-config)
-          (System/exit 0))
-
-      ;; If there is no command line option, do nothing:
-      (nil? cli-option)
-      (do)
-
-      :else
-      (binding [*out* *err*]
-        (println "Unrecognised command-line option:" cli-option)
-        (println usage-message)
-        (System/exit 1))))
-
+  ;; Handle command-line options:
+  (cli-handler/handle-cli-opts args)
   ;; Add a shutdown hook to the no-argument version of `shutdown`:
   (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable shutdown))
   (log/info "Unpausing any paused branch containers")

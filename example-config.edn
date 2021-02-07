@@ -1,138 +1,265 @@
-{;; Set this to one of `:debug`, `:info`, `:warn`, `:error`, `:critical`. The higher the specified
- ;; level, the fewer messages will be written to the log.
- ;; - Required -
+{
+ ;; DROID server configuration parameters
+ ;; =====================================
+ ;;
+ ;; Parameter name :log-level
+ ;; Location: main configuration block
+ ;; Required: yes
+ ;; Notes: Must be set to one of `:debug`, `:info`, `:warn`, `:error`, `:critical`. The higher the
+ ;;        level, the fewer messages will be written to the log.
  :log-level :info
-
- ;; The filename (relative to DROID's root directory) where the log will be written to
- ;; (e.g, "doid.log").
- ;; - Optional; if unspecified or set to nil, DROID's log is written to `STDERR` -
+ ;;
+ ;; Parameter name :log-file
+ ;; Location: main configuration block
+ ;; Required: no; if unspecified or set to nil, DROID's log is written to STDERR.
+ ;; Notes: The filename (relative to DROID's root directory) where the log will be written to (e.g,
+ ;;        "doid.log", "log/droid.log", etc.)
  :log-file nil
-
- ;; If set to true, `https:` protocol will be used, otherwise DROID will use `http:`.
- ;; - Optional; default: true -
+ ;;
+ ;; Parameter name :insecure-site
+ ;; Location: main configuration block
+ ;; Required: no; defaults to false
+ ;; Notes: If set to false, `https:` protocol will be used, otherwise DROID will use `http:`.
  :insecure-site false
-
- ;; The port that the server will listen on.
- ;; - Required -
- :server-port 8000
-
- ;; GitHub userids that are considered as DROID site administrators and are to be granted special
- ;; permissions. Format: #{"user1", "user2", ...}
- ;; - Optional; default: no site administrators -
+ ;;
+ ;; Parameter name :server-port
+ ;; Location: main configuration block
+ ;; Required: yes
+ ;; Notes: The port that the server will listen on.
+ :server-port 8090
+ ;;
+ ;; Parameter name :site-admin-github-ids
+ ;; Location: main configuration block
+ ;; Required: no; defaults to no site administrators
+ ;; Notes: GitHub userids that are considered as DROID site administrators and are to be granted
+ ;;        special permissions. Format: #{"user1", "user2", ...}
  :site-admin-github-ids #{}
-
- ;; The maximum number of milliseconds that a CGI script is allowed to run
- ;; - Optional; default: 10000 milliseconds -
+ ;;
+ ;; Parameter name :cgi-timeout
+ ;; Location: main configuration block
+ ;; Required: no; default: 10000 milliseconds
+ ;; Notes: The maximum number of milliseconds that a CGI script is allowed to run
  :cgi-timeout 10000
-
- ;; Fallback docker configuration for projects that do not include their own. (Required)
- :docker-config {;; If set to true, projects that do not define their own docker configuration
-                 ;; will not use docker containers. Projects that _do_ specify their own docker
-                 ;; configuration, with `:disabled?` set to `false` in their project-specific
-                 ;; docker configuration, will still use docker containers.
-                 ;; - Optional; docker is disabled by default -
+ ;;
+ ;; Parameter name :docker-config
+ ;; Location: main configuration block
+ ;; Required: yes
+ ;; Fallback docker configuration block to be used for projects that do not include their own.
+ :docker-config {
+                 ;;
+                 ;; Parameter name: :disabled?
+                 ;; Location: fallback docker configuration block
+                 ;; Required: no; defaults to true
+                 ;; Notes: If set to true, projects that do not define their own docker
+                 ;;        configuration will not use docker containers. Projects that _do_ specify
+                 ;;        their own docker configuration, with `:disabled?` set to `false` in their
+                 ;;        project-specific docker configuration (see below), will still use docker
+                 ;;        containers.
                  :disabled? true
-                 ;; The docker image to use when creating containers. Individual
-                 ;; branches of a project may override this by including a `Dockerfile`
-                 ;; at the root of their workspace directory.
-                 ;; - Required when docker is enabled -
+                 ;;
+                 ;; Parameter name :image
+                 ;; Location: fallback docker configuration block
+                 ;; Required: only when fallback docker configuration is enabled (see above)
+                 ;; Notes: The docker image to use when creating containers. Individual branches of
+                 ;;        a project may override this by including a Dockerfile at the root of
+                 ;;        their workspace directory.
                  :image "debian"
-                 ;; The path to the root workspace directory within a container.
-                 ;; - Required when :docker is enabled -
+                 ;;
+                 ;; Parameter name :workspace-dir
+                 ;; Location: fallback docker configuration block
+                 ;; Required: only when fallback docker configuration is enabled (see above)
+                 ;; Notes: The path to the root workspace directory within a container.
                  :workspace-dir "/workspace/"
-                 ;; The path to the temporary directory within a container.
-                 ;; - Required when docker is enabled -
+                 ;;
+                 ;; Parameter name :temp-dir
+                 ;; Location: fallback docker configuration block
+                 ;; Required: only when fallback docker configuration is enabled (see above)
+                 ;; Notes: The path to the temporary directory within a container.
                  :temp-dir "/tmp/droid/"
-                 ;; The directory relative to which DROID commands should be run by
-                 ;; default within the container, if not otherwise specified.
-                 ;; - Required when docker is enabled -
+                 ;;
+                 ;; Parameter name :default-working-dir
+                 ;; Location: fallback docker configuration block
+                 ;; Required: only when fallback docker configuration is enabled (see above)
+                 ;; Notes: The directory relative to which DROID commands should be run by default
+                 ;;        within the container, if not otherwise specified.
                  :default-working-dir "/workspace/"
-                 ;; The program name of the shell to be used when running commands.
-                 ;; - Required when :disabled? is false -
+                 ;;
+                 ;; Parameter name :shell-command
+                 ;; Location: fallback docker configuration block
+                 ;; Required: only when fallback docker configuration is enabled (see above)
+                 ;; Notes: The program name of the shell to be used when running commands.
                  :shell-command "sh"
-                 ;; Extra environment variables passed to containers when running
-                 ;; commands. Format: {"ENV_VAR1" "env_var1_value",
-                 ;;                    "ENV_VAR2" "env_var2_value", ...}
-                 ;; - Optional; defaults to no environment variables -
+                 ;;
+                 ;; Parameter name :env
+                 ;; Location: fallback docker configuration block
+                 ;; Required: only when fallback docker configuration is enabled (see above)
+                 ;; Notes: Extra environment variables passed to containers when running commands.
+                 ;;        Format: {"ENV_VAR1" "env_var1_value",
+                 ;;                 "ENV_VAR2" "env_var2_value", ...}
                  :env {}}
-
- ;; Set to true if you would like to remove docker containers automatically at server shut down.
- ;; Note that even without this flag set, docker containers will be *paused* on server shutdown.
- ;; - Optional; default: false -
+ ;;
+ ;; Parameter name :remove-containers-on-shutdown
+ ;; Location: main configuration block
+ ;; Required: no, defaults to false
+ ;; Notes: Set to true if you would like to remove docker containers automatically at server shut
+ ;;        down. Note that even without this flag set, docker containers will be *paused* on server
+ ;;        shutdown.
  :remove-containers-on-shutdown false
-
- ;; If set to true, DROID will authenticate to GitHub using a personal access token read from the
- ;; environment variable PERSONAL_ACCESS_TOKEN, which must be set.
- ;; - Optional; defaults to false -
+ ;;
+ ;; Parameter name :local-mode
+ ;; Location: main configuration block
+ ;; Required: no; defaults to false
+ ;; Notes: If set to true, DROID will authenticate to GitHub using a personal access token read from
+ ;;        the environment variable PERSONAL_ACCESS_TOKEN, which must be set.
  :local-mode false
-
- ;; The ID of the GitHub App to use for authentication to GitHub when not running in local mode.
- ;; - Required when :local-mode is set to false -
+ ;;
+ ;; Parameter name :github-app-id
+ ;; Location: main configuration block
+ ;; Required: only when not running in local mode (see above)
+ ;; Notes: The GitHub App ID to use for authentication to GitHub on behalf of a logged in user when
+ ;;        not running in local mode.
  :github-app-id 55555
-
- ;; The file, relative to DROID's root directory, containing the private key to use for
- ;; authenticating with the GitHub App when not running in local mode.
- ;; - Required when :local-mode is set to false -
+ ;;
+ ;; Parameter name :pem-file
+ ;; Location: main configuration block
+ ;; Required: only when not running in local mode (see above)
+ ;; Notes: The file, relative to DROID's root directory, containing the private key to use, in
+ ;;        conjunction with the GitHub App ID, for authenticating to GitHub on behalf of a logged in
+ ;;        user when not running in local mode.
  :pem-file "FILE.pem"
-
- ;; If set to true, then pushes to GitHub will use an installation token provided through the
- ;; GitHub App for the repository. Otherwise pushes will use the user's user access token
- ;; (which is also authenticated via the GitHub App). Note that if `:local-mode` is set to true,
- ;; the personal access token will be used in lieu of the installation token.
- ;; - Optional; defaults to false -
+ ;;
+ ;; Parameter name :push-with-installation-token
+ ;; Location: main configuration block
+ ;; Required: no; defaults to false
+ ;; Notes: If set to true, pushes to GitHub will use an installation token provided through the
+ ;;        GitHub App for the repository. Otherwise pushes will use the user's user access token
+ ;;        (which is also authenticated via the GitHub App). Note that if :local-mode is set to
+ ;;        true, the personal access token will be used in lieu of the installation token.
  :push-with-installation-token false
-
- ;; A valid [bootstrap background colour](https://getbootstrap.com/docs/4.1/utilities/colors/#background-color)
- ;; to use for DROID's pages.
- ;; - Optional; if unspecified the bootstrap default (white) will be used -
+ ;;
+ ;; Parameter name :html-body-colors
+ ;; Location: main configuration block
+ ;; Required: no; defaults to "bg-white" (the Bootstrap default))
+ ;; Notes: A valid [bootstrap background colour](https://getbootstrap.com/docs/4.4/utilities/colors/#background-color)
+ ;;        to use when rendering DROID's pages.
  :html-body-colors "bg-white"
-
- ;; Configuration parameters specific to individual projects:
- :projects {"project1" {;; This is displayed on the browser's window frame and in the banner
-                        ;; whenever the browser is on one of the project's pages.
-                        ;; - Required -
-                        :project-title "PROJECT1"
-
-                        ;; A welcome message for the project (currently unused):
-                        ;; :project-welcome "welcome message"
-
-                        ;; Displayed below the banner on the main project page.
-                        ;; - Required -
-                        :project-description "description"
-
-                        ;; Location of the project in github, i.e.,
-                        ;; https://github.com/GITHUB_COORDINATES.
-                        ;; - Required -
+ ;;
+ ;; Parameter name :projects
+ ;; Location: main configuration block
+ ;; Required: yes
+ ;; Notes: A list of individual project configuration blocks, indexed by project nickname.
+ :projects {"project1" {
+                        ;;
+                        ;; Parameter name :project-title
+                        ;; Location: individual project configuration block
+                        ;; Required: yes
+                        ;; Notes: This is displayed on the browser's window frame and in the banner
+                        ;;         whenever the browser is on one of the project's pages.
+                        :project-title "Project Title"
+                        ;;
+                        ;; Parameter name :project-welcome (currently unused)
+                        ;; Location: individual project configuration block
+                        ;; Required: no.
+                        ;; Notes: A welcome message for the project.
+                        :project-welcome "welcome message"
+                        ;;
+                        ;; Parameter name :project-description
+                        ;; Location: individual project configuration block
+                        ;; Required: yes
+                        ;; Notes: Displayed below the banner on the main project page..
+                        :project-description "Project description"
+                        ;;
+                        ;; Parameter name :github-coordinates
+                        ;; Location: individual project configuration block
+                        ;; Required: yes
+                        ;; Notes: Location of the project in github, i.e.,
+                        ;;        https://github.com/GITHUB_COORDINATES, where GITHUB_COORDINATES
+                        ;;        is of the form <org or owner>/<repository name>
                         :github-coordinates "github-org/repository-1"
-
-                        ;; The complete path of the makefile for which all workflow actions,
-                        ;; views, and scripts will be assumed by DROID to be relative to.
-                        ;; Format: "src/ontology/custom.Makefile"
-                        ;; - Optional; defaults to the root of the project's workspace -
+                        ;;
+                        ;; Parameter name :makefile-path
+                        ;; Location: individual project configuration block
+                        ;; Required: no; when unspecified or nil, defaults to "Makefile"
+                        ;; Notes: The complete path of the makefile for which all workflow actions,
+                        ;;        views, and scripts will be assumed by DROID to be relative to.
+                        ;;        Example: "src/ontology/custom.Makefile"
                         :makefile-path nil
-
-                        ;; Environment variables to use with all commands that run in this project
-                        ;; (optional). Format: {"ENV_VAR1" "env_var1_value",
-                        ;;                      "ENV_VAR2" "env_var2_value", ...}
+                        ;;
+                        ;; Parameter name :env
+                        ;; Location: individual project configuration block
+                        ;; Required: no; defaults to no environment variables
+                        ;; Notes: Environment variables to use with all commands that run in this
+                        ;;        project. Format: {"ENV_VAR1" "env_var1_value",
+                        ;;                          "ENV_VAR2" "env_var2_value", ...}
                         :env {}
-
-                        ;; Docker configuration for the project "project1" (optional). If not
-                        ;; included, the fallback configuration will be used (see above). Note
-                        ;; that although specifying a :docker-config block is optional for a
-                        ;; project. When specified, required/optional fields are the same as in
-                        ;; the fallback configuration (see above).
-                        :docker-config {;; If set to true, docker containers won't be used for
-                                        ;; this project:
+                        ;;
+                        ;; Parameter name :docker-config
+                        ;; Location: individual project configuration block
+                        ;; Required: no
+                        ;; Notes: If not included in a individual project configuration block,
+                        ;;        the fallback docker configuration (see above) will be applied to
+                        ;;        the given project.
+                        :docker-config {
+                                        ;;
+                                        ;; Parameter name :disabled?
+                                        ;; Location: project-level docker configuration block
+                                        ;; Required: no; defaults to true
+                                        ;; Notes: If set to true, docker containers won't be used
+                                        ;;        for the given project.
                                         :disabled? true
-                                        ;; For the meaning of the other parameters below, see the
-                                        ;; example fallback docker-config above.
+                                        ;;
+                                        ;; Parameter name :image
+                                        ;; Location: project-specific docker configuration block
+                                        ;; Required: only when project-specific docker configuration
+                                        ;;           is enabled (see above)
+                                        ;; Notes: The docker image to use when creating containers.
+                                        ;;        Individual branches of a project may override this
+                                        ;;        by including a Dockerfile at the root of their
+                                        ;;        workspace directory.
                                         :image "debian"
+                                        ;;
+                                        ;; Parameter name :workspace-dir
+                                        ;; Location: project-specific docker configuration block
+                                        ;; Required: only when project-specific docker configuration
+                                        ;;           is enabled (see above)
+                                        ;; Notes: The path to the root workspace directory within a
+                                        ;;        container.
                                         :workspace-dir "/workspace/"
+                                        ;;
+                                        ;; Parameter name :temp-dir
+                                        ;; Location: project-specific docker configuration block
+                                        ;; Required: only when project-specific docker configuration
+                                        ;;           is enabled (see above)
+                                        ;; Notes: The path to the temporary directory within a
+                                        ;;        container.
                                         :temp-dir "/tmp/droid/"
+                                        ;;
+                                        ;; Parameter name :default-working-dir
+                                        ;; Location: project-specific docker configuration block
+                                        ;; Required: only when project-specific docker configuration
+                                        ;;           is enabled (see above)
+                                        ;; Notes: The default directory relative to which DROID
+                                        ;;        commands should be run by default within the
+                                        ;;        container.
                                         :default-working-dir "/workspace/"
+                                        ;;
+                                        ;; Parameter name :shell-command
+                                        ;; Location: project-specific docker configuration block
+                                        ;; Required: only when project-specific docker configuration
+                                        ;;           is enabled (see above)
+                                        ;; Notes: The program name of the shell to be used when
+                                        ;;        running commands in a docker container.
                                         :shell-command "sh"
+                                        ;;
+                                        ;; Parameter name :env
+                                        ;; Location: project-specific docker configuration block
+                                        ;; Required: only when project-specific docker configuration
+                                        ;;           is enabled (see above)
+                                        ;; Notes: Extra environment variables passed to containers
+                                        ;;        when running commands.
+                                        ;;        Format: {"ENV_VAR1" "env_var1_value",
+                                        ;;                 "ENV_VAR2" "env_var2_value", ...}
                                         :env {}}}
-
             "project2" {:project-title "PROJECT2"
                         :project-welcome "welcome message"
                         :project-description "description"

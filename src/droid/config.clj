@@ -14,16 +14,19 @@
     (->> other-words (string/join " ") (str first-word " ") (println))
     (System/exit 1)))
 
+(def ^:private default-config
+  "A map of configuration parameters, loaded from the example-config.edn file in the root directory"
+  (try (-> "example-config.edn" (slurp) (clojure.edn/read-string))
+       (catch Exception e
+         (fail "ERROR reading example-config.edn:" (.getMessage e)))))
+
 (def ^:private config
-  "A map of configuration parameters, loaded from the config.edn file in the data directory, with
+  "A map of configuration parameters, loaded from the config.edn file in the root directory, with
   defaults filled in from example-config.edn. If config.edn doesn't exist, use example-config.edn."
   (let [actual-config (when (-> (io/file "config.edn") (.exists))
                         (try (->> "config.edn" (slurp) (clojure.edn/read-string))
                              (catch Exception e
                                (fail "ERROR reading config.edn:" (.getMessage e)))))
-        default-config (try (-> "example-config.edn" (slurp) (clojure.edn/read-string))
-                            (catch Exception e
-                              (fail "ERROR reading example-config.edn:" (.getMessage e))))
         default-docker-config (:docker-config default-config)
         default-project-config (-> default-config (:projects) (get "project1"))]
     ;; Begin with the default configuration, then override the root-level parameters, docker
@@ -55,6 +58,11 @@
   [param-keyword & [alt-config]]
   (let [config (or alt-config config)]
     (get config param-keyword)))
+
+(defn get-default-config
+  "Get the configuration parameter corresponding to the given keyword."
+  [param-keyword]
+  (get-config param-keyword default-config))
 
 (defn get-docker-config
   "Returns the docker config for a project, or if no docker config is defined for the project,
@@ -176,9 +184,302 @@
               (notify "INFO - checking docker configuration for project" project-name "...")
               (crosscheck-config-constraints docker-config docker-constraints))))))))
 
+(defn- config-questionnaire
+  "Interactively accept answers to a series of questions and return the configuration map formed
+  by applying the answers received to the default configuration."
+  []
+  (letfn [(ask [question & [default]]
+            ;; Asks a question, indicating the default that will be assumed if no answer is given,
+            ;; and wait for the user to supply the answer
+            (println)
+            (println question)
+            (cond (= (type default) Boolean)
+                  (if default
+                    (println "[Default: Y]")
+                    (println "[Default: N]"))
+
+                  (= (type default) clojure.lang.PersistentHashSet)
+                  (if (= default #{})
+                    (println "[Default: None]")
+                    default)
+
+                  (not (nil? default))
+                  (-> "[Default: " (str default "]") (println)))
+            (print "> ")
+            (flush)
+            (-> (read-line)
+                (#(try
+                    (string/trim %)
+                    ;; If the user supplied no input (e.g., by pressing Ctrl-D), then triming the
+                    ;; answer will generate a null pointer, which we can safely ignore here, exiting
+                    ;; the program:
+                    (catch java.lang.NullPointerException e
+                      (System/exit 1))))))
+
+          (get-server-port []
+            (let [default (get-default-config :server-port)
+                  ask-for-server-port #(ask "Enter the port # that the server will listen on."
+                                            default)]
+              (loop [answer (ask-for-server-port)]
+                (let [server-port (if (and (not (nil? answer)) (empty? answer))
+                                    default
+                                    (try
+                                      (Integer/parseInt answer)
+                                      (catch java.lang.NumberFormatException e
+                                        (println answer "is not a valid port #. Try again.")
+                                        nil)))]
+                  (or server-port
+                      (recur (ask-for-server-port)))))))
+
+          (get-site-admins []
+            (let [default (get-default-config :site-admin-github-ids)
+                  ask-for-site-admins #(ask (str "Enter a comma-separated list of GitHub userids "
+                                                 "that DROID should consider to be\nsite "
+                                                 "administrators.")
+                                            default)]
+              (loop [answer (ask-for-site-admins)]
+                (let [site-admins (if (and (not (nil? answer)) (empty? answer))
+                                    default
+                                    (when (-> (re-matches #"^\s*[\w\.\_\-]+(\s*,\s*[\w\.\_\-]+)*",
+                                                          answer))
+                                      (->> #"\s*,\s*" (string/split answer) (into #{}))))]
+                  (if site-admins
+                    site-admins
+                    (do (println answer "is not a comma-separated list of userids")
+                        (recur (ask-for-site-admins))))))))
+
+          (get-fallback-docker-disabled? []
+            (let [default (-> :docker-config (get-default-config) :disabled?)
+                  enable-docker? #(ask (str "Do you want a fallback configuration to be enabled "
+                                            "for projects that\ndo not define their own? (y/n)")
+                                       (not default))]
+              (loop [answer (enable-docker?)]
+                (let [docker-disabled? (if (and (not (nil? answer)) (empty? answer))
+                                         default
+                                         (cond (-> answer (string/lower-case) (= "y")) false
+                                               (-> answer (string/lower-case) (= "n")) true))]
+                  (if-not (nil? docker-disabled?)
+                    docker-disabled?
+                    (do (println "Please enter 'y' or 'n'")
+                        (recur (enable-docker?))))))))
+
+          (get-fallback-docker-image []
+            (let [default (-> :docker-config (get-default-config) :image)
+                  get-image #(ask (str "Enter the docker image to use when creating containers for "
+                                       "the fallback docker\nconfiguration.")
+                                  default)]
+              (loop [answer (get-image)]
+                (let [docker-image (if (and (not (nil? answer)) (empty? answer))
+                                     default
+                                     (when (->> answer (re-matches #"^[\w\/\.\_\-]+$"))
+                                       answer))]
+                  (if-not (nil? docker-image)
+                    docker-image
+                    (do (println "Please enter a valid image name")
+                        (recur (get-image))))))))
+
+          (get-local-mode []
+            (let [default (get-default-config :local-mode)
+                  use-local-mode? #(ask
+                                    (str "DROID can run in local mode, in which case you will need "
+                                         "to set the environment\nvariable PERSONAL_ACCESS_TOKEN "
+                                         "to the value of the GitHub personal access token\n(PAT) "
+                                         "that will be used for authentication. A PAT is "
+                                         "associated with a single\nuser, who will own all GitHub "
+                                         "actions performed by DROID. Alternately, DROID\ncan run "
+                                         "in normal mode, in which case you will be asked to "
+                                         "supply a GitHub App\nID and PEM file to use for "
+                                         "authentication to GitHub on behalf of the currently\n"
+                                         "logged in user.\nShould DROID run in local mode?")
+                                    default)]
+              (loop [answer (use-local-mode?)]
+                (let [local-mode? (if (and (not (nil? answer)) (empty? answer))
+                                    default
+                                    (cond (-> answer (string/lower-case) (= "y")) true
+                                          (-> answer (string/lower-case) (= "n")) false))]
+                  (if-not (nil? local-mode?)
+                    local-mode?
+                    (do (println "Please enter 'y' or 'n'")
+                        (recur (use-local-mode?))))))))
+
+          (get-github-app-id []
+            (let [ask-for-app-id #(ask "Enter the GitHub App ID to use for authentication.")]
+              (loop [answer (ask-for-app-id)]
+                (let [app-id (try (Integer/parseInt answer)
+                                  (catch java.lang.NumberFormatException e
+                                    (println answer "is not a valid GitHub App ID. Try again.")
+                                    nil))]
+                  (or app-id
+                      (recur (ask-for-app-id)))))))
+
+          (get-pem-file []
+            (let [ask-for-pem-file #(ask
+                                     (str "Enter the name of the .pem file "
+                                          (str "(relative to " (-> (java.io.File. "")
+                                                                   .getAbsolutePath) ")")
+                                          "\nto use for GitHub App authentication."))]
+              (loop [answer (ask-for-pem-file)]
+                (let [pem-file (when (->> answer (re-matches #"^[\w\/\.\_\-]+$"))
+                                 answer)]
+                  (or pem-file
+                      (do
+                        (println "Please enter a valid filename (no spaces or special characters).")
+                        (recur (ask-for-pem-file))))))))
+
+          (get-github-coords []
+            (let [ask-for-coords #(ask (str "Enter the github coordinates for the new project. "
+                                            "The is the part of the URL\nfor the project "
+                                            "repository that comes after github.com/,e.g.,\n"
+                                            "https://github.com/GITHUB_COORDINATES, where "
+                                            "GITHUB_COORDINATES is of the\nform: "
+                                            "'<org or owner>/<repository name>' and contains "
+                                            "no spaces or special\ncharacters other than '/', '_',"
+                                            "'-'."))]
+              (loop [answer (ask-for-coords)]
+                (let [coords (when (->> answer (re-matches #"^[\w\.\_\-]+/[\w\.\_\-]+$"))
+                               answer)]
+                  (or coords
+                      (do (println "Coordinates must be in the form:"
+                                   "'<org or owner>/<repository name>' and should\nnot contain any"
+                                   "special characters other than '/', '_', and '-'.")
+                          (recur (ask-for-coords))))))))
+
+          (get-project-docker-disabled? [project-name]
+            (let [default (-> (get-default-config :projects) (get "project1")
+                              :docker-config :disabled?)
+                  enable-docker? #(ask (str "Do you want to enable docker for: " project-name
+                                            "? (y/n)")
+                                       (not default))]
+              (loop [answer (enable-docker?)]
+                (let [docker-disabled? (if (and (not (nil? answer)) (empty? answer))
+                                         default
+                                         (cond (-> answer (string/lower-case) (= "y")) false
+                                               (-> answer (string/lower-case) (= "n")) true))]
+                  (if-not (nil? docker-disabled?)
+                    docker-disabled?
+                    (do (println "Please enter 'y' or 'n'")
+                        (recur (enable-docker?))))))))
+
+          (get-project-docker-image [project-name]
+            (let [default (-> (get-default-config :projects) (get "project1") :docker-config :image)
+                  get-image #(ask (str "Enter the docker image to use when creating containers for "
+                                       "project: " project-name)
+                                  default)]
+              (loop [answer (get-image)]
+                (let [docker-image (if (and (not (nil? answer)) (empty? answer))
+                                     default
+                                     (when (->> answer (re-matches #"^[\w\.\/\_\-]+$"))
+                                       answer))]
+                  (if-not (nil? docker-image)
+                    docker-image
+                    (do (println "Please enter a valid image name")
+                        (recur (get-image))))))))
+
+          (get-projects []
+            ;; Returns a list of two-place vectors representing key-value pairs in the projects map.
+            (let [one-more-project? #(ask "Configure a new project? (y/n)" false)]
+              (loop [answer (one-more-project?)
+                     project-list '()]
+                (let [new-project? (if (or (not answer) (empty? answer))
+                                     false
+                                     (cond (-> answer (string/lower-case) (= "y")) true
+                                           (-> answer (string/lower-case) (= "n")) false))]
+                  (cond
+                    ;; If a new project is to be configured, ask a series of questions about it:
+                    new-project?
+                    (let [github-coords (get-github-coords)
+                          project-name (-> github-coords (string/replace #"[^\w]" "-"))
+                          docker-disabled? (get-project-docker-disabled? project-name)
+                          docker-image (when-not docker-disabled?
+                                         (get-project-docker-image project-name))]
+                      (->> (vector project-name
+                                   {:github-coordinates github-coords
+                                    :docker-config (-> (hash-map :disabled? docker-disabled?)
+                                                       (merge (when-not docker-disabled?
+                                                                (hash-map :image docker-image))))})
+                           (conj project-list)
+                           (recur (one-more-project?))))
+
+                    (nil? new-project?)
+                    (do (println "Please enter 'y' or 'n'")
+                        (recur (one-more-project?) project-list))
+
+                    ;; We are done; return the generated project list:
+                    :else
+                    project-list)))))]
+
+    (let [server-port (get-server-port)
+          site-admins (get-site-admins)
+          fallback-docker-disabled? (get-fallback-docker-disabled?)
+          fallback-docker-image (when-not fallback-docker-disabled? (get-fallback-docker-image))
+          local-mode? (get-local-mode)
+          github-app-id (when-not local-mode? (get-github-app-id))
+          pem-file (when-not local-mode? (get-pem-file))
+          projects (get-projects)
+          default-docker-config (:docker-config default-config)
+          default-project-config (-> default-config (:projects) (get "project1"))]
+
+      (-> default-config
+          (merge {:server-port server-port
+                  :site-admin-github-ids site-admins
+                  :local-mode local-mode?})
+          (merge (when-not local-mode?
+                   {:github-app-id github-app-id
+                    :pem-file pem-file}))
+          (assoc :docker-config (-> default-docker-config
+                                    (merge {:disabled? fallback-docker-disabled?})
+                                    (merge (when-not fallback-docker-disabled?
+                                             {:image fallback-docker-image}))))
+          (assoc :projects
+                 (->> projects
+                      (seq)
+                      (map (fn [map-entry]
+                             (hash-map (first map-entry)
+                                       (-> (second map-entry)
+                                           (assoc :docker-config
+                                                  (->> (second map-entry)
+                                                       :docker-config
+                                                       (merge default-docker-config)))
+                                           (#(merge default-project-config %))))))
+                      (apply merge)
+                      (#(or % {"project1" default-project-config}))))))))
+
+(defn init-config
+  "Generate a new customized config.edn file based on user input."
+  []
+  (if (-> "config.edn" (io/file) (.exists))
+    (do
+      (println "A file called config.edn already exists in DROID's root directory. This file\n"
+               "must be either moved or removed before initializing a new configuration.")
+      (System/exit 1)))
+  (let [config-answers (config-questionnaire)]
+    (spit "config.edn" "")
+      ;; First extract all of the comments from the example configuration file and write them to
+      ;; STDOUT. These comments should contain useful documentation on the configuration parameters
+      ;; that will be written to config.edn..
+    (with-open [rdr (io/reader "example-config.edn")]
+      (doseq [line (->> rdr (line-seq) (map string/trim))]
+        (when (->> line (re-matches #"^;;(\s+.*)*$"))
+          (spit "config.edn" (str line "\n") :append true))))
+      ;; Now write the custom configuration map to config.edn:
+    (spit "config.edn" "\n" :append true)
+    (->> (io/writer "config.edn" :append true) (pprint config-answers))
+    (println "New configuration written to config.edn. You should now edit this file in your"
+             "\nfavorite editor to further specify configuration parameters like project"
+             "\ntitles, custom makefile paths, etc.")))
+
 (defn dump-config
   "Dumps the actually configured parameters being used by DROID."
   []
+  ;; First extract all of the comments from the example configuration file and write them to STDOUT.
+  ;; These comments should contain useful documentation on the configuration parameters that are to
+  ;; be dumped.
+  (with-open [rdr (io/reader "example-config.edn")]
+    (doseq [line (->> rdr (line-seq) (map string/trim))]
+      (when (->> line (re-matches #"^;;(\s+.*)*$"))
+        (println line))))
+  ;; Now dump the configuration map:
+  (println)
   (pprint config))
 
 ;; Validate the configuration map at startup:

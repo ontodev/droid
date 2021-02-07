@@ -25,7 +25,11 @@ To obtain the values for the first two settings, send an email to james@overton.
 
 ## Configuration file
 
-DROID assumes that a file called `config.edn` exists in DROID's root directory. You can find an example in: [example-config.edn](example-config.edn). Before running DROID for the first time, you must create `config.edn`. To do so using the example file as a template, run the following command in DROID's root directory:
+DROID assumes that a file called `config.edn` exists in DROID's root directory. You can find an example in: [example-config.edn](example-config.edn). Before running DROID for the first time, you must create `config.edn`. There are two ways to do this.
+
+1. The first way is by running the server executable using the command-line switch: `--init-config`. Doing so will result in a series of questions being presented to the user. The answers are then used to generate a new `config.edn`. This is sufficient to run DROID, however it is recommended that the user then edit this file further in their favorite editor to fill in values like the project titles and descriptions. See the documentation in [example-config.edn](example-config.edn) for more on operating environments. This documentation is also automatically included at the top of the newly generated configuration file.
+
+2. The second, completely manual method, is to simply copy the example configuration file in DROID's root directory as follows:
 
     cp example-config.edn config.edn
 
@@ -33,7 +37,7 @@ then edit the newly created `config.edn` file as necessary.
 
 Attempting to start the server with an invalid configuration (required parameters are missing or given in the wrong format) file will result in an error and the server will fail to start.
 
-To dump the currently configured parameters to STDOUT, call the server executable using the command-line switch: `--dump-config`. Note that doing so will output the configuration parameters for the configured operating environment only (dev, test, or prod). See the documentation in [example-config.edn](example-config.edn) for more on operating environments.
+To dump the currently configured parameters to STDOUT, call the server executable using the command-line switch: `--dump-config`. Note that doing so will output the configuration parameters for the configured operating environment only (dev, test, or prod). See the documentation in [example-config.edn](example-config.edn) for more on operating environments. This documentation will also be included at the top of the dumped configuration.
 
 To check a configuration file's validity, call the server executable using the command-line switch: `--check-config`.
 
