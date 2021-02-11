@@ -187,7 +187,7 @@
 (defn- config-questionnaire
   "Interactively accept answers to a series of questions and return the configuration map formed
   by applying the answers received to the default configuration."
-  []
+  [options]
   (letfn [(ask [question & [default]]
             ;; Asks a question, indicating the default that will be assumed if no answer is given,
             ;; and wait for the user to supply the answer
@@ -240,8 +240,8 @@
               (loop [answer (ask-for-site-admins)]
                 (let [site-admins (if (and (not (nil? answer)) (empty? answer))
                                     default
-                                    (when (-> (re-matches #"^\s*[\w\.\_\-]+(\s*,\s*[\w\.\_\-]+)*",
-                                                          answer))
+                                    (when (re-matches #"^\s*[\w\.\_\-]+(\s*,\s*[\w\.\_\-]+)*"
+                                                      answer)
                                       (->> #"\s*,\s*" (string/split answer) (into #{}))))]
                   (if site-admins
                     site-admins
@@ -250,8 +250,9 @@
 
           (get-fallback-docker-disabled? []
             (let [default (-> :docker-config (get-default-config) :disabled?)
-                  enable-docker? #(ask (str "Do you want a fallback configuration to be enabled "
-                                            "for projects that\ndo not define their own? (y/n)")
+                  enable-docker? #(ask (str "Do you want a fallback docker configuration to be "
+                                            "enabled for projects that\ndo not define their own? "
+                                            "(y/n)")
                                        (not default))]
               (loop [answer (enable-docker?)]
                 (let [docker-disabled? (if (and (not (nil? answer)) (empty? answer))
@@ -271,7 +272,7 @@
               (loop [answer (get-image)]
                 (let [docker-image (if (and (not (nil? answer)) (empty? answer))
                                      default
-                                     (when (->> answer (re-matches #"^[\w\/\.\_\-]+$"))
+                                     (when (->> answer (re-matches #"^[\w\:\/\.\_\-]+$"))
                                        answer))]
                   (if-not (nil? docker-image)
                     docker-image
@@ -368,54 +369,95 @@
               (loop [answer (get-image)]
                 (let [docker-image (if (and (not (nil? answer)) (empty? answer))
                                      default
-                                     (when (->> answer (re-matches #"^[\w\.\/\_\-]+$"))
+                                     (when (->> answer (re-matches #"^[\w\:\/\.\_\-]+$"))
                                        answer))]
                   (if-not (nil? docker-image)
                     docker-image
                     (do (println "Please enter a valid image name")
                         (recur (get-image))))))))
 
-          (get-projects []
+          (arg-or-func [arg func]
+            (if-not (nil? arg)
+              arg
+              (func)))
+
+          (get-projects [{:keys [project-github-coords enable-project-docker project-docker-image]}]
             ;; Returns a list of two-place vectors representing key-value pairs in the projects map.
-            (let [one-more-project? #(ask "Configure a new project? (y/n)" false)]
-              (loop [answer (one-more-project?)
-                     project-list '()]
-                (let [new-project? (if (or (not answer) (empty? answer))
-                                     false
-                                     (cond (-> answer (string/lower-case) (= "y")) true
-                                           (-> answer (string/lower-case) (= "n")) false))]
-                  (cond
-                    ;; If a new project is to be configured, ask a series of questions about it:
-                    new-project?
-                    (let [github-coords (get-github-coords)
-                          project-name (-> github-coords (string/replace #"[^\w]" "-"))
-                          docker-disabled? (get-project-docker-disabled? project-name)
-                          docker-image (when-not docker-disabled?
-                                         (get-project-docker-image project-name))]
-                      (->> (vector project-name
-                                   {:github-coordinates github-coords
-                                    :docker-config (-> (hash-map :disabled? docker-disabled?)
-                                                       (merge (when-not docker-disabled?
-                                                                (hash-map :image docker-image))))})
-                           (conj project-list)
-                           (recur (one-more-project?))))
+            (if (or project-github-coords enable-project-docker project-docker-image)
+              ;; If one or more of the parameters specified on the command line is project-related,
+              ;; configure one (and only) one project, asking the user to supply any of the missing
+              ;; project parameters:
+              (let [github-coords (arg-or-func project-github-coords get-github-coords)
+                    project-name (-> github-coords (string/replace #"[^\w]" "-"))
+                    docker-disabled? (arg-or-func (when-not (nil? enable-project-docker)
+                                                    (not enable-project-docker))
+                                                  #(get-project-docker-disabled? project-name))
+                    docker-image (when-not docker-disabled?
+                                   (arg-or-func project-docker-image
+                                                #(get-project-docker-image project-name)))]
+                {project-name {:project-title "PROJECT"
+                               :project-welcome "welcome message"
+                               :project-description "description"
+                               :github-coordinates github-coords
+                               :docker-config {:disabled? docker-disabled?
+                                               :image (if-not docker-disabled?
+                                                        docker-image
+                                                        (-> :docker-config (get-default-config)
+                                                            :image))
+                                               :workspace-dir "/workspace/"
+                                               :temp-dir "/tmp/droid/"
+                                               :default-working-dir "/workspace/"
+                                               :shell-command "sh"
+                                               :env {}}}})
+              ;; Otherwise if no project parameters have been specified, allow the user to configure
+              ;; multiple projects interactively:
+              (let [one-more-project? #(ask "Configure a new project? (y/n)" false)]
+                (loop [answer (one-more-project?)
+                       project-list '()]
+                  (let [new-project? (if (or (not answer) (empty? answer))
+                                       false
+                                       (cond (-> answer (string/lower-case) (= "y")) true
+                                             (-> answer (string/lower-case) (= "n")) false))]
+                    (cond
+                      ;; If a new project is to be configured, ask a series of questions about it:
+                      new-project?
+                      (let [github-coords (get-github-coords)
+                            project-name (-> github-coords (string/replace #"[^\w]" "-"))
+                            docker-disabled? (get-project-docker-disabled? project-name)
+                            docker-image (when-not docker-disabled?
+                                           (get-project-docker-image project-name))]
+                        (->> (vector project-name
+                                     {:github-coordinates github-coords
+                                      :docker-config (-> (hash-map :disabled? docker-disabled?)
+                                                         (merge
+                                                          (when-not docker-disabled?
+                                                            (hash-map :image docker-image))))})
+                             (conj project-list)
+                             (recur (one-more-project?))))
 
-                    (nil? new-project?)
-                    (do (println "Please enter 'y' or 'n'")
-                        (recur (one-more-project?) project-list))
+                      (nil? new-project?)
+                      (do (println "Please enter 'y' or 'n'")
+                          (recur (one-more-project?) project-list))
 
-                    ;; We are done; return the generated project list:
-                    :else
-                    project-list)))))]
+                      ;; We are done; return the generated project list:
+                      :else
+                      project-list))))))]
 
-    (let [server-port (get-server-port)
-          site-admins (get-site-admins)
-          fallback-docker-disabled? (get-fallback-docker-disabled?)
-          fallback-docker-image (when-not fallback-docker-disabled? (get-fallback-docker-image))
-          local-mode? (get-local-mode)
-          github-app-id (when-not local-mode? (get-github-app-id))
-          pem-file (when-not local-mode? (get-pem-file))
-          projects (get-projects)
+    (let [{:keys [port site-admins enable-fallback-docker fallback-docker-image local-mode
+                  github-app-id pem-file project-github-coords enable-project-docker
+                  project-docker-image]} options
+          server-port (arg-or-func port get-server-port)
+          site-admins (arg-or-func site-admins get-site-admins)
+          fallback-docker-disabled? (arg-or-func (not enable-fallback-docker)
+                                                 get-fallback-docker-disabled?)
+          fallback-docker-image (when-not fallback-docker-disabled?
+                                  (arg-or-func fallback-docker-image get-fallback-docker-image))
+          local-mode? (arg-or-func local-mode get-local-mode)
+          github-app-id (when-not local-mode?
+                          (arg-or-func github-app-id get-github-app-id))
+          pem-file (when-not local-mode?
+                     (arg-or-func pem-file get-pem-file))
+          projects (get-projects options)
           default-docker-config (:docker-config default-config)
           default-project-config (-> default-config (:projects) (get "project1"))]
 
@@ -446,27 +488,29 @@
 
 (defn init-config
   "Generate a new customized config.edn file based on user input."
-  []
-  (if (-> "config.edn" (io/file) (.exists))
-    (do
-      (println "A file called config.edn already exists in DROID's root directory. This file\n"
-               "must be either moved or removed before initializing a new configuration.")
-      (System/exit 1)))
-  (let [config-answers (config-questionnaire)]
-    (spit "config.edn" "")
-      ;; First extract all of the comments from the example configuration file and write them to
-      ;; STDOUT. These comments should contain useful documentation on the configuration parameters
-      ;; that will be written to config.edn..
-    (with-open [rdr (io/reader "example-config.edn")]
-      (doseq [line (->> rdr (line-seq) (map string/trim))]
-        (when (->> line (re-matches #"^;;(\s+.*)*$"))
-          (spit "config.edn" (str line "\n") :append true))))
-      ;; Now write the custom configuration map to config.edn:
-    (spit "config.edn" "\n" :append true)
-    (->> (io/writer "config.edn" :append true) (pprint config-answers))
-    (println "New configuration written to config.edn. You should now edit this file in your"
-             "\nfavorite editor to further specify configuration parameters like project"
-             "\ntitles, custom makefile paths, etc.")))
+  ([options]
+   (if (-> "config.edn" (io/file) (.exists))
+     (do
+       (println "A file called config.edn already exists in DROID's root directory. This file"
+                "\nmust be either moved or removed before initializing a new configuration.")
+       (System/exit 1)))
+   (let [config-answers (config-questionnaire options)]
+     (spit "config.edn" "")
+     ;; First extract all of the comments from the example configuration file and write them to
+     ;; STDOUT. These comments should contain useful documentation on the configuration parameters
+     ;; that will be written to config.edn..
+     (with-open [rdr (io/reader "example-config.edn")]
+       (doseq [line (->> rdr (line-seq) (map string/trim))]
+         (when (->> line (re-matches #"^;;(\s+.*)*$"))
+           (spit "config.edn" (str line "\n") :append true))))
+     ;; Now write the custom configuration map to config.edn:
+     (spit "config.edn" "\n" :append true)
+     (->> (io/writer "config.edn" :append true) (pprint config-answers))
+     (println "New configuration written to config.edn. You should now edit this file in your"
+              "\nfavorite editor to further specify configuration parameters like project"
+              "\ntitles, custom makefile paths, etc.")))
+  ([]
+   (init-config {})))
 
 (defn dump-config
   "Dumps the actually configured parameters being used by DROID."

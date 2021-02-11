@@ -5,6 +5,7 @@
             :url "https://opensource.org/licenses/BSD-3-Clause"}
   :dependencies [[org.clojure/clojure "1.10.1"]
                  [org.clojure/java.jdbc "0.7.11"]
+                 [org.clojure/tools.cli "1.0.194"]
                  [clj-jwt "0.1.1"]
                  [compojure "1.6.1"]
                  [decorate "0.1.3"]
