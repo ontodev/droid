@@ -3,7 +3,7 @@
             [org.httpkit.server :refer [run-server]]
             [droid.branches :refer [pause-branch-containers remove-branch-containers]]
             [droid.cli-handler :as cli-handler]
-            [droid.config :refer [get-config dump-config]]
+            [droid.config :refer [get-config]]
             [droid.handler :as handler]
             [droid.log :as log])
   (:gen-class))

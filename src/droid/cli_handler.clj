@@ -1,5 +1,5 @@
 (ns droid.cli-handler
-  (:require [droid.config :refer [init-config dump-config]]
+  (:require [droid.config-helper :refer [init-config dump-config]]
             [clojure.string :as string]
             [clojure.tools.cli :refer [parse-opts]]))
 
@@ -46,7 +46,7 @@
          (add-spaces 38) "configuration. If all of the optional command line\n"
          (add-spaces 38) "parameters: --port, --site-admins,\n"
          (add-spaces 38) "--enable-fallback-docker, --fallback-docker-image,\n"
-         (add-spaces 38) " --local-mode, --github-app-id, --pem-file,\n"
+         (add-spaces 38) "--local-mode, --github-app-id, --pem-file,\n"
          (add-spaces 38) "--project-github-coords, --enable-project-docker, and\n"
          (add-spaces 38) "--project-docker-image are specified, use these values for\n"
          (add-spaces 38) "the new configuration. If any of these are not supplied,\n"
@@ -143,7 +143,8 @@
       ;; We don't need to explicitly call the check-config function here since it is automatically
       ;; called when the config module is loaded at statup.
       (:check-config options)
-      (System/exit 0)
+      (do (println "Configuration OK")
+          (System/exit 0))
 
       (:dump-config options)
       (do (dump-config)

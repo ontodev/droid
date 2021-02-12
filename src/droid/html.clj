@@ -1756,8 +1756,8 @@
                   (let [login (-> request :session :user :login)] (when login (str "by " login))))
         (render-403 request))
 
-      ;; If the decoded-view-path isn't in the sets of allowed file and exec views, and it isn't inside
-      ;; one of the allowed directory views, then render a 404:
+      ;; If the decoded-view-path isn't in the sets of allowed file and exec views, and it isn't
+      ;; inside one of the allowed directory views, then render a 404:
       (and (not-any? #(= decoded-view-path %) allowed-file-views)
            (not-any? #(= decoded-view-path %) allowed-exec-views)
            (not-any? #(-> decoded-view-path (string/starts-with? %)) allowed-dir-views))
