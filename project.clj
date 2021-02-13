@@ -7,6 +7,7 @@
                  [org.clojure/java.jdbc "0.7.11"]
                  [org.clojure/tools.cli "1.0.194"]
                  [clj-jwt "0.1.1"]
+                 [co.deps/ring-etag-middleware "0.2.1"]
                  [compojure "1.6.1"]
                  [decorate "0.1.3"]
                  [environ "1.1.0"]

@@ -1,10 +1,12 @@
 (ns droid.handler
   (:require [cheshire.core :as cheshire]
             [clojure.java.io :as io]
+            [co.deps.ring-etag-middleware :as etag]
             [compojure.core :refer [defroutes GET POST]]
             [compojure.route :as route]
             [org.httpkit.client :as http]
             [ring.middleware.defaults :refer [secure-site-defaults site-defaults wrap-defaults]]
+            [ring.middleware.not-modified :as not-modified]
             [ring.middleware.oauth2 :refer [wrap-oauth2]]
             [ring.middleware.session :refer [wrap-session]]
             [ring.middleware.session.cookie :refer [cookie-store]]
@@ -109,6 +111,8 @@
   "Initialize a web server"
   []
   (-> app-routes
+      (etag/wrap-file-etag)
+      (not-modified/wrap-not-modified)
       wrap-authenticated
       wrap-user
       (wrap-oauth2
