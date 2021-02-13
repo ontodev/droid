@@ -1732,11 +1732,14 @@
                                    (run-cgi script-path request)))
 
         ;; Serves the view from the filesystem:
-        deliver-file-view #(-> (get-make-dir project-name branch-name)
-                               (str "/" decoded-view-path)
-                               (file-response)
-                               ;; Views must not be cached by the client browser:
-                               (assoc :headers {"Cache-Control" "no-store"}))
+        deliver-file-view (fn []
+                            (-> (get-make-dir project-name branch-name)
+                                (str "/" decoded-view-path)
+                                (file-response)
+                                ;; Views must not be cached by the client browser:
+                                (#(assoc % :headers (-> %
+                                                        :headers
+                                                        (merge {"Cache-Control" "no-store"}))))))
 
         ;; Used for checking whether the requested view is in the workspace directory:
         canonical-ws-dir (-> (get-workspace-dir project-name branch-name) (io/file)
