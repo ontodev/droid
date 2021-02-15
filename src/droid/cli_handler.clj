@@ -1,7 +1,9 @@
 (ns droid.cli-handler
-  (:require [droid.config-helper :refer [init-config dump-config]]
-            [clojure.string :as string]
-            [clojure.tools.cli :refer [parse-opts]]))
+  (:require [clojure.string :as string]
+            [clojure.tools.cli :refer [parse-opts]]
+            [droid.config :refer [get-config]]
+            [droid.config-helper :refer [init-config dump-config]]
+            [droid.secrets :refer [secrets]]))
 
 (def usage "Usage: droid [OPTIONS]
   Options:
@@ -127,10 +129,26 @@
           (System/exit 0))
 
       ;; We don't need to explicitly call the check-config function here since it is automatically
-      ;; called when the config module is loaded at statup.
+      ;; called when the config module is loaded at statup. However we do need to check to make sure
+      ;; that all needed secrets have been set.
       (:check-config options)
-      ;; TODO: WE SHOULD NOT EXIT SUCCESSFULLY WHEN PAT, GITHUB APP ID, ETC. ARE MISSING.
-      (do (println "Configuration OK")
+      (do (if (get-config :local-mode)
+            (when-not (:personal-access-token secrets)
+              (binding [*out* *err*]
+                (println "Local mode enabled but environment variable"
+                         "PERSONAL_ACCESS_TOKEN not set.")
+                (System/exit 1)))
+            (do (when-not (:github-client-id secrets)
+                  (binding [*out* *err*]
+                    (println "Local mode disabled but environment variable"
+                             "GITHUB_CLIENT_ID not set.")
+                    (System/exit 1)))
+                (when-not (:github-client-secret secrets)
+                  (binding [*out* *err*]
+                    (println "Local mode disabled but environment variable"
+                             "GITHUB_CLIENT_SECRET not set.")
+                    (System/exit 1)))))
+          (println "Configuration OK")
           (System/exit 0))
 
       (:dump-config options)
