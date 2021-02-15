@@ -181,37 +181,6 @@
                     (do (println answer "is not a comma-separated list of userids")
                         (recur (ask-for-site-admins))))))))
 
-          (get-fallback-docker-disabled? []
-            (let [default (-> :docker-config (get-default-config) :disabled?)
-                  enable-docker? #(ask (str "Do you want a fallback docker configuration to be "
-                                            "enabled for projects that\ndo not define their own? "
-                                            "(y/n)")
-                                       (not default))]
-              (loop [answer (enable-docker?)]
-                (let [docker-disabled? (if (and (not (nil? answer)) (empty? answer))
-                                         default
-                                         (cond (-> answer (string/lower-case) (= "y")) false
-                                               (-> answer (string/lower-case) (= "n")) true))]
-                  (if-not (nil? docker-disabled?)
-                    docker-disabled?
-                    (do (println "Please enter 'y' or 'n'")
-                        (recur (enable-docker?))))))))
-
-          (get-fallback-docker-image []
-            (let [default (-> :docker-config (get-default-config) :image)
-                  get-image #(ask (str "Enter the docker image to use when creating containers for "
-                                       "the fallback docker\nconfiguration.")
-                                  default)]
-              (loop [answer (get-image)]
-                (let [docker-image (if (and (not (nil? answer)) (empty? answer))
-                                     default
-                                     (when (->> answer (re-matches #"^[\w\:\/\.\_\-]+$"))
-                                       answer))]
-                  (if-not (nil? docker-image)
-                    docker-image
-                    (do (println "Please enter a valid image name")
-                        (recur (get-image))))))))
-
           (get-local-mode []
             (let [default (get-default-config :local-mode)
                   use-local-mode? #(ask
@@ -376,15 +345,10 @@
                       :else
                       project-list))))))]
 
-    (let [{:keys [port site-admins enable-fallback-docker fallback-docker-image local-mode
-                  github-app-id pem-file project-github-coords enable-project-docker
-                  project-docker-image]} options
+    (let [{:keys [port site-admins local-mode github-app-id pem-file project-github-coords
+                  enable-project-docker project-docker-image]} options
           server-port (arg-or-func port get-server-port)
           site-admins (arg-or-func site-admins get-site-admins)
-          fallback-docker-disabled? (arg-or-func (not enable-fallback-docker)
-                                                 get-fallback-docker-disabled?)
-          fallback-docker-image (when-not fallback-docker-disabled?
-                                  (arg-or-func fallback-docker-image get-fallback-docker-image))
           local-mode? (arg-or-func local-mode get-local-mode)
           github-app-id (when-not local-mode?
                           (arg-or-func github-app-id get-github-app-id))
@@ -402,10 +366,6 @@
           (merge (when-not local-mode?
                    {:github-app-id github-app-id
                     :pem-file pem-file}))
-          (assoc :docker-config (-> default-docker-config
-                                    (merge {:disabled? fallback-docker-disabled?})
-                                    (merge (when-not fallback-docker-disabled?
-                                             {:image fallback-docker-image}))))
           (assoc :projects
                  (->> projects
                       (seq)

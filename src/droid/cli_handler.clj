@@ -9,8 +9,6 @@
   -d          --dump-config
   -i          --init-config [--port=PORT] \\
                             [--site-admins=userid1,userid2,userid3] \\
-                            [--enable-fallback-docker=(true|false)] \\
-                            [--fallback-docker-image=IMAGE] \\
                             [--local-mode=(true|false)] \\
                             [--github-app-id=APP_ID] \\
                             [--pem-file=FILENAME] \\
@@ -45,7 +43,6 @@
     (str "Initialize a new configuration file based on the default\n"
          (add-spaces 38) "configuration. If all of the optional command line\n"
          (add-spaces 38) "parameters: --port, --site-admins,\n"
-         (add-spaces 38) "--enable-fallback-docker, --fallback-docker-image,\n"
          (add-spaces 38) "--local-mode, --github-app-id, --pem-file,\n"
          (add-spaces 38) "--project-github-coords, --enable-project-docker, and\n"
          (add-spaces 38) "--project-docker-image are specified, use these values for\n"
@@ -64,17 +61,6 @@
          (add-spaces 38) "is also given)")
     :validate [#(re-matches #"^\s*[\w\.\_\-]+(\s*,\s*[\w\.\_\-]+)*" %)
                "Site admins must be specified as a comma-separated list"]]
-
-   [nil "--enable-fallback-docker BOOL"
-    (str "Enable a fallback docker configuration for projects that do\n"
-         (add-spaces 38) "not define their own (ignored unless --init-config is also\n"
-         (add-spaces 38) "given)")
-    :parse-fn parse-bool]
-
-   [nil "--fallback-docker-image IMAGE"
-    (str "The docker image to use in the fallback docker configuration\n"
-         (add-spaces 38) "(ignored unless --init-config is also given)")
-    :validate [#(re-matches #"^[\w\:\/\.\_\-]+$" %) "Invalid image name"]]
 
    [nil "--local-mode BOOL"
     (str "Configure DROID to run in local mode (ignored unless\n"
@@ -143,6 +129,7 @@
       ;; We don't need to explicitly call the check-config function here since it is automatically
       ;; called when the config module is loaded at statup.
       (:check-config options)
+      ;; TODO: WE SHOULD NOT EXIT SUCCESSFULLY WHEN PAT, GITHUB APP ID, ETC. ARE MISSING.
       (do (println "Configuration OK")
           (System/exit 0))
 
