@@ -63,7 +63,7 @@
                  ;; Notes: The docker image to use when creating containers. Individual branches of
                  ;;        a project may override this by including a Dockerfile at the root of
                  ;;        their workspace directory.
-                 :image "debian"
+                 :image "debian:buster"
                  ;;
                  ;; Parameter name :workspace-dir
                  ;; Location: fallback docker configuration block
@@ -216,7 +216,7 @@
                                         ;;        Individual branches of a project may override this
                                         ;;        by including a Dockerfile at the root of their
                                         ;;        workspace directory.
-                                        :image "debian"
+                                        :image "debian:buster"
                                         ;;
                                         ;; Parameter name :workspace-dir
                                         ;; Location: project-specific docker configuration block
@@ -265,7 +265,7 @@
                         :project-description "description"
                         :github-coordinates "github-org/repository-2"
                         :docker-config {:disabled? true
-                                        :image "debian"
+                                        :image "debian:buster"
                                         :workspace-dir "/workspace/"
                                         :temp-dir "/tmp/droid/"
                                         :default-working-dir "/workspace/"

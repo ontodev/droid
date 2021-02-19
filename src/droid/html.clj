@@ -36,9 +36,11 @@
          (not (realized? exit-code)))))
 
 (defn- site-admin?
-  "Returns true if the given user is a site administrator"
+  "Returns true if the given user is a site administrator. This function always returns true when
+  DROID is running in local mode."
   [{{{:keys [login]} :user} :session}]
-  (some #(= login %) (get-config :site-admin-github-ids)))
+  (or (get-config :local-mode)
+      (some #(= login %) (get-config :site-admin-github-ids))))
 
 (defn- read-only?
   "Returns true if the given user has read-only access to the site.

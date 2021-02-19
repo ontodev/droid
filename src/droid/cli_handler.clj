@@ -1,5 +1,6 @@
 (ns droid.cli-handler
-  (:require [clojure.string :as string]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as string]
             [clojure.tools.cli :refer [parse-opts]]
             [droid.config :refer [get-config]]
             [droid.config-helper :refer [init-config dump-config]]
@@ -132,24 +133,32 @@
       ;; called when the config module is loaded at statup. However we do need to check to make sure
       ;; that all needed secrets have been set.
       (:check-config options)
-      (do (if (get-config :local-mode)
-            (when-not (:personal-access-token secrets)
-              (binding [*out* *err*]
-                (println "Local mode enabled but environment variable"
-                         "PERSONAL_ACCESS_TOKEN not set.")
-                (System/exit 1)))
-            (do (when-not (:github-client-id secrets)
-                  (binding [*out* *err*]
-                    (println "Local mode disabled but environment variable"
-                             "GITHUB_CLIENT_ID not set.")
-                    (System/exit 1)))
-                (when-not (:github-client-secret secrets)
-                  (binding [*out* *err*]
-                    (println "Local mode disabled but environment variable"
-                             "GITHUB_CLIENT_SECRET not set.")
-                    (System/exit 1)))))
-          (println "Configuration OK")
-          (System/exit 0))
+      (let [local-mode? (get-config :local-mode)
+            pat-defined? (-> secrets :personal-access-token (boolean))
+            client-id-defined? (-> secrets :github-client-id (boolean))
+            client-secret-defined? (-> secrets :github-client-secret (boolean))
+            pem-exists? (-> :pem-file (get-config) (io/file) (.exists))]
+        (if local-mode?
+          (when-not pat-defined?
+            (binding [*out* *err*]
+              (println "Environment error: Local mode enabled but environment variable"
+                       "PERSONAL_ACCESS_TOKEN not set.")
+              (System/exit 1)))
+          (do (when-not client-id-defined?
+                (binding [*out* *err*]
+                  (println "Environment error: Local mode disabled but environment variable"
+                           "GITHUB_CLIENT_ID not set.")))
+              (when-not client-secret-defined?
+                (binding [*out* *err*]
+                  (println "Environment error: Local mode disabled but environment variable"
+                           "GITHUB_CLIENT_SECRET not set.")))
+              (when-not pem-exists?
+                (binding [*out* *err*]
+                  (println "Environment error: PEM file:" (get-config :pem-file) "does not exist")))
+              (when (or (not client-id-defined?) (not client-secret-defined?) (not pem-exists?))
+                (System/exit 1))))
+        (println "Configuration OK")
+        (System/exit 0))
 
       (:dump-config options)
       (do (dump-config)

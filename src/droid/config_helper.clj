@@ -78,17 +78,18 @@
                   (cond (= allowed-types nil)
                         (notify "Warning: Ignoring unexpected parameter:" config-key)
                         (not-any? #(= param-type %) allowed-types)
-                        (fail "Configuration parameter" config-key "has invalid type:"
-                              param-type "It should be one of" allowed-types)))))
+                        (fail "Configuration error: Configuration parameter" config-key
+                              "has invalid type:" param-type
+                              "(valid types are:" allowed-types ")")))))
             ;; Check whether any configuration parameters are missing:
             (doseq [constraint-key constraint-keys]
               (when (and (is-required? constraint-key constraints config-to-check)
                          (->> constraint-key (get config-to-check) (nil?)))
-                (fail "Missing required configuration parameter:" constraint-key
-                      (let [conditional-clause (-> (constraint-key constraints)
-                                                   :required-when)]
-                        (when conditional-clause
-                          (str " (required when: " conditional-clause ")"))))))))]
+                (fail "Configuration error: Missing required configuration parameter:"
+                      constraint-key (let [conditional-clause (-> (constraint-key constraints)
+                                                                  :required-when)]
+                                       (when conditional-clause
+                                         (str " (required when: " conditional-clause ")"))))))))]
 
     (let [explicit-config (-> (if (-> (io/file "config.edn") (.exists))
                                 "config.edn"
@@ -110,7 +111,8 @@
                 docker-config (get-docker-config project-name project-config)]
             (log/info "Checking configuration for project" project-name "...")
             (when (-> (type project-name) (= String) (not))
-              (fail "Project identifier:" project-name "should be of type String"))
+              (fail "Configuration error: Project identifier:" project-name
+                    "should be of type String"))
             (crosscheck-config-constraints project-config project-constraints)
             ;; Check the project-level docker-config:
             (when docker-config
@@ -190,7 +192,7 @@
                                          "that will be used for authentication. A PAT is "
                                          "associated with a single\nuser, who will own all GitHub "
                                          "actions performed by DROID. Alternately, DROID\ncan run "
-                                         "in normal mode, in which case you will be asked to "
+                                         "in server mode, in which case you will be asked to "
                                          "supply a GitHub App\nID and PEM file to use for "
                                          "authentication to GitHub on behalf of the currently\n"
                                          "logged in user.\nShould DROID run in local mode?")
@@ -347,13 +349,14 @@
 
     (let [{:keys [port site-admins local-mode github-app-id pem-file project-github-coords
                   enable-project-docker project-docker-image]} options
-          server-port (arg-or-func port get-server-port)
-          site-admins (arg-or-func site-admins get-site-admins)
           local-mode? (arg-or-func local-mode get-local-mode)
           github-app-id (when-not local-mode?
                           (arg-or-func github-app-id get-github-app-id))
           pem-file (when-not local-mode?
                      (arg-or-func pem-file get-pem-file))
+          site-admins (when-not local-mode?
+                        (arg-or-func site-admins get-site-admins))
+          server-port (arg-or-func port get-server-port)
           projects (get-projects options)
 
           default-docker-config (-> (get-default-config) :docker-config)
@@ -361,11 +364,11 @@
 
       (-> (get-default-config)
           (merge {:server-port server-port
-                  :site-admin-github-ids site-admins
                   :local-mode local-mode?})
           (merge (when-not local-mode?
                    {:github-app-id github-app-id
-                    :pem-file pem-file}))
+                    :pem-file pem-file
+                    :site-admin-github-ids site-admins}))
           (assoc :projects
                  (->> projects
                       (seq)
