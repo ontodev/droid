@@ -78,7 +78,7 @@ The following installation and configuration instructions have been written for 
 
 ### Configuration
 
-DROID assumes that a file called `config.edn` exists in DROID's root directory. You can find an example in: [example-config.edn](example-config.edn). Before running DROID for the first time, you should create `config.edn`. (If this file does not exist, DROID will still run using the defaults contained in `example-config.edn`, but this is not very useful as that file contains no specific project configuration).
+DROID assumes that a file called `config.edn` exists in DROID's root directory. You can find an example in: [`example-config.edn`](example-config.edn). Before running DROID for the first time, you should create `config.edn`. (If this file does not exist, DROID will still run using the defaults contained in `example-config.edn`, but this is not very useful as that file contains no specific project configuration).
 
 #### Manual configuration
 
@@ -518,7 +518,7 @@ The name of the newly generated `.pem` file should now be added to `config.edn` 
     where `RANDOM_STRING` can be any random string, and `YOUR_CLIENT_ID` and `YOUR_CLIENT_SECRET` are associated with the GitHub App that you will be using for authentication. For instructions on how to create a GitHub App, see the sections above called: [Creating a new GitHub App](#creating-a-new-github-app) and [Generating a private key for your GitHub App](#generating-a-private-key-for-your-github-app).
 
 
-2. As root, copy the `droid.service` file to the `/etc/systemd/system/` directory:
+2. As root, copy the file [`droid.service`](droid.service) to the `/etc/systemd/system/` directory:
 
         sudo cp droid.service /etc/systemd/system/
 
