@@ -78,6 +78,8 @@ The following installation and configuration instructions have been written for 
 
 ### Configuration
 
+If you have not already gone through the section called [Installation](#installation), please go through that first.
+
 DROID assumes that a file called `config.edn` exists in DROID's root directory. You can find an example in: [`example-config.edn`](example-config.edn). Before running DROID for the first time, you should create `config.edn`. (If this file does not exist, DROID will still run using the defaults contained in `example-config.edn`, but this is not very useful as that file contains no specific project configuration).
 
 #### Manual configuration
