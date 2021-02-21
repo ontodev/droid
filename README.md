@@ -62,7 +62,7 @@ The following installation and configuration instructions have been written for 
         
     These can be safely ignored at this time. Section [Configuration](#configuration) contains instructions for configuring DROID.
     
-    Assuming `install.sh` completes successfully, you should see the following (note that instead of `DROID_DIR` you will see the name of the directory that you cloned the DROID source code into in step 1 above.
+    Assuming `install.sh` completes successfully, you should see the following (note that instead of `DROID_DIR` you will see the name of the directory that you cloned the DROID source code into in step 1 above).
     
         Generating DROID wrapper ...
         Done. DROID wrapper generated in DROID_DIR/droid.
@@ -230,6 +230,8 @@ Remember that after editing `~/.bashrc` you should either logout and login again
 
 to load the new environment variable.
 
+If you would like to configure DROID to start automatically when your computer boots, see the section [Setting up DROID as a systemd service](#setting-up-droid-as-a-systemd-service) below.
+
 ### Configuring DROID for server mode
 
 When configured to run in server mode, DROID will allow multiple distinct GitHub users to be logged into the system simultaneously. Note that DROID only allows one process to run per project branch at any one time.
@@ -260,6 +262,8 @@ Remember that after editing `~/.bashrc` you should either logout and login again
     source ~/.bashrc
 
 to load the new environment variables.
+
+If you would like to configure DROID to start automatically when your computer boots, see the section [Setting up DROID as a systemd service](#setting-up-droid-as-a-systemd-service) below.
 
 ### Configuring DROID using the setup wizard non-interactively
 
@@ -489,7 +493,7 @@ The name of the newly generated `.pem` file should now be added to `config.edn` 
 
 ## Setting up DROID as a systemd service
 
-1. Edit the file `droid.service` located in DROID's main directrory and make the following edits:
+1. Edit the file [`droid.service`](droid.service) located in DROID's main directrory and make the following edits:
 
     a. Replace `UNIX_USER` with the username of the system user that will be used to run DROID.
 
