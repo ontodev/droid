@@ -36,7 +36,7 @@ The following installation and configuration instructions have been written for 
     	groups
     	group1 group2 ... docker
         
-3. Running DROID in local mode requires the prior setup of a personal access token. Running DROID in server mode requires the creation and installation of a GitHub App. For more information see the section called [GitHub Authentication](#github-authentication) below.
+3. Running DROID in local mode requires the prior setup of a personal access token. Running DROID in server mode requires the creation and installation of a GitHub App. For more information see the section called [GitHub Authentication](#github-authentication) below. Once you have created your GitHub App and/or personal access token (or have received information concerning these from whoever did create them), continue with the section called [Installation](#installation) below.
 
 ### Installation
 
@@ -423,7 +423,7 @@ To create your own GitHub App to use with DROID, follow the step-by-step instruc
 </tr>
 </table>
 
-2. Click on the button **Generate a new client secret** and take note of the generated string. You will need to set the environment variable `GITHUB_CLIENT_SECRET` with this value (see [Configuration](#configuration).
+2. Click on the button **Generate a new client secret** and take note of the generated string. You will need to set the environment variable `GITHUB_CLIENT_SECRET` with this value (see [Configuration](#configuration)).
 
 <table border="1" style="margin-left: auto; margin-right: auto;">
 <tr>
@@ -443,7 +443,7 @@ To create your own GitHub App to use with DROID, follow the step-by-step instruc
 </tr>
 </table>
 
-4. Save the file in DROID's main directory.
+4. Save the file in DROID's main directory (the directory you cloned DROID into earlier (see the section called [Create the DROID executable](#create-the-droid-executable) above)).
 
 <table border="1" style="margin-left: auto; margin-right: auto;">
 <tr>
@@ -453,7 +453,7 @@ To create your own GitHub App to use with DROID, follow the step-by-step instruc
 </tr>
 </table>
 
-The name of the newly generated `.pem` file should now be added to `config.edn` as the parameter `:pem-file`. This can be done either manually or using the setup wizard (see [Configuration](#configuration).
+The name of the newly generated `.pem` file should now be added to `config.edn` as the parameter `:pem-file`. This can be done either manually or using the setup wizard (see [Configuration](#configuration)).
 
 ### Installing your GitHub App on a project repository
 
