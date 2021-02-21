@@ -1,12 +1,12 @@
 # DROID Reminds us that Ordinary Individuals can be Developers
 
-[![Build Status](https://travis-ci.org/ontodev/droid.svg?branch=master)](https://travis-ci.org/ontodev/droid)
+[![Build Status](https://travis-ci.com/ontodev/droid.svg?branch=master)](https://travis-ci.com/ontodev/droid)
 
 DROID is a web-based interface for working with (1) a build system, managed by (2) a version control system. The current version of DROID is designed to work with (1) [GNU Make](https://www.gnu.org/software/make/manual/) and (2) [GitHub](https://docs.github.com/en). Our goal is to make these systems accessible to a wider community of project contributors, by exposing a curated set of functionality that is customized for each project.
 
 DROID differs from Continuous Testing/Integration solutions such as Jenkins or Travis CI because DROID allows users to modify a working copy of a branch and run tasks on an ad-hoc basis before committing changes, optionally in a [Docker](https://www.docker.com/) container dedicated to the branch. DROID differs from Web/Cloud IDEs because users are limited to a specified set of files and tasks.
 
-DROID can operate in either local or server mode. When DROID is configured to run in local mode, all GitHub authentication will be performed on behalf of a single github user account that is identified via that user's personal access token. When configured to run in server mode, DROID will allow multiple distinct GitHub users to be logged into the system simultaneously, using [GitHub App](https://docs.github.com/en/developers/apps) authentication to authenticate users.
+DROID can operate in either local or server mode. When DROID is configured to run in local mode, all GitHub authentication is performed on behalf of a single GitHub user account that is identified via that user's personal access token. When configured to run in server mode, DROID will allow multiple distinct GitHub users to be logged into the system simultaneously, using [GitHub App](https://docs.github.com/en/developers/apps) authentication to authenticate users.
 
 DROID is designed to work on [UNIX](https://en.wikipedia.org/wiki/Unix) (Linux, macOS, FreeBSD, etc.) systems.
 
@@ -36,7 +36,7 @@ The following installation and configuration instructions have been written for 
     	groups
     	group1 group2 ... docker
         
-3. Local mode requires the prior setup of a personal access token, while server mode requires the installation of a GitHub App. For more information see the section called [GitHub Authentication](#github-authentication) below.
+3. Running DROID in local mode requires the prior setup of a personal access token. Running DROID in server mode requires the creation and installation of a GitHub App. For more information see the section called [GitHub Authentication](#github-authentication) below.
 
 ### Installation
 
@@ -373,14 +373,14 @@ To create a personal access token in GitHub, follow the step-by-step instruction
 To create your own GitHub App to use with DROID, follow the step-by-step instructions on [this page](https://docs.github.com/en/developers/apps/creating-a-github-app), noting the following (see also the screenshots below this list):    
 
 * The **Homepage URL** should be set to `https://github.com/ontodev/droid`
-* The **Callback URL** should be set to `http(s)://<server-address:server-port>/oauth2/github/callback`.
+* The **Callback URL** should be set to `<protocol>://<server-address:server-port>/oauth2/github/callback` where `<protocol>` is either `http` or `https`.
 * **Expire user authorization tokens** should be unchecked.
-* Webhooks should be disabled.
-* Make sure that the DROID App has, at a minimum, the following permissions:
+* **Webhooks** should be disabled.
+* Make sure that the DROID App has, at a minimum, the **following permissions:**
   - Contents: read & write
   - Metadata: read only
   - Pull requests: read & write
-* You can allow the GitHub App to be installed only on your own account (i.e., allow it to access only repositories that are owned by you), or you can allow it to be installed on any account. If you want to use DROID to work on project repositories that are owned by other users and/or organisations, you need to allow the GitHub App to be installed on any account.
+* You can allow the GitHub App to be installed only on your own account (i.e., allow it to access only repositories that are owned by you), or you can allow it to be installed on any account. **If you want to use DROID to work on project repositories that are owned by other users and/or organisations, you need to allow the GitHub App to be installed on any account**.
 
 <table border="1" style="margin-left: auto; margin-right: auto;">
     <tr>
@@ -411,7 +411,7 @@ To create your own GitHub App to use with DROID, follow the step-by-step instruc
 
 ### Generating a private key for your GitHub App
 
-1. After creating your GitHub App, take note of the **App ID** and **Client ID**. The **Client ID** will  be used to define the value of the environment variable `GITHUB_CLIENT_ID` (see [Configuring DROID for server mode](#configuring-droid-for-server-mode)). The value of **App ID** should be placed inside `config.edn` as the parameter `:github-app-id`. This can be done either manually or using the setup wizard (see [Configuring DROID using the setup wizard](#configuring-droid-using-the-setup-wizard)).
+1. After creating your GitHub App, take note of the **App ID** and **Client ID**. The **Client ID** will  be used to define the value of the environment variable `GITHUB_CLIENT_ID` (see [Configuration](#configuration)). The value of **App ID** should be placed inside `config.edn` as the parameter `:github-app-id`. This can be done either manually or using the setup wizard (see [Configuration](#configuration)).
 
 <table border="1" style="margin-left: auto; margin-right: auto;">
 <tr>
@@ -421,7 +421,7 @@ To create your own GitHub App to use with DROID, follow the step-by-step instruc
 </tr>
 </table>
 
-2. Click on the button **Generate a new client secret** and take note of the generated string. You will need to set the environment variable `GITHUB_CLIENT_SECRET` with this value (see [Configuring DROID for server mode](#configuring-droid-for-server-mode).
+2. Click on the button **Generate a new client secret** and take note of the generated string. You will need to set the environment variable `GITHUB_CLIENT_SECRET` with this value (see [Configuration](#configuration).
 
 <table border="1" style="margin-left: auto; margin-right: auto;">
 <tr>
@@ -451,7 +451,7 @@ To create your own GitHub App to use with DROID, follow the step-by-step instruc
 </tr>
 </table>
 
-The name of the newly generated `.pem` file should now be added to `config.edn` as the parameter `:pem-file`. This can be done either manually or using the setup wizard (see [Configuring DROID using the setup wizard](#configuring-droid-using-the-setup-wizard).
+The name of the newly generated `.pem` file should now be added to `config.edn` as the parameter `:pem-file`. This can be done either manually or using the setup wizard (see [Configuration](#configuration).
 
 ### Installing your GitHub App on a project repository
 
