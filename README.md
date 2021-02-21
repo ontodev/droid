@@ -552,4 +552,4 @@ The name of the newly generated `.pem` file should now be added to `config.edn` 
 
 5. DROID's log can be configured to be written to a particular file using the directive `:log-file` in `config.edn`. If this is not set, DROID will output log statements to STDERR. In the latter case, you may monitor them using the `journalctl` command as follows:
 
-        journalctl -f -u droid.service
+        sudo journalctl -f -u droid.service
