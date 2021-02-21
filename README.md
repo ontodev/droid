@@ -196,17 +196,17 @@ In this case we see that DROID is complaining that the environment variables `GI
     
 Running `droid --check-config` may also result in **Configuration errors**, which are errors in `config.edn` itself. For example, open `config.edn` in your favourite editor and change the following line:
 
-        :push-with-installation-token false
+    :push-with-installation-token false
 
 to:
 
-		:push-with-installation-token "false"
+    :push-with-installation-token "false"
 
 If we now validate the config file we will see the following configuration error:
 
-        droid --check-config
-        2021-02-16 11:18:52.548-0500 - INFO Checking root-level configuration ...
-        Configuration error: Configuration parameter :push-with-installation-token has invalid type: class java.lang.String (valid types are: [java.lang.Boolean] )
+    droid --check-config
+    2021-02-16 11:18:52.548-0500 - INFO Checking root-level configuration ...
+    Configuration error: Configuration parameter :push-with-installation-token has invalid type: class java.lang.String (valid types are: [java.lang.Boolean] )
 
 This error indicates that the configuration parameter `:push-with-installation-token` has been supplied a value of the wrong type. In this case we need to remove the quotation marks around `false`.
     
@@ -487,4 +487,63 @@ The name of the newly generated `.pem` file should now be added to `config.edn` 
 
 ## Setting up DROID as a systemd service
 
-TODO: to be added.
+1. Edit the file `droid.service` located in DROID's main directrory and make the following edits:
+
+    a. Replace `UNIX_USER` with the username of the system user that will be used to run DROID.
+
+    b. Replace `DROID_DIR` with the directory you cloned DROID into earlier (see the section called [Create the DROID executable](#create-the-droid-executable) above).
+
+    c. If DROID has been configured to run in local mode, replace the line:
+
+        	Environment="PERSONAL_ACCESS_TOKEN="
+
+    		with:
+
+        	Environment="PERSONAL_ACCESS_TOKEN=YOUR_TOKEN"
+
+    where `YOUR_TOKEN` is the actual value of your personal access token. To create a personal access token, see the section called [Creating a personal access token](#creating-a-personal-access-token).
+
+    d. If DROID has been configured to run in server mode, replace the lines:
+
+			Environment="GITHUB_APP_STATE="
+			Environment="GITHUB_CLIENT_ID="
+			Environment="GITHUB_CLIENT_SECRET="
+            
+            with:
+
+			Environment="GITHUB_APP_STATE=RANDOM_STRING"
+			Environment="GITHUB_CLIENT_ID=YOUR_CLIENT_ID"
+			Environment="GITHUB_CLIENT_SECRET=YOUR_CLIENT_SECRET"
+
+    where `RANDOM_STRING` can be any random string, and `YOUR_CLIENT_ID` and `YOUR_CLIENT_SECRET` are associated with the GitHub App that you will be using for authentication. For instructions on how to create a GitHub App, see the sections above called: [Creating a new GitHub App](#creating-a-new-github-app) and [Generating a private key for your GitHub App](#generating-a-private-key-for-your-github-app).
+
+
+2. As root, copy the `droid.service` file to the `/etc/systemd/system/` directory:
+
+        sudo cp droid.service /etc/systemd/system/
+
+3. Start the service:
+
+        sudo systemctl start droid
+
+4. Verify that the DROID service has started correctly:
+
+		systemctl status droid
+		● droid.service - DROID Reminds us that Ordinary Individuals can be Developers
+		   Loaded: loaded (/etc/systemd/system/droid.service; disabled; vendor preset: enabled)
+		   Active: active (running) since Sun 2021-02-21 12:43:44 EST; 2min 23s ago
+		 Main PID: 1336 (java)
+		    Tasks: 13 (limit: 1149)
+		   Memory: 155.8M
+		   CGroup: /system.slice/droid.service
+           └─1336 java -jar /home/mike/DROID/target/uberjar/droid-0.1.0-SNAPSHOT-standalone.jar
+           
+    If DROID has started successfully it should say **active (running)**.
+
+4. Enable the service so that it will start automatically when your system boots:
+
+        sudo systemctl enable droid
+
+5. DROID's log can be configured to be written to a particular file using the directive `:log-file` in `config.edn`. If this is not set, DROID will output log statements to STDERR. In the latter case, you may monitor them using the `journalctl` command as follows:
+
+        journalctl -f -u droid.service

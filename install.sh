@@ -15,7 +15,7 @@ echo "\
 #!/usr/bin/env sh
 
 cd $DROID_DIR
-java -jar $JARFILE \$*" > $DROID_DIR/droid
+exec java -jar $JARFILE \$*" > $DROID_DIR/droid
 chmod u+x $DROID_DIR/droid
 
 rm -f $TMPFILE
