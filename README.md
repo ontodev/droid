@@ -1,7 +1,5 @@
 # DROID Reminds us that Ordinary Individuals can be Developers
 
-[![Build Status](https://travis-ci.com/ontodev/droid.svg?branch=master)](https://travis-ci.com/ontodev/droid)
-
 DROID is a web-based interface for working with (1) a build system, managed by (2) a version control system. The current version of DROID is designed to work with (1) [GNU Make](https://www.gnu.org/software/make/manual/) and (2) [GitHub](https://docs.github.com/en). Our goal is to make these systems accessible to a wider community of project contributors, by exposing a curated set of functionality that is customized for each project.
 
 DROID differs from Continuous Testing/Integration solutions such as Jenkins or Travis CI because DROID allows users to modify a working copy of a branch and run tasks on an ad-hoc basis before committing changes, optionally in a [Docker](https://www.docker.com/) container dedicated to the branch. DROID differs from Web/Cloud IDEs because users are limited to a specified set of files and tasks.
