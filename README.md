@@ -141,7 +141,13 @@ Then edit the newly created `config.edn` file as necessary. The file includes ex
         [Default: 8090]
         > 8090
 
-5. Next, we can configure individual projects. Begin by supplying the GitHub coordinates, i.e., the part that comes after `github.com` in the URL of the GitHub repository for the project.
+5. Next we are asked whether DROID should use the HTTP (insecure) or HTTPS (secure) protocol:
+
+        Use HTTPS? (y/n)
+        [Default: Y]
+        > 
+
+6. Next, we can configure individual projects. Begin by supplying the GitHub coordinates, i.e., the part that comes after `github.com` in the URL of the GitHub repository for the project.
 
         Configure a new project? (y/n)
         [Default: N]
@@ -156,7 +162,7 @@ Then edit the newly created `config.edn` file as necessary. The file includes ex
 
     This initiates a configuration block with (in the example above) the keyword `lmcmicu-my-project` ('/' replaced by '-') that will be included in `config.edn`.
 
-6. The next set of questions relate to the use of Docker in the specified project. DROID can be configured to run processes in [Docker](https://www.docker.com/) containers, where each container is dedicated to running processes in a particular Git branch of the project. If you want to enable docker for the project currently being configured, answer `Y` and select the desired [docker image](https://hub.docker.com/) to use when creating the project's containers, otherwise answer `N`. Note that in addition to configuring a default image for the project, it is also possible for individual branches in a project to use their own customized docker image. See the section below entitled [Using branch-specific docker images](#using-branch-specific-docker-images).
+7. The next set of questions relate to the use of Docker in the specified project. DROID can be configured to run processes in [Docker](https://www.docker.com/) containers, where each container is dedicated to running processes in a particular Git branch of the project. If you want to enable docker for the project currently being configured, answer `Y` and select the desired [docker image](https://hub.docker.com/) to use when creating the project's containers, otherwise answer `N`. Note that in addition to configuring a default image for the project, it is also possible for individual branches in a project to use their own customized docker image. See the section below entitled [Using branch-specific docker images](#using-branch-specific-docker-images).
 
         Do you want to enable docker for: lmcmicu-my-project? (y/n)
         [Default: N]
@@ -166,7 +172,7 @@ Then edit the newly created `config.edn` file as necessary. The file includes ex
         [Default: debian:buster]
         > obolibrary/odkfull
 
-7. If you want to configure another project, answer `Y` to the next question and repeat steps 4&ndash;6, otherwise answer `N`.
+8. If you want to configure another project, answer `Y` to the next question and repeat steps 6&ndash;7, otherwise answer `N`.
 
         Configure a new project? (y/n)
         [Default: N]
@@ -175,7 +181,7 @@ Then edit the newly created `config.edn` file as necessary. The file includes ex
         favorite editor to further specify configuration parameters like project 
         titles, custom makefile paths, etc.
 
-You now have the minimal configuration required to work with whatever projects you happen to have configured in steps 4&ndash;6. You will probably want to manually edit `config.edn` for further tweaks, however. At a minimum you will likely want to change `:project-title` and `:project-description` for the projects you configured in steps 4&ndash;6. The generated `config.edn` file includes documentation for all of the available configuration parameters, including these ones.
+You now have the minimal configuration required to work with whatever projects you happen to have configured in steps 6&ndash;7. You will probably want to manually edit `config.edn` for further tweaks, however. At a minimum you will likely want to change `:project-title` and `:project-description` for the projects you configured in steps 6&ndash;7. The generated `config.edn` file includes documentation for all of the available configuration parameters, including these ones.
 
 ### Validating your configuration
 

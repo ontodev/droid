@@ -166,6 +166,19 @@
                   (or server-port
                       (recur (ask-for-server-port)))))))
 
+          (get-insecure-site []
+            (let [default (get-default-config :insecure-site)
+                  use-secure-site? #(ask "Use HTTPS? (y/n)" (not default))]
+              (loop [answer (use-secure-site?)]
+                (let [insecure-site? (if (and (not (nil? answer)) (empty? answer))
+                                       default
+                                       (cond (-> answer (string/lower-case) (= "y")) false
+                                             (-> answer (string/lower-case) (= "n")) true))]
+                  (if-not (nil? insecure-site?)
+                    insecure-site?
+                    (do (println "Please enter 'y' or 'n'")
+                        (recur (use-secure-site?))))))))
+
           (get-site-admins []
             (let [default (get-default-config :site-admin-github-ids)
                   ask-for-site-admins #(ask (str "Enter a comma-separated list of GitHub userids "
@@ -348,7 +361,7 @@
                       project-list))))))]
 
     (let [{:keys [port site-admins local-mode github-app-id pem-file project-github-coords
-                  enable-project-docker project-docker-image]} options
+                  enable-project-docker project-docker-image insecure-site]} options
           local-mode? (arg-or-func local-mode get-local-mode)
           github-app-id (when-not local-mode?
                           (arg-or-func github-app-id get-github-app-id))
@@ -356,6 +369,7 @@
                      (arg-or-func pem-file get-pem-file))
           site-admins (when-not local-mode?
                         (arg-or-func site-admins get-site-admins))
+          insecure-site? (arg-or-func insecure-site get-insecure-site)
           server-port (arg-or-func port get-server-port)
           projects (get-projects options)
 
@@ -364,6 +378,7 @@
 
       (-> (get-default-config)
           (merge {:server-port server-port
+                  :insecure-site insecure-site?
                   :local-mode local-mode?})
           (merge (when-not local-mode?
                    {:github-app-id github-app-id

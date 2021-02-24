@@ -45,7 +45,7 @@
    ["-i" "--init-config"
     (str "Initialize a new configuration file based on the default\n"
          (add-spaces 38) "configuration. If all of the optional command line\n"
-         (add-spaces 38) "parameters: --port, --site-admins,\n"
+         (add-spaces 38) "parameters: --port, --insecure-site, --site-admins,\n"
          (add-spaces 38) "--local-mode, --github-app-id, --pem-file,\n"
          (add-spaces 38) "--project-github-coords, --enable-project-docker, and\n"
          (add-spaces 38) "--project-docker-image are specified, use these values for\n"
@@ -57,6 +57,11 @@
          (add-spaces 38) "--init-config is also given.)")
     :parse-fn #(Integer/parseInt %)
     :validate [#(< 0 % 0x10000) "Port must be a number between 0 and 65536"]]
+
+   [nil "--insecure-site BOOL"
+    (str "Use HTTP instead of HTTPS. (Ignored unless --init-config\n"
+         (add-spaces 38) "is also given.)")
+    :parse-fn parse-bool]
 
    [nil "--site-admins USERIDS"
     (str "A comma-separated list of GitHub userids who should be\n"
