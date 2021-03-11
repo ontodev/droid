@@ -243,10 +243,12 @@
              ;; appropriate, into one of the general-actions, git-actions, file-views, dir-views,
              ;; or exec-views lists.
              (map (fn [[tag {href :href} text]]
-                    (when (nil? (->> href
-                                     (java.net.URI.)
-                                     (bean)
-                                     :authority))
+                    (when (nil? (try (->> href
+                                          (java.net.URI.)
+                                          (bean)
+                                          :authority)
+                                     ;; Ignore URI parsing exceptions:
+                                     (catch java.net.URISyntaxException e)))
                       (merge
                        {:targets #{href}}
                        (cond
