@@ -108,23 +108,26 @@
                   (cond
                     ;; Make targets:
                     (string/starts-with? target "make ")
-                    (let [target (-> target (string/split #"\s+" 2) (last))]
+                    (let [target (-> target (string/split #"\s+") (second))]
                       [:a {:href target} target])
                     ;; Supported git actions:
                     (string/starts-with? target "git ")
-                    (let [git-cmd-parts (-> target (string/split #"\s+" 2))]
+                    (let [git-cmd-parts (-> target (string/split #"\s+") (#(take 2 %)))]
                       [:a {:href (string/join "-" git-cmd-parts)} (last git-cmd-parts)])
                     ;; Views:
                     :else
                     (let [text (-> target
-                                   ;; Replace leading './', '../' and trailing '/':
-                                   (string/replace #"^\.\/" "")
+                                   ;; Executable views should only show the basename of the script
+                                   ;; (without the extension):
+                                   (string/replace #"^\.\/(\.\.\/)*([\w\-_]+\/)*([\w\-_]+)(\.\w+)"
+                                                   "$3")
+                                   ;; Replace '../' and trailing '/' in file and directory views:
                                    (string/replace #"\/$" "")
                                    (string/replace #"^(\.\.\/)+" ""))]
                       (cond
                         ;; Executable views:
                         (string/starts-with? target "./")
-                        (let [href-base (-> target (string/split #"\s+") (first))
+                        (let [href-base (-> target (string/trim) (string/split #"\s+") (first))
                               options (let [options (-> text (string/split #"\s+" 2))]
                                         (when (> (count options) 1)
                                           (->> options (last) (#(string/split % #"(=|\s*\-\-)"))
@@ -137,13 +140,16 @@
                                                          (codec/url-encode)
                                                          (str "=" (-> % (val) (codec/url-encode)))))
                                                (string/join "&")))]
-                          [:a {:href (str href-base "?" query-str)} text])
-                        ;; Directory views (display only the basename)::
+                          [:a {:href (->> href-base (#(if-not query-str % (str % "?" query-str))))}
+                           text])
+                        ;; Directory views (display only the basename; whitespace not supported).
                         (string/ends-with? target "/")
-                        [:a {:href target} (-> text (io/file) (.getName))]
-                        ;; File views (display only the basename)::
+                        [:a {:href (string/replace target #"\s+.+$" "")}
+                         (-> text (string/replace #"\s+.+$" "") (io/file) (.getName))]
+                        ;; File views (display only the basename; whitespace not supported).
                         :else
-                        [:a {:href target} (-> text (io/file) (.getName))])))
+                        [:a {:href (string/replace target #"\s+.+$" "")}
+                         (-> text (string/replace #"\s+.+$" "") (io/file) (.getName))])))
                   (catch Exception e
                     (log/error "Exception while parsing target" (str target ":") e)
                     [:a {:href ""} [:span {:class "text-danger font-weight-bold"}
