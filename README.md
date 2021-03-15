@@ -23,15 +23,15 @@ The following installation and configuration instructions have been written for 
 
     On Debian Buster you can install these packages using `apt-get` in the following way:
 
-    	sudo apt-get update && sudo apt-get -y install git leiningen openjdk-11-jdk docker.io aha
+    	$ sudo apt-get update && sudo apt-get -y install git leiningen openjdk-11-jdk docker.io aha
 
 2. For `docker` to work properly, you must make sure to add the user who will be running DROID to the `docker` group:
 
-        sudo usermod -aG docker $USER
+        $ sudo usermod -aG docker $USER
         
     After adding yourself to the `docker` group, you must logout and then log back in for that change to take effect. Verify that the user is a member of the `docker` group by running the `groups` command. Make sure that the `docker` group appears in the list of groups to which the user belongs:
 
-    	groups
+    	$ groups
     	group1 group2 ... docker
         
 3. Running DROID in local mode requires the prior setup of a personal access token. Running DROID in server mode requires the creation and installation of a GitHub App. For more information see the section called [GitHub Authentication](#github-authentication) below. Once you have created your GitHub App and/or personal access token (or have received information concerning these from whoever did create them), continue with the section called [Installation](#installation) below.
@@ -42,15 +42,15 @@ The following installation and configuration instructions have been written for 
 
 1. Clone DROID's GitHub repository into a directory of your choice (e.g., `~/DROID`).
 
-        git clone https://github.com/ontodev/droid.git ~/DROID
+        $ git clone https://github.com/ontodev/droid.git ~/DROID
 
 2. Change to the newly created directory:
 
-        cd ~/DROID
+        $ cd ~/DROID
 
 3. Run the `install.sh` script:
 
-        ./install.sh
+        $ ./install.sh
 
     You will see warnings and errors like:
     
@@ -68,7 +68,7 @@ The following installation and configuration instructions have been written for 
         
 4. Now set your path variable as follows (replacing `DROID_DIR` with the directory you cloned DROID into in step 1):
 
-        export PATH=$PATH:DROID_DIR
+        $ export PATH=$PATH:DROID_DIR
 
     You should add this line to your `.bashrc` or `.profile` file to make sure that DROID's path is included whenever you login.
     
@@ -84,8 +84,8 @@ DROID assumes that a file called `config.edn` exists in DROID's root directory. 
 
 DROID provides an optional setup wizard to guide you through setting up a `config.edn` file. This is discussed in the section called [Configuring DROID using the setup wizard](#configuring-droid-using-the-setup-wizard). If you are already familiar with DROID's configuration options, however, then you can use the following method instead. First, in DROID's main directory, copy the example configuration file to a file named `config.edn`:
 
-    	cd DROID_DIR/
-    	cp example-config.edn config.edn
+    	$ cd DROID_DIR/
+    	$ cp example-config.edn config.edn
 
 Then edit the newly created `config.edn` file as necessary. The file includes extensive documentation which should make specific configuration changes easier.
 
@@ -93,7 +93,7 @@ Then edit the newly created `config.edn` file as necessary. The file includes ex
 
 1. To initialize a new `config.edn` using DROID's optional setup wizard, run `droid` with the command-line switch: `--init-config` and answer the questions that follow. You can also use the setup wizard non-interactively (see the section called [Configuring DROID using the setup wizard non-interactively](#configuring-droid-using-the-setup-wizard-non-interactively) below). The following is an example of a typical (interactive) run of the setup wizard:
 
-        droid --init-config
+        $ droid --init-config
         WARNING - config.edn not found. Using example-config.edn. 
         2021-02-14 11:14:37.486-0500 - ERROR :github-client-id must be set for non-local-mode
         2021-02-14 11:14:37.493-0500 - ERROR :github-client-secret must be set for non-local-mode
@@ -187,7 +187,7 @@ You now have the minimal configuration required to work with whatever projects y
 
 Whenever you make manual changes to `config.edn`, you should then run `droid` with the `--check-config` option:
 
-        droid --check-config
+        $ droid --check-config
         2021-02-16 11:07:03.424-0500 - ERROR :github-client-id must be set for non-local-mode
         2021-02-16 11:07:03.427-0500 - ERROR :github-client-secret must be set for non-local-mode
         2021-02-16 11:07:03.876-0500 - INFO Checking root-level configuration ...
@@ -210,7 +210,7 @@ to:
 
 If we now validate the config file we will see the following configuration error:
 
-    droid --check-config
+    $ droid --check-config
     2021-02-16 11:18:52.548-0500 - INFO Checking root-level configuration ...
     Configuration error: Configuration parameter :push-with-installation-token has invalid type: class java.lang.String (valid types are: [java.lang.Boolean] )
 
@@ -218,7 +218,7 @@ This error indicates that the configuration parameter `:push-with-installation-t
     
 In some cases DROID may not even be able to read the configuration file as a result of a syntax error. In this case you will see an error like:
     
-        ERROR reading config.edn: <error message>
+    ERROR reading config.edn: <error message>
 
 ### Configuring DROID for local mode using a personal access token
 
@@ -226,11 +226,11 @@ When DROID is configured to run in local mode, all GitHub authentication will be
 
 Once you have created a personal access token, you will need to set the environment variable `PERSONAL_ACCESS_TOKEN` with the value of your newly created token whenever running DROID. The easiest way to do this is to place a line like the following in your `~/.bashrc` file (or in some other "secrets" file that is read either at login or right before running DROID):
 
-    export PERSONAL_ACCESS_TOKEN=your_token
+    $ export PERSONAL_ACCESS_TOKEN=your_token
 
 Remember that after editing `~/.bashrc` you should either logout and login again or run
 
-    source ~/.bashrc
+    $ source ~/.bashrc
 
 to load the new environment variable.
 
@@ -257,13 +257,13 @@ where:
 
 Now that you know your GitHub client ID and secret, have generated your private key file, and indicated its location in `config.edn` (either by using the setup wizard or manually), you will need to set the environment variables: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `GITUB_APP_STATE` before running DROID. The easiest way to do this is to place lines like the following in your `~/.bashrc` file (or in some other "secrets" file that is read either at login or right before running DROID):
 
-    export GITHUB_CLIENT_ID=your_github_client_id
-    export GITHUB_CLIENT_SECRET=your_github_client_secret
-    export GITHUB_APP_STATE=random_string
+    $ export GITHUB_CLIENT_ID=your_github_client_id
+    $ export GITHUB_CLIENT_SECRET=your_github_client_secret
+    $ export GITHUB_APP_STATE=random_string
 
 Remember that after editing `~/.bashrc` you should either logout and login again or run
 
-    source ~/.bashrc
+    $ source ~/.bashrc
 
 to load the new environment variables.
 
@@ -275,11 +275,11 @@ When running DROID with the `--init-config` option, some or all of the following
 
 In the case where some parameter, `param2`, is inapplicable given the presence of some other parameter, `param1`, DROID ignores the value of `param2`. For instance, in the following example, the value of `--project-docker-image` will be ignored because `--enable-project-docker` has been set to false:
 
-    droid --init-config --enable-project-docker=false --project-docker-image=myimage
+    $ droid --init-config --enable-project-docker=false --project-docker-image=myimage
 
 If one or more of the available further options to `--init-config` has not been specified, and it is not inapplicable given the other specified options, DROID will interactively ask the user to supply the value of that parameter. In the following example, for instance, because `--port` and `--local-mode` have been specified on the command-line, these questions do not need to be asked, but DROID will still give the user the opportunity to define one or more project configuration(s):
 
-    droid --init-config --port=8090 --local-mode=true
+    $ droid --init-config --port=8090 --local-mode=true
     WARNING - config.edn not found. Using example-config.edn. 
     2021-02-19 10:57:29.927-0500 - INFO Checking root-level configuration ...
     2021-02-19 10:57:29.929-0500 - INFO Checking root-level docker configuration ...
@@ -312,7 +312,7 @@ If one or more of the available further options to `--init-config` has not been 
 
 Note that, **only one** project configuration may be specified non-interactively (as opposed to indefinitely many when running `--init-config` interactively):
 
-    droid --init-config --port=8090 --local-mode=true --project-github-coords=myorg/myrepo --enable-project-docker=false
+    $ droid --init-config --port=8090 --local-mode=true --project-github-coords=myorg/myrepo --enable-project-docker=false
     WARNING - config.edn not found. Using example-config.edn. 
     2021-02-19 11:03:57.363-0500 - INFO Checking root-level configuration ...
     2021-02-19 11:03:57.372-0500 - INFO Checking root-level docker configuration ...
@@ -328,7 +328,7 @@ Note that, **only one** project configuration may be specified non-interactively
 
 To dump the currently configured parameters to STDOUT, call the server executable using the command-line switch: `--dump-config`. If you want to save the dumped configuration to a file, redirect the output as in the following example:
 
-    	droid --dump-config > config-2021-02-16.edn
+    	$ droid --dump-config > config-2021-02-16.edn
 
 ## The `projects/` directory
 
@@ -530,15 +530,15 @@ The name of the newly generated `.pem` file should now be added to `config.edn` 
 
 2. As root, copy the file [`droid.service`](droid.service) to the `/etc/systemd/system/` directory:
 
-        sudo cp droid.service /etc/systemd/system/
+        $ sudo cp droid.service /etc/systemd/system/
 
 3. Start the service:
 
-        sudo systemctl start droid
+        $ sudo systemctl start droid
 
 4. Verify that the DROID service has started correctly:
 
-		systemctl status droid
+		$ systemctl status droid
 		● droid.service - DROID Reminds us that Ordinary Individuals can be Developers
 		   Loaded: loaded (/etc/systemd/system/droid.service; disabled; vendor preset: enabled)
 		   Active: active (running) since Sun 2021-02-21 12:43:44 EST; 2min 23s ago
@@ -552,8 +552,8 @@ The name of the newly generated `.pem` file should now be added to `config.edn` 
 
 4. Enable the service so that it will start automatically when your system boots:
 
-        sudo systemctl enable droid
+        $ sudo systemctl enable droid
 
 5. DROID's log can be configured to be written to a particular file using the directive `:log-file` in `config.edn`. If this is not set, DROID will output log statements to STDERR. In the latter case, you may monitor them using the `journalctl` command as follows:
 
-        sudo journalctl -f -u droid.service
+        $ sudo journalctl -f -u droid.service
