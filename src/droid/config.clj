@@ -42,13 +42,13 @@
                       :projects
                       (seq)
                       (map (fn [map-entry]
-                             (hash-map (first map-entry)
-                                       (-> (second map-entry)
-                                           (assoc :docker-config
-                                                  (->> (second map-entry)
-                                                       :docker-config
-                                                       (merge default-docker-config)))
-                                           (#(merge default-project-config %))))))
+                             (array-map (first map-entry)
+                                        (-> (second map-entry)
+                                            (assoc :docker-config
+                                                   (->> (second map-entry)
+                                                        :docker-config
+                                                        (merge default-docker-config)))
+                                            (#(merge default-project-config %))))))
                       (apply merge)))))))
 
 (defn get-config
