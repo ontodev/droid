@@ -7,11 +7,14 @@
   "Given a keword representing the log-level, check to see whether the application configuration
   requires it to be screened out."
   [log-level]
-  (let [config-level (->> :log-level
-                          (get-config)
-                          (get log-levels))
-        given-level (log-level log-levels)]
-    (< given-level config-level)))
+  (try
+    (let [config-level (->> :log-level
+                            (get-config)
+                            (get log-levels))
+          given-level (log-level log-levels)]
+      (< given-level config-level))
+    (catch Exception e
+      false)))
 
 (defn- log
   "Log the message represented by the given words preceeded by the date and time. If a log file is
@@ -24,9 +27,15 @@
                      (clojure.string/join " ")
                      (str first-word " "))]
     (if (get-config :log-file)
-      (spit (get-config :log-file)
-            (str now "-" message "\n")
-            :append true)
+      (try
+        (spit (get-config :log-file)
+              (str now "-" message "\n")
+              :append true)
+        (catch Exception e
+          (binding [*out* *err*]
+            (println now "-" "ERROR Unable to write to log file:" (get-config :log-file)
+                     "- writing log to STDOUT instead")
+            (println now "-" message))))
       (binding [*out* *err*]
         (println now "-" message)))))
 
