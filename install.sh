@@ -8,6 +8,12 @@ trap '/bin/rm -f $TMPFILE; exit 1' 1 2 15
 lein uberjar | tee $TMPFILE
 JARFILE=$(grep -x "Created.*droid-.*standalone.jar" $TMPFILE | awk '{print $2}')
 
+if [ "$JARFILE" = "" ]
+then
+    echo "Could not determine location of jar file."
+    exit 1
+fi
+
 echo "Jar file created in '$JARFILE'."
 
 echo
