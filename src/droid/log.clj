@@ -14,7 +14,9 @@
           given-level (log-level log-levels)]
       (< given-level config-level))
     (catch Exception e
-      false)))
+      (binding [*out* *err*]
+        (println "FATAL cannot determine logging level from config.edn")
+        (System/exit 1)))))
 
 (defn- log
   "Log the message represented by the given words preceeded by the date and time. If a log file is
