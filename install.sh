@@ -6,7 +6,9 @@ TMPFILE=/tmp/droid-install-log.$$
 trap '/bin/rm -f $TMPFILE; exit 1' 1 2 15
 
 lein uberjar | tee $TMPFILE
-JARFILE=$(grep -P "^Created.*droid-.*standalone.jar$" $TMPFILE | awk '{print $2}')
+JARFILE=$(grep -x "Created.*droid-.*standalone.jar" $TMPFILE | awk '{print $2}')
+
+echo "Jar file created in '$JARFILE'."
 
 echo
 echo "Generating DROID wrapper ..."
