@@ -6,6 +6,5 @@
   "The default error handler to use with agents"
   (fn [the-agent exception]
     (log/error (.getMessage exception))
-    (when (and (->> :op-env (get-config) (= :dev))
-               (->> :log-level (get-config) (= :debug)))
+    (when (->> :log-level (get-config) (= :debug))
       (.printStackTrace exception))))

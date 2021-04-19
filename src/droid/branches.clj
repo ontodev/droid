@@ -7,7 +7,7 @@
             [droid.config :refer [get-config get-docker-config]]
             [droid.db :as db]
             [droid.fileutils :refer [delete-recursively recreate-dir-if-not-exists
-                                     get-workspace-dir get-temp-dir]]
+                                     get-workspace-dir get-temp-dir get-make-dir]]
             [droid.github :as gh]
             [droid.log :as log]
             [droid.make :as make]))
@@ -34,6 +34,25 @@
   (let [password (or token (gh/get-github-app-installation-token project-name))]
     (->> (initialize-remote-branches-for-project project-name login password)
          (merge all-current-branches))))
+
+(defn delete-remote-branch
+  "Deletes the remote branch with the given name from the given project. Accepts the branch list
+  as the first argument and threads it through with the deleted branch removed. Can be used with
+  an agent."
+  [all-current-branches project-name branch-name
+   {{{:keys [login]} :user} :session,
+    {{:keys [token]} :github} :oauth2/access-tokens
+    :as request}]
+  (log/info "Deleting remote branch:" branch-name "of project:" project-name)
+  (-> (gh/delete-branch project-name branch-name login token)
+      ;; If the delete was successful, remove the deleted branch from the branch list:
+      ((fn [success?]
+         (when success?
+           (->> (keyword project-name)
+                (get all-current-branches)
+                (filter #(not= (:name %) branch-name))
+                (vec)
+                (hash-map (keyword project-name))))))))
 
 (def remote-branches
   "The remote branches, per project, that are available to be checked out from GitHub."
@@ -269,11 +288,13 @@
   [server-startup? project-name current-branches]
   (let [project-workspace-dir (get-workspace-dir project-name)
         project-temp-dir (get-temp-dir project-name)]
-    (when-not (->> project-workspace-dir (io/file) (.isDirectory))
-      (log/fail (str project-workspace-dir " doesn't exist or isn't a directory.")))
 
-    ;; If the temp directory doesn't exist or it isn't a directory, recreate it:
-    (recreate-dir-if-not-exists project-temp-dir)
+    ;; Recreate the temp and workspace directories if they don't exist:
+    (try
+      (recreate-dir-if-not-exists project-workspace-dir)
+      (recreate-dir-if-not-exists project-temp-dir)
+      (catch Exception e
+        (log/critical (.getMessage e))))
 
     ;; Each sub-directory of the workspace represents a branch with the same name.
     (let [branch-names (->> project-workspace-dir (io/file) (.list))]
@@ -401,9 +422,21 @@
 ;; TODO: This doesn't work well with docker unless the server is run with sudo. The problem has to
 ;; do with filesystem permissions for shared folders.
 (defn delete-local-branch
-  "Deletes the given branch of the given project from the given managed server branches,
-  and deletes the workspace and temporary directories for the branch in the filesystem."
-  [all-branches project-name branch-name]
+  "Deletes the given branch of the given project from the given managed server branches, and deletes
+  the workspace and temporary directories for the branch in the filesystem. If make-clean? is true,
+  then run make clean in the branch's workspace, ignoring any errors, before deleting the branch."
+  [all-branches project-name branch-name make-clean?]
+  (when make-clean?
+    (log/info "Runing `make clean` in branch:" branch-name "of project" project-name)
+    (let [makefile-name (-> all-branches (get (keyword project-name)) (get (keyword branch-name))
+                            (deref) :Makefile :name)
+          [process exit-code] (run-branch-command
+                               ["make" "-i" "-k" "-f" makefile-name "clean"
+                                :dir (get-make-dir project-name branch-name)]
+                               project-name branch-name)]
+      (or (= @exit-code 0) (cmd/throw-process-exception
+                            process "Error while running `make clean`"))))
+
   (remove-branch-container project-name branch-name)
   (-> project-name (get-workspace-dir) (str "/" branch-name) (delete-recursively))
   (-> project-name (get-temp-dir) (str "/" branch-name) (delete-recursively))

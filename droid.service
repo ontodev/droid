@@ -1,0 +1,18 @@
+[Unit]
+Description=DROID Reminds us that Ordinary Individuals can be Developers
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+User=UNIX_USER
+Group=docker
+Environment="GITHUB_APP_STATE="
+Environment="PERSONAL_ACCESS_TOKEN="
+Environment="GITHUB_CLIENT_ID="
+Environment="GITHUB_CLIENT_SECRET="
+ExecStart=DROID_DIR/droid
+
+[Install]
+WantedBy=multi-user.target

@@ -36,9 +36,11 @@
          (not (realized? exit-code)))))
 
 (defn- site-admin?
-  "Returns true if the given user is a site administrator"
+  "Returns true if the given user is a site administrator. This function always returns true when
+  DROID is running in local mode."
   [{{{:keys [login]} :user} :session}]
-  (some #(= login %) (get-config :site-admin-github-ids)))
+  (or (get-config :local-mode)
+      (some #(= login %) (get-config :site-admin-github-ids))))
 
 (defn- read-only?
   "Returns true if the given user has read-only access to the site.
@@ -116,9 +118,10 @@
      [:link
       {:rel "stylesheet"
        :href "//cdn.jsdelivr.net/gh/highlightjs/cdn-release@9.16.2/build/styles/default.min.css"}]
+     ;; Users with read-only access are not be able to click on restricted-access links:
+     (when (read-only? request) [:style ".restricted-access { pointer-events: none; }"])
      [:title title]
-     (when script
-       [:script script])]
+     (when script [:script script])]
     [:body (when (get-config :html-body-colors) {:class (get-config :html-body-colors)})
      [:div {:id "content" :class "container p-3"}
       (login-status request)
@@ -194,15 +197,7 @@
         (format
          "refreshInterval = setInterval(refreshConsole, %s); " interval)
         " clearInterval(refreshInterval); ")
-      "});"]
-     ;; If the user has read-only access, run the following jQuery script to disable any action
-     ;; buttons on the page:
-     (when (read-only? request)
-       [:script
-        "$('.action-btn').each(function() {"
-        "  $(this).addClass('disabled');"
-        "  $(this).removeAttr('href');"
-        "});"])])})
+      "});"]])})
 
 (defn render-4xx
   "Render a page displaying an error message"
@@ -287,14 +282,25 @@
 
     (send-off branch-agent branches/refresh-local-branch)
     (await branch-agent)
-    (if-not (-> @branch-agent :git-status :remote)
-      [:span {:class "text-muted"} "No remote found"]
-      [:span
-       (str (-> @branch-agent :git-status :ahead) " ahead, "
-            (-> @branch-agent :git-status :behind) " behind ")
-       (-> @branch-agent :git-status :remote (render-remote))
-       (when (-> @branch-agent :git-status :uncommitted?)
-         ", with uncommitted changes")])))
+    (let [git-file (-> (get-workspace-dir project-name branch-name)
+                       (str "/.git/FETCH_HEAD") (io/file))]
+      (cond
+        (-> @branch-agent :git-status :remote (not))
+        [:span {:class "text-muted"} "No remote found"]
+
+        (not (.exists git-file))
+        [:span {:class "text-muted"} "Not yet fetched"]
+
+        :else
+        [:span
+         (str (-> @branch-agent :git-status :ahead) " ahead, "
+              (-> @branch-agent :git-status :behind) " behind ")
+         (-> @branch-agent :git-status :remote (render-remote))
+         (when (-> @branch-agent :git-status :uncommitted?)
+           ", with uncommitted changes")
+         " (" [:span {:class "since"} (-> git-file (.lastModified)
+                                          (java.time.Instant/ofEpochMilli)
+                                          (str))] ")"]))))
 
 (defn- render-project-branches
   "Given the name of a project, render a list of its branches, with links. If restricted-access? is
@@ -427,7 +433,7 @@
 
     [:table {:class "table table-sm table-striped table-borderless mt-3"}
      [:thead
-      [:tr (when-not restricted-access? [:th]) [:th "Branch"] [:th "Pull request"]
+      [:tr (when-not restricted-access? [:th]) [:th "Branch"] [:th "Open PR"]
        [:th "Git status"]
        ;; Site admins can see container status:
        (when site-admin-access?
@@ -537,7 +543,7 @@
           ;; export REQUEST_METHOD="POST"; \
           ;;   export CONTENT_TYPE="application/x-www-form-urlencoded"; \
           ;;   export CONTENT_LENGTH=16;echo "cgi-input-py=bar" | build/hobbit-script.py
-          timeout (get-config :cgi-timeout)
+          timeout (or (get-config :cgi-timeout) 10000)
           [process
            exit-code] (if (= request-method :post)
                         (do (with-open [w (io/output-stream tmp-infile)]
@@ -574,9 +580,9 @@
               ;; Every line in the header must be of the form: <something>: <something else>
               ;; and one of the headers must be for Content-Type
               valid-header? (and (->> (first response-sections)
-                                      (some #(re-matches #"^\s*Content-Type:\s+\S+\s*$" %)))
+                                      (some #(re-matches #"^\s*Content-Type:(\s+\S+)+\s*$" %)))
                                  (->> (first response-sections)
-                                      (every? #(re-matches #"^\s*\S+:\s+\S+\s*$" %))))
+                                      (every? #(re-matches #"^\s*\S+:(\s+\S+)+\s*$" %))))
               headers (if-not valid-header?
                         ;; If the raw header isn't valid just use the default headers defined above:
                         default-html-headers
@@ -605,11 +611,16 @@
                                :content)
                      (html-response request))
                 ;; Otherwise return it as is:
-                {:status (try
-                           (Integer/parseInt (headers "Status"))
-                           (catch Exception e
-                             ;; If the script status cannot be parsed, set it to 0 for 'unknown':
-                             0))
+                {:status (let [status (headers "Status")]
+                           (if-not status
+                             (log/info "CGI script returned no status. Assuming 200.")
+                             (log/info "CGI script returned status:" status))
+                           (try
+                             (-> (or status "200") (string/split #"\s+") (first) (Integer/parseInt))
+                             (catch java.lang.NumberFormatException e
+                               (log/warn "Unable to parse integer status from:" status
+                                         "- assuming 200.")
+                               200)))
                  :headers headers
                  :session (:session request)
                  :body body}))
@@ -637,8 +648,7 @@
         rel-url (-> (and referer host (re-matches pattern referer))
                     (second)
                     (#(when % (string/replace % #"\?.+$" "")))
-                    (empty?)
-                    (not)
+                    (not-empty)
                     (or "/"))]
     (redirect (or rel-url "/"))))
 
@@ -752,11 +762,12 @@
 
 (defn render-project
   "Render the home page for a project"
-  [{:keys [params]
-    {:keys [project-name refresh to-delete to-really-delete to-checkout
-            create invalid-name-error to-create branch-from
+  [{:keys [params session]
+    {:keys [project-name refresh to-delete to-really-delete delete-remote make-clean
+            to-checkout create invalid-name-error to-create branch-from
             rebuild-single-container really-rebuild-single-container
             rebuild-containers really-rebuild-containers rebuild-launched]} :params,
+    {{:keys [login]} :user} :session,
     :as request}]
   (log/debug "Processing request in render-project with params:" params)
   (let [this-url (str "/" project-name)
@@ -766,6 +777,17 @@
               (let [[process exit-code] (cmd/run-command
                                          ["git" "check-ref-format" "--allow-onelevel" refname])]
                 (or (= @exit-code 0) false)))
+
+            (suggest-next-branch []
+              ;; Suggests a name for a new branch based on the remote branches that currently exist:
+              (let [pattern (-> (str "^" login "-patch-(\\d+)$") (re-pattern))
+                    prev-patches (->> project-name (keyword) (get @branches/remote-branches)
+                                      (map #(:name %)) (filter #(re-matches pattern %))
+                                      (map #(string/replace % pattern "$1"))
+                                      (map #(Integer/parseInt %)))]
+                (if (empty? prev-patches)
+                  (str login "-patch-1")
+                  (->> prev-patches (apply max) (+ 1) (str login "-patch-")))))
 
             (create-branch [project-name branch-name]
               ;; Creates a new branch with the given name in the given project's workspace
@@ -799,13 +821,15 @@
                   ;; Create the branch, then refresh the local branch collection so that it shows up
                   ;; on the page, and also refresh the remote branches since the new local branch
                   ;; will have been pushed to the remote upon creation:
+                  (log/info "Creation of a new branch:" branch-name "in project" project-name
+                            "initiated by" login)
                   (send-off branches/local-branches branches/create-local-branch project-name
                             branch-name branch-from request)
                   (await branches/local-branches)
                   (send-off branches/remote-branches
                             branches/refresh-remote-branches-for-project project-name request)
                   (await branches/remote-branches)
-                  (redirect this-url))))]
+                  (redirect (-> this-url (str "/branches/" branch-name))))))]
 
       ;; Perform an action based on the parameters present in the request:
       (cond
@@ -817,10 +841,15 @@
         (and (not (nil? to-really-delete))
              (not (read-only? request)))
         (do
-          (log/info "Deletion of branch" to-really-delete "from" project-name "initiated by"
-                    (-> request :session :user :login))
+          (log/info "Deletion of branch" to-really-delete "from" project-name "initiated by" login)
           (send-off branches/local-branches branches/delete-local-branch project-name
-                    to-really-delete)
+                    to-really-delete make-clean)
+          (when delete-remote
+            (send-off branches/remote-branches
+                      branches/refresh-remote-branches-for-project project-name request)
+            (send-off branches/remote-branches branches/delete-remote-branch project-name
+                      to-really-delete request)
+            (await branches/remote-branches))
           (await branches/local-branches)
           (redirect this-url))
 
@@ -829,19 +858,16 @@
              (not (read-only? request)))
         (do
           (log/info "Checkout of remote branch" to-checkout "into workspace for" project-name
-                    "initiated by" (-> request :session :user :login))
+                    "initiated by" login)
           (send-off branches/local-branches
                     branches/checkout-remote-branch-to-local project-name to-checkout)
           (await branches/local-branches)
-          (redirect this-url))
+          (redirect (-> this-url (str "/branches/" to-checkout))))
 
         ;; Create a new branch:
         (and (not (nil? to-create))
              (not (read-only? request)))
-        (do
-          (log/info "Creation of a new branch:" to-create "in project" project-name
-                    "initiated by" (-> request :session :user :login))
-          (create-branch project-name to-create))
+        (create-branch project-name to-create)
 
         ;; Rebuild the project's containers:
         (and (site-admin? request) (not (nil? really-rebuild-containers)))
@@ -880,20 +906,40 @@
                     " / "
                     (-> project :project-title)]
           :content [:div
+                    (let [gh-url (->> project :github-coordinates (str "github.com/"))]
+                      [:p [:a {:href (str "https://" gh-url) :target "__blank"} gh-url]])
                     [:p (->> project :project-description)]
 
                     ;; Display this alert and question when to-delete parameter is present:
                     (when (and (not (nil? to-delete))
                                (not (read-only? request)))
                       [:div {:class "alert alert-danger"}
-                       "Are you sure you want to delete the branch "
-                       [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
-                       [:div {:class "pt-2"}
-                        [:a {:class "btn btn-sm btn-primary" :href this-url} "No, cancel"]
-                        [:span "&nbsp;"]
-                        [:a {:class "btn btn-sm btn-danger"
-                             :href (str this-url "?to-really-delete=" to-delete)}
-                         "Yes, continue"]]])
+                       [:form {:action this-url :method "get"}
+                        [:span {:class "ml-1"} "Are you sure you want to delete the branch "]
+                        [:span {:class "text-monospace font-weight-bold"} to-delete] "?"
+                        [:div {:class "pt-2 ml-1"}
+                         [:a {:class "btn btn-sm btn-primary" :href this-url} "No, cancel"]
+                         [:span "&nbsp;"]
+                         [:input {:type "hidden" :id "to-really-delete" :name "to-really-delete"
+                                  :value to-delete}]
+                         [:button {:class "btn btn-sm btn-danger" :type "submit"}
+                          "Yes, continue"]]
+                        [:div {:class "row ml-1"}
+                         [:div {:class "form-check pt-2 mr-3"}
+                          [:input {:class "form-check-input" :type "checkbox" :value "1"
+                                   :id "delete-remote" :name "delete-remote"}]
+                          [:label {:class "form-check-label" :for "delete-remote"}
+                           "Also delete remote branch"]]
+                         ;; If the Makefile has a 'clean' target, give the user the option to run
+                         ;; `make clean` after deleting the branch:
+                         (when (->> (keyword project-name) (get @branches/local-branches)
+                                    (#(get % (keyword to-delete))) (deref) :Makefile :targets
+                                    (some #(= % "clean")))
+                           [:div {:class "form-check pt-2"}
+                            [:input {:class "form-check-input" :type "checkbox" :value "1"
+                                     :id "make-clean" :name "make-clean"}]
+                            [:label {:class "form-check-label" :for "make-clean"}
+                             "Run `make clean` before deleting"]])]]])
 
                     ;; Display this alert and question when the create parameter is present:
                     (when (and (not (nil? create))
@@ -928,7 +974,8 @@
                            [:label {:for "to-create" :class "mb-n1 text-secondary"}
                             "Branch name"]]
                           [:div
-                           [:input {:id "to-create" :name "to-create" :type "text"}]]
+                           [:input {:id "to-create" :name "to-create" :type "text"
+                                    :value (suggest-next-branch) :onClick "this.select();"}]]
                           ;; If the user previously tried to create a branch with an invalid
                           ;; name, show an alert:
                           (when-not (nil? invalid-name-error)
@@ -1399,7 +1446,11 @@
                         :required true :onClick "this.select();" :value (get-last-commit-msg)}]]
               [:button {:type "submit" :class "btn btn-sm btn-primary mr-2"}
                "Create a pull request"]
-              [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]]]
+              [:a {:class "btn btn-sm btn-secondary" :href this-url} "Dismiss"]]
+             [:div {:class "form-check"}
+              [:input {:class "form-check-input" :type "checkbox" :value "1" :id "draft-mode"
+                       :name "draft-mode"}]
+              [:label {:class "form-check-label" :for "draft-mode"} "Create as draft"]]]]
 
            ;; Otherwise display a link to the current PR:
            :else
@@ -1418,7 +1469,8 @@
            (send-off branches/remote-branches
                      branches/refresh-remote-branches-for-project project-name request)
            [:div {:class "alert alert-success"}
-            [:div "PR created successfully. To view it click " [:a {:href pr-added} "here."]]
+            [:div "PR created successfully. To view it click " [:a {:href pr-added
+                                                                    :target "__blank"} "here."]]
             [:a {:href this-url :class "btn btn-sm btn-secondary mt-1"} "Dismiss"]])
          [:div {:class "alert alert-warning"}
           [:div "Your PR could not be created. Contact an administrator for assistance."]
@@ -1473,7 +1525,7 @@
   [{:keys [branch-name project-name Makefile] :as branch}
    {:keys [params]
     {:keys [view-path missing-view confirm-kill confirm-update updating-view process-killed
-            follow commit-msg commit-amend-msg pr-to-add]} :params
+            follow commit-msg commit-amend-msg pr-to-add draft-mode]} :params
     :as request}]
   (let [this-url (str "/" project-name "/branches/" branch-name)]
     (cond
@@ -1510,7 +1562,8 @@
                          branch-name
                          (branches/get-remote-main project-name)
                          (-> request :session :user :login)
-                         (-> request :oauth2/access-tokens :github :token))
+                         (-> request :oauth2/access-tokens :github :token)
+                         (boolean draft-mode))
            (codec/url-encode)
            (str this-url "?pr-added=")
            (redirect))
@@ -1555,7 +1608,7 @@
                                       (first)
                                       :pull-request)]
                       (when pr-url
-                        [:span " &ndash; pull request "
+                        [:span " &ndash; open pull request "
                          [:a {:href pr-url :target "__blank"}
                           "#" (-> pr-url (string/split #"/") (last))]]))]
 
@@ -1681,11 +1734,14 @@
                                    (run-cgi script-path request)))
 
         ;; Serves the view from the filesystem:
-        deliver-file-view #(-> (get-make-dir project-name branch-name)
-                               (str "/" decoded-view-path)
-                               (file-response)
-                               ;; Views must not be cached by the client browser:
-                               (assoc :headers {"Cache-Control" "no-store"}))
+        deliver-file-view (fn []
+                            (-> (get-make-dir project-name branch-name)
+                                (str "/" decoded-view-path)
+                                (file-response)
+                                ;; Views must not be cached by the client browser:
+                                (#(assoc % :headers (-> %
+                                                        :headers
+                                                        (merge {"Cache-Control" "no-store"}))))))
 
         ;; Used for checking whether the requested view is in the workspace directory:
         canonical-ws-dir (-> (get-workspace-dir project-name branch-name) (io/file)
@@ -1705,8 +1761,8 @@
                   (let [login (-> request :session :user :login)] (when login (str "by " login))))
         (render-403 request))
 
-      ;; If the decoded-view-path isn't in the sets of allowed file and exec views, and it isn't inside
-      ;; one of the allowed directory views, then render a 404:
+      ;; If the decoded-view-path isn't in the sets of allowed file and exec views, and it isn't
+      ;; inside one of the allowed directory views, then render a 404:
       (and (not-any? #(= decoded-view-path %) allowed-file-views)
            (not-any? #(= decoded-view-path %) allowed-exec-views)
            (not-any? #(-> decoded-view-path (string/starts-with? %)) allowed-dir-views))
@@ -1902,10 +1958,7 @@
         ;; here:
         (and (not (nil? new-action))
              (read-only? request))
-        (do
-          (log/warn "User" (-> request :session :user :login) "with read-only access attempted to"
-                    "start action" new-action "and was prevented from doing so.")
-          (render-branch-page @branch-agent request))
+        (render-401 request)
 
         ;; If this is a cancel process action, kill the existing process. If the cancelled process
         ;; was an update of a view, then render the "close tab" page; otherwise redirect to the

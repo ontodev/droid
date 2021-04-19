@@ -2,6 +2,7 @@
   (:require [clojure.repl :as repl]
             [org.httpkit.server :refer [run-server]]
             [droid.branches :refer [pause-branch-containers remove-branch-containers]]
+            [droid.cli-handler :as cli-handler]
             [droid.config :refer [get-config]]
             [droid.handler :as handler]
             [droid.log :as log])
@@ -31,7 +32,9 @@
 ;; Call the one-argument version of shutdown when an interrupt signal is received:
 (repl/set-break-handler! shutdown)
 
-(defn -main []
+(defn -main [& args]
+  ;; Handle command-line options:
+  (cli-handler/handle-cli-opts args)
   ;; Add a shutdown hook to the no-argument version of `shutdown`:
   (.addShutdownHook (Runtime/getRuntime) (Thread. ^Runnable shutdown))
   (log/info "Unpausing any paused branch containers")

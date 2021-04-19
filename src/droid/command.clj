@@ -82,7 +82,8 @@
                     (do (log/debug "Running" command-log "without a container")
                         (apply sh/proc command))
                     (let [docker-config (get-docker-config project-name)
-                          docker-cmd-base (->> docker-config :env (supplement-command-env command))
+                          docker-cmd-base (->> docker-config (#(or (:env %) {}))
+                                               (supplement-command-env command))
                           ;; For each key in the environment map,
                           ;; {:VAR1 "var1-value" :VAR2 "var2-value" ...}, generate command-line
                           ;; arguments for docker like: -e VAR1 -e VAR2 -e VAR3 ...
@@ -103,7 +104,7 @@
                       (->> docker-cmd-base
                            (local-to-docker project-name branch-name)
                            (into [container-id])
-                           (into (-> docker-config :env (env-map-to-cli-opts)))
+                           (into (-> docker-config (#(or (:env %) {})) (env-map-to-cli-opts)))
                            (into (-> (get-option-value command :env) (env-map-to-cli-opts)))
                            (into ["docker" "exec" "--workdir"
                                   (->> (get-working-dir)

@@ -3,6 +3,7 @@
             [clojure.set :as set]
             [clojure.string :as string]
             [markdown-to-hiccup.core :as m2h]
+            [ring.util.codec :as codec]
             [droid.config :refer [get-config]]
             [droid.fileutils :refer [get-workspace-dir]]
             [droid.github :as gh]
@@ -93,13 +94,81 @@
                                 (flatten-to-1st-level %)
                                 (list %)))))
 
+              (convert-code-to-href [[tag _ target :as elem]]
+                ;; Converts a <code>...</code> block to a HTML link. Four cases are handled below.
+                ;; 1. `make <single-phony-target>` where <single-phony-target> is one of the targets
+                ;;    defined as PHONY in the Makefile.
+                ;; 2. `./some_script.sh [--foo=bar --bat=man ...]`: a CGI script that supports
+                ;;    being invoked on the command line with the given command-line options.
+                ;; 3. `path/to/file.txt`: a "file view"
+                ;; 4. `path/to/dir/`: a "directory view"
+                ;; 5. `git <command>`: where command is one of the supported git commands (see the
+                ;;    module github.clj
+                (try
+                  (cond
+                    ;; Make targets:
+                    (string/starts-with? target "make ")
+                    (let [target (-> target (string/split #"\s+") (second))]
+                      [:a {:href target} target])
+                    ;; Supported git actions:
+                    (string/starts-with? target "git ")
+                    (let [git-cmd-parts (-> target (string/split #"\s+") (#(take 2 %)))]
+                      [:a {:href (string/join "-" git-cmd-parts)} (last git-cmd-parts)])
+                    ;; Views:
+                    :else
+                    (let [text (-> target
+                                   ;; Executable views should only show the basename of the script
+                                   ;; (without the extension):
+                                   (string/replace #"^\.\/(\.\.\/)*([\w\-_]+\/)*([\w\-_]+)(\.\w+)"
+                                                   "$3")
+                                   ;; Replace '../' and trailing '/' in file and directory views:
+                                   (string/replace #"\/$" "")
+                                   (string/replace #"^(\.\.\/)+" ""))]
+                      (cond
+                        ;; Executable views:
+                        (string/starts-with? target "./")
+                        (let [href-base (-> target (string/trim) (string/split #"\s+") (first))
+                              options (let [options (-> text (string/split #"\s+" 2))]
+                                        (when (> (count options) 1)
+                                          (->> options (last) (#(string/split % #"(=|\s*\-\-)"))
+                                               (remove empty?) (map #(codec/url-encode %))
+                                               (apply array-map))))
+                              query-str (when-not (empty? options)
+                                          (->> options
+                                               (map #(-> %
+                                                         (key)
+                                                         (codec/url-encode)
+                                                         (str "=" (-> % (val) (codec/url-encode)))))
+                                               (string/join "&")))]
+                          [:a {:href (->> href-base (#(if-not query-str % (str % "?" query-str))))}
+                           text])
+                        ;; Directory views (display only the basename; whitespace not supported).
+                        (string/ends-with? target "/")
+                        [:a {:href (string/replace target #"\s+.+$" "")}
+                         (-> text (string/replace #"\s+.+$" "") (io/file) (.getName))]
+                        ;; File views (display only the basename; whitespace not supported).
+                        :else
+                        [:a {:href (string/replace target #"\s+.+$" "")}
+                         (-> text (string/replace #"\s+.+$" "") (io/file) (.getName))])))
+                  (catch Exception e
+                    (log/error "Exception while parsing target" (str target ":") e)
+                    [:a {:href ""} [:span {:class "text-danger font-weight-bold"}
+                                    "Unable to parse command"]])))
+
               (extract-nested-links [html]
                 ;; Recurses through the html hiccup structure and extracts any links that are found
-                ;; into a set."
+                ;; into a set which is then returned"
                 (->> (for [elem html]
                        (when (= (type elem) clojure.lang.PersistentVector)
-                         (if (= (first elem) :a)
+                         (cond
+                           ;; We have found a link:
+                           (= (first elem) :a)
                            elem
+                           ;; We have found a code block. Convert it to a link:
+                           (= (first elem) :code)
+                           (convert-code-to-href elem)
+                           ;; Anything else, continue recursing:
+                           :else
                            (extract-nested-links elem))))
                      (flatten-to-1st-level)
                      (into #{})))
@@ -117,27 +186,23 @@
                                               git-actions branch-name]
                                        :as makefile}]
                 ;; Recurses through the html hiccup structure and transforms any links that are
-                ;; found into either action links or view links. Note that when a link has a space
-                ;; in it, then the markdown convention is that the first word is to be interpreted
-                ;; as the link, and the second word is to be interpreted as the title. In our case
-                ;; we'll be using such links for git actions, e.g., [Don't be afraid to](git commit)
-                ;; so we must capture the title here in order to grab the 'commit' part of the link.
-                (letfn [(process-link [[tag {href :href title :title} text :as link]]
+                ;; found into either action links or view links. Links for general-actions,
+                ;; exec-views, and GitHub actions are marked as restricted-access links. This is a
+                ;; custom class which is used by the html module to prevent certain users from
+                ;; clicking on the corresponding link.
+                (letfn [(process-link [[tag {href :href} text :as link]]
                           (cond
                             (some #(= href %) general-actions)
                             [tag {:href (str "/" project-name "/branches/" branch-name
                                              "?new-action=" href)
-                                  ;; The 'action-btn' class is a custom one to identify action
-                                  ;; buttons which we will later want to conditionally restrict
-                                  ;; access to.
-                                  :class "mb-1 mt-1 btn btn-primary btn-sm action-btn"} text]
+                                  :class "mb-1 mt-1 btn btn-primary btn-sm restricted-access"} text]
 
-                            (some #(= (str href "-" title) %) git-actions)
-                            (let [git-keyword (-> href (str "-" title) (keyword))]
+                            (some #(= href %) git-actions)
+                            (let [git-keyword (keyword href)]
                               [tag
                                {:href (-> gh/git-actions (get git-keyword) :html-param)
                                 :class (-> gh/git-actions (get git-keyword) :html-class
-                                           (str " mt-1 mb-1 action-btn"))}
+                                           (str " mt-1 mb-1 restricted-access"))}
                                (-> gh/git-actions (get git-keyword) :html-btn-label)])
 
                             (or (some #(= href %) (set/union file-views dir-views))
@@ -148,24 +213,33 @@
                             ;; file-views/dir-views/exec-views still needs to contain the '../'
                             (let [encoded-href (string/replace href #"\.\.\/" "PREV_DIR/")]
                               [tag
-                               {:href (str "/" project-name "/branches/" branch-name
-                                           "/views/" encoded-href)
-                                :target "_blank"}
+                               (merge
+                                {:href (str "/" project-name "/branches/" branch-name
+                                            "/views/" encoded-href)
+                                 :target "_blank"}
+                                (when (some #(-> href (normalize-exec-view) (= %)) exec-views)
+                                  {:class "restricted-access"}))
                                text])
 
                             :else
                             [tag {:href href :target "_blank"} text]))]
                   (->> (for [elem html]
                          (if (= (type elem) clojure.lang.PersistentVector)
-                           (if (= (first elem) :a)
-                             (process-link elem)
-                             (vec (process-makefile-html {:html elem,
-                                                          :file-views file-views,
-                                                          :dir-views dir-views,
-                                                          :exec-views exec-views
-                                                          :general-actions general-actions,
-                                                          :git-actions git-actions,
-                                                          :branch-name branch-name})))
+                           (cond
+                             ;; <a> tags for links:
+                             (= (first elem) :a) (process-link elem)
+                             ;; <code> tags for make targets, scripts, and other views (these must
+                             ;; first be converted into links before being processed:
+                             (= (first elem) :code)
+                             (-> elem (convert-code-to-href) (process-link))
+                             ;; Everything else:
+                             :else (vec (process-makefile-html {:html elem,
+                                                                :file-views file-views,
+                                                                :dir-views dir-views,
+                                                                :exec-views exec-views
+                                                                :general-actions general-actions,
+                                                                :git-actions git-actions,
+                                                                :branch-name branch-name})))
                            elem))
                        (vec))))]
         (->> html
@@ -173,24 +247,22 @@
              ;; For all of the extracted links, add those that do not contain an 'authority' part
              ;; (i.e. a domain name) to the list of targets, and then also place them, as
              ;; appropriate, into one of the general-actions, git-actions, file-views, dir-views,
-             ;; or exec-views lists. Note that when a link has a space in it, then the markdown
-             ;; convention is that the first word is to be interpreted as the link, and the second
-             ;; word is to be interpreted as the title. In our case we'll be using such links for
-             ;; git actions, e.g., [Don't be afraid to](git commit), so we must capture the title
-             ;; here in order to grab the 'commit' part of the link.
-             (map (fn [[tag {href :href title :title} text]]
-                    (when (nil? (->> href
-                                     (java.net.URI.)
-                                     (bean)
-                                     :authority))
+             ;; or exec-views lists.
+             (map (fn [[tag {href :href} text]]
+                    (when (nil? (try (->> href
+                                          (java.net.URI.)
+                                          (bean)
+                                          :authority)
+                                     ;; Ignore URI parsing exceptions:
+                                     (catch java.net.URISyntaxException e)))
                       (merge
                        {:targets #{href}}
                        (cond
                          (some #(= href %) phony-targets)
                          {:general-actions #{href}}
 
-                         (= href "git")
-                         {:git-actions #{(str href "-" title)}}
+                         (string/starts-with? href "git")
+                         {:git-actions #{href}}
 
                          (string/ends-with? href "/")
                          {:dir-views #{href}}

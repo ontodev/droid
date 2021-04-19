@@ -18,13 +18,19 @@
   (log/debug "Deleted" topname))
 
 (defn recreate-dir-if-not-exists
-  "If the given directory doesn't exist or it isn't a directory, recreate it."
+  "If the given directory doesn't exist, recreate it."
   [dirname]
-  (when-not (-> dirname (io/file) (.isDirectory))
-    (log/debug "(Re)creating directory:" dirname)
-    ;; By setting silent mode to true, the command won't complain if the file doesn't exist:
-    (io/delete-file dirname true)
-    (.mkdir (io/file dirname))))
+  (let [directory (io/file dirname)]
+    (cond
+      (.isFile directory)
+      (throw
+       (Exception.
+        (str "Directory: '" dirname "' cannot be created. A file with that name already exists.")))
+
+      (-> directory (.exists) (not))
+      (do
+        (log/debug "Creating directory:" dirname)
+        (.mkdirs (io/file dirname))))))
 
 (defn get-droid-dir
   "Get DROID's root directory"
