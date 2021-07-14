@@ -41,8 +41,7 @@
   an agent."
   [all-current-branches project-name branch-name
    {{{:keys [login]} :user} :session,
-    {{:keys [token]} :github} :oauth2/access-tokens
-    :as request}]
+    {{:keys [token]} :github} :oauth2/access-tokens}]
   (log/info "Deleting remote branch:" branch-name "of project:" project-name)
   (-> (gh/delete-branch project-name branch-name login token)
       ;; If the delete was successful, remove the deleted branch from the branch list:
@@ -419,8 +418,6 @@
           (cmd/throw-process-exception process "Error removing container"))
         (log/info "Removed docker container for branch:" branch-name "in project:" project-name)))))
 
-;; TODO: This doesn't work well with docker unless the server is run with sudo. The problem has to
-;; do with filesystem permissions for shared folders.
 (defn delete-local-branch
   "Deletes the given branch of the given project from the given managed server branches, and deletes
   the workspace and temporary directories for the branch in the filesystem. If make-clean? is true,
@@ -507,10 +504,7 @@
 (defn create-local-branch
   "Creates a local branch with the given branch name in the workspace for the given project, with
   the branch point given by `base-branch-name`, and adds it to the collection of local branches."
-  [all-branches project-name branch-name base-branch-name
-   {{{:keys [login]} :user} :session,
-    {{:keys [token]} :github} :oauth2/access-tokens
-    :as request}]
+  [all-branches project-name branch-name base-branch-name request]
   (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
                        (string/split #"/"))
         new-branch-dir (-> project-name (get-workspace-dir) (str "/" branch-name))]

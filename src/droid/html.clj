@@ -256,7 +256,7 @@
                  (str "=" (-> % (val) (string/replace #"PREV_DIR/" "../") (codec/url-encode)))))
        (string/join "&")))
 
-(defn render-github-webook-response
+(defn render-github-webhook-response
   "Render a response to a GitHub event hitting this endpoint. Currently just a stub"
   [request]
   "Not implemented. Click <a href=\"/\">here</a> to return to DROID.")
@@ -1561,8 +1561,7 @@
            (gh/create-pr project-name
                          branch-name
                          (branches/get-remote-main project-name)
-                         (-> request :session :user :login)
-                         (-> request :oauth2/access-tokens :github :token)
+                         request
                          (boolean draft-mode))
            (codec/url-encode)
            (str this-url "?pr-added=")
