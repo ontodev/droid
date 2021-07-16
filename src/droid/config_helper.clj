@@ -13,6 +13,8 @@
          :docker-config {:required-always? true, :allowed-types [clojure.lang.PersistentArrayMap
                                                                  clojure.lang.PersistentHashMap]}
          :github-app-id {:required-when {:local-mode false}, :allowed-types [Long]}
+         :github-user-name {:required-always? true, :allowed-types [String]}
+         :github-user-email {:required-always? true, :allowed-types [String]}
          :html-body-colors {:allowed-types [String]}
          :local-mode {:allowed-types [Boolean]}
          :log-file {:allowed-types [String]}
