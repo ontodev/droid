@@ -8,6 +8,33 @@ DROID can operate in either local or server mode. When DROID is configured to ru
 
 DROID is designed to work on [UNIX](https://en.wikipedia.org/wiki/Unix) (Linux, macOS, FreeBSD, etc.) systems.
 
+#### Table of contents
+
+<!-- The following table of contents was auto-generated using mktoc (https://github.com/kevingimbel/mktoc).
+     To regenerate the TOC, install mktoc and run: mktoc -m 2 -M 3 README.md -->
+<!-- BEGIN mktoc -->
+- [Installation and configuration](#installation-and-configuration)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Configuration](#configuration)
+  - [Validating your configuration](#validating-your-configuration)
+  - [Configuring DROID for local mode using a personal access token](#configuring-droid-for-local-mode-using-a-personal-access-token)
+  - [Configuring DROID for server mode](#configuring-droid-for-server-mode)
+  - [Configuring DROID using the setup wizard non-interactively](#configuring-droid-using-the-setup-wizard-non-interactively)
+  - [Dumping the current configuration](#dumping-the-current-configuration)
+- [The `projects/` directory](#the-projects-directory)
+- [Using branch-specific docker images](#using-branch-specific-docker-images)
+- [GitHub Authentication](#github-authentication)
+  - [Creating a personal access token](#creating-a-personal-access-token)
+  - [Creating a new GitHub App](#creating-a-new-github-app)
+  - [Generating a private key for your GitHub App](#generating-a-private-key-for-your-github-app)
+  - [Installing your GitHub App on a project repository](#installing-your-github-app-on-a-project-repository)
+- [Setting up DROID as a systemd service](#setting-up-droid-as-a-systemd-service)
+- [Troubleshooting](#troubleshooting)
+  - [Inspecting the log](#inspecting-the-log)
+  - [Logging levels](#logging-levels)
+<!-- END mktoc -->
+
 ## Installation and configuration
 
 The following installation and configuration instructions have been written for [Debian GNU/Linux](https://www.debian.org/) (specifically, the [buster](https://www.debian.org/releases/buster/) release) but they should be reasonably straightforward to adapt to other flavours of UNIX (other Linux distributions, macOS, FreeBSD, etc.)
@@ -554,6 +581,28 @@ The name of the newly generated `.pem` file should now be added to `config.edn` 
 
         $ sudo systemctl enable droid
 
-5. DROID's log can be configured to be written to a particular file using the directive `:log-file` in `config.edn`. If this is not set, DROID will output log statements to STDERR. In the latter case, you may monitor them using the `journalctl` command as follows:
+5. DROID's log can be configured to be written to a particular file using the parameter `:log-file` in `config.edn`. If this is not set, DROID will output log statements to STDERR. In the latter case, you may monitor them using the `journalctl` command as follows:
 
         $ sudo journalctl -f -u droid.service
+
+## Troubleshooting
+
+### Inspecting the log
+
+It is often possible to identify and resolve issues by inspecting DROID's log file. The location of the file can be configured using the parameter `:log-file` in `config.edn`. If `:log-file` is not set (or set to `nil`), then DROID's log can be viewed using the command:
+
+        $ sudo journalctl -f -u droid.service
+
+Otherwise if `:log-file` is set to a particular file, then the log can be opened in your favourite text editor and inspected, or it can be followed using `tail`:
+
+        $ tail -f LOG_FILE
+
+### Logging levels
+
+By default, DROID is set to log only information, warning, and error messages. Sometimes, however, it can be useful for troubleshooting certain errors to enable more verbose logging. This behaviour can be controlled using DROID's configuration file `config.edn`. To do so, edit the file and set the parameter `:log-level` to `:debug`.
+
+DROID can also be configured to be even _less_ verbose by setting the logging level to `:warn`, `:error`, or `:critical`, though this is not recommended. For normal operation it is recommended to set the logging level to `:info`, and to use the `:debug` setting for troubleshooting as the need arises.
+
+**Note that after making changes to `config.edn`, the DROID server must be restarted.** If you have set up DROID as a `systemd` service, it can be reatarted by running:
+
+        $ sudo systemctl restart droid

@@ -106,7 +106,7 @@
                      (do (log/warn "No stored refresh token found. Using incoming refresh token")
                          refresh-token)
                      stored-refresh-token)]
-        (log/debug "Refreshing user access token for" login)
+        (log/info "Refreshing user access token for" login)
         (let [{:keys [body status headers error] :as resp}
               @(http/post "https://github.com/login/oauth/access_token"
                           {:headers {"Content-Type" "application/x-www-form-urlencoded"}
