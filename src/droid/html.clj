@@ -177,6 +177,8 @@
                "        } else { "
                "          $('#console').replaceWith(elems[0]); "
                "          friendlifyMoments(); "
+               ;;         Scroll the the bottom of the page:
+               "          window.scrollTo(0,document.body.scrollHeight); "
                ;;         If the "Unfollow console" span is not present, then the process is done
                ;;         and we can stop refreshing:
                "          var unfollowSpan = document.getElementById('unfollow-span'); "
