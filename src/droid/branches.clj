@@ -4,7 +4,7 @@
             [me.raynes.conch.low-level :as sh]
             [droid.agent :refer [default-agent-error-handler]]
             [droid.command :as cmd]
-            [droid.config :refer [get-config get-docker-config]]
+            [droid.config :refer [get-config get-docker-config get-env]]
             [droid.db :as db]
             [droid.fileutils :refer [delete-recursively recreate-dir-if-not-exists
                                      get-workspace-dir get-temp-dir get-make-dir]]
@@ -92,7 +92,7 @@
         container-id (str project-name "-" branch-name)
         git-head (-> (get-workspace-dir project-name branch-name) (str "/.git/HEAD") (slurp)
                      (string/trim-newline))
-        project-env (-> :projects (get-config) (get project-name) :env)
+        project-env (-> :projects (get-config) (get project-name) (get-env))
         ;; Redefine the command by adding in the project-level environment. The docker-specific
         ;; environment variables will be taken care of by run-command:
         command (if-not (empty? project-env)
