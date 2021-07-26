@@ -18,6 +18,7 @@
                  [hickory "0.7.1"]
                  [http-kit "2.5.3"]
                  [jdbc-ring-session "1.4.2"]
+                 [lambdaisland/uri "1.4.70"]
                  [markdown-to-hiccup "0.6.2"]
                  [me.raynes/conch "0.8.0"]
                  [metosin/ring-http-response "0.9.2"]

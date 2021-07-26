@@ -6,6 +6,7 @@
             [hiccup.core :refer [html]]
             [hiccup.page :refer [html5]]
             [hickory.core :as hickory]
+            [lambdaisland.uri :as uri]
             [me.raynes.conch.low-level :as sh]
             [ring.util.codec :as codec]
             [ring.util.http-status :as status]
@@ -26,8 +27,10 @@
   "Returns true if the given branch is rebuilding a docker container"
   [project-name branch-name]
   (let [this-branch (when branch-name
-                      (-> @branches/local-branches (get (keyword project-name))
-                          (get (keyword branch-name)) (deref)))
+                      (-> @branches/local-branches
+                          (get (keyword project-name))
+                          (get (keyword branch-name))
+                          (#(and % (deref %)))))
         action (:action this-branch)
         exit-code (:exit-code this-branch)]
     (and this-branch
@@ -670,103 +673,253 @@
 
 (defn render-index
   "Render the index page"
-  [{:keys [params]
+  [{:keys [params server-name server-port]
     {:keys [just-logged-out rebuild-containers really-rebuild-containers rebuild-launched
-            reset really-reset]} :params,
+            reset really-reset url url-redirect-err]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
-  (log/debug "Processing request in index with params:" params)
-  (cond
-    ;; If the user is a site-admin and has confirmed a reset action, do it now and redirect back
-    ;; to this page:
-    (and (site-admin? request) (not (nil? really-reset)))
-    (do
-      (log/info "Site administrator" login "requested a global reset of branch data")
-      ;; We refresh the local branches before resetting to make sure that the metadata has been
-      ;; persisted to the database:
-      (log/debug "Refreshing local branches before reset")
-      (send-off branches/local-branches
-                branches/refresh-local-branches (-> :projects (get-config) (keys)))
-      (send-off branches/local-branches branches/reset-all-local-branches)
-      (await branches/local-branches)
-      (redirect "/"))
+  (letfn [(process-url-redirect [redirect-from]
+            ;; Given a URL to redirect from, map it to a page on the DROID server, possibly
+            ;; directing DROID to create or checkout a branch in the process.
+            (let [{:keys [scheme host path]} (uri/parse redirect-from)
+                  path-parts (and path (-> path (string/replace #"(^/|/$)" "") (string/split #"/")))
+                  [redirect-key redirect-val] (-> (take-last 2 path-parts) (vec))
+                  [owner repo] (-> (take 2 path-parts) (vec))
+                  github-coords (str owner "/" repo)
+                  project-name (->> (get-config :projects)
+                                    (seq)
+                                    (filter #(= (-> % (second) :github-coordinates)
+                                                github-coords))
+                                    (#(do
+                                        (when (> (count %) 1)
+                                          (log/warn "There is more than one project with the github"
+                                                    "coordinates:" (str github-coords "; choosing")
+                                                    "project:" (-> % (first) (first))))
+                                        (-> % (first) (first)))))
+                  ;; The initially projected path replaces the owner/repo component of the path with
+                  ;; the project name. Further replacements may need to be made depending on
+                  ;; redirect-key and redirect-val. If no project name can be determined, then
+                  ;; projected-path is left as nil.
+                  projected-path (when project-name
+                                   (-> path (string/replace-first (re-pattern github-coords)
+                                                                  project-name)))
+                  usage (str "Valid redirection URLs must be in one of the following forms:"
+                             "<ul>"
+                             " <li>https://github.com/ORG/REPOSITORY</li>"
+                             " <li> https://github.com/ORG/REPOSITORY/tree/BRANCH</li>"
+                             " <li> https://github.com/ORG/REPOSITORY/issues/ISSUE_NUMBER</li>"
+                             " <li> https://github.com/ORG/REPOSITORY/pull/PR_NUMBER</li>"
+                             "</ul>")
+                  ;; For some of the actions we need to take, it will be necessary to first refresh
+                  ;; local and/or remote branches since we can't assume they're up to date
+                  ;; (the refresh decorators don't apply to the index page), so we define these
+                  ;; handy functions:
+                  refresh-locals #(do (send-off branches/local-branches
+                                                branches/refresh-local-branches [project-name])
+                                      (await branches/local-branches))
+                  refresh-remotes #(do (send-off branches/remote-branches
+                                                 branches/refresh-remote-branches-for-project
+                                                 project-name request)
+                                       (await branches/remote-branches))
+                  refresh-all #(do (send-off branches/local-branches
+                                             branches/refresh-local-branches [project-name])
+                                   (send-off branches/remote-branches
+                                             branches/refresh-remote-branches-for-project
+                                             project-name request)
+                                   (await branches/local-branches branches/remote-branches))]
 
-    (and (site-admin? request) (not (nil? really-rebuild-containers)))
-    (do
-      (doseq [project-name (->> :projects (get-config) (keys) (map name))]
-        ;; We send the rebuild jobs through container-serializer so that they will run in the
-        ;; background one after another:
-        (send-off branches/container-serializer
-                  branches/rebuild-images-and-containers project-name))
-      (redirect "/?rebuild-launched=1"))
+              (log/debug "In process-url-redirect. Redirecting from" redirect-from)
+              (cond
+                (or (not= scheme "https") (not= host "github.com"))
+                (->> usage
+                     (str "Cannot redirect from: " redirect-from
+                          ". Only paths beginning in https://github.com may be redirected. ")
+                     (codec/url-encode)
+                     (str "/?url-redirect-err="))
 
-    ;; Otherwise just render the page:
-    :else
-    (html-response
-     request
-     {:title "DROID"
-      :heading [:div [:a {:href "/"} "DROID"]]
-      :content [:div
-                [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
-                [:div
-                 (when-not (nil? just-logged-out)
-                   [:div {:class "alert alert-info"}
-                    "You have been logged out. If this is a shared computer you may also want to "
-                    [:a {:href "https://github.com/logout"} "sign out of GitHub"]
-                    [:div {:class "pt-2"}
-                     [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
-                 [:div
-                  [:h3 "Available Projects"]
-                  [:table
-                   {:class "table table-borderless table-sm"}
-                   (for [project (get-config :projects)]
-                     [:tr
-                      [:td
-                       [:a
-                        {:style "font-weight: bold"
-                         :href (->> project (key) (str "/"))}
-                        (->> project (val) :project-title)]]
-                      [:td (->> project (val) :project-description)]
-                      [:td
-                       [:a
-                        {:href (str "https://github.com/"
-                                    (-> project val :github-coordinates))}
-                        (-> project val :github-coordinates)]]])]
-                  (when (site-admin? request)
-                    [:div
-                     [:h3 "Administration"]
-                     [:div {:class "row pb-3 pt-2 pl-3"}
-                      [:a {:class "btn btn-sm btn-danger mr-2" :href "/?reset=1"
-                           :data-toggle "tooltip"
-                           :title "Clear branch data for all managed projects"}
-                       "Reset branch data"]
-                      [:a {:class "btn btn-sm btn-warning" :href "/?rebuild-containers=1"
-                           :data-toggle "tooltip"
-                           :title "(Re)build all containers for all managed projects"}
-                       "Rebuild all containers"]]
-                     (when (not (nil? reset))
-                       [:div {:class "alert alert-danger"}
-                        "Are you sure you want to reset branch data for all projects? Note that "
-                        "doing so will kill any running processes and clear all console data."
-                        [:div {:class "pt-2"}
-                         [:a {:class "btn btn-sm btn-primary" :href "/"} "No, cancel"]
-                         [:span "&nbsp;"]
-                         [:a {:class "btn btn-sm btn-danger" :href "/?really-reset=1"}
-                          "Yes, continue"]]])
-                     (when (not (nil? rebuild-containers))
-                       (render-rebuild-containers-dialog "/"))
-                     (when (not (nil? rebuild-launched))
-                       [:div {:class "alert alert-success"}
-                        "Container(s) are being rebuilt. This could take a few minutes "
-                        "to complete."
-                        [:div [:a {:class "btn btn-sm btn-primary mt-2" :href "/"}
-                               "Dismiss"]]])])]]]})))
+                (nil? project-name)
+                (->> (str "Unable to determine project name from: " redirect-from ". Have the "
+                          "GitHub owner and repository been specified correctly?")
+                     (codec/url-encode)
+                     (str "/?url-redirect-err="))
+
+                (= redirect-key "tree")
+                (do (refresh-locals)
+                    (let [branch-name redirect-val]
+                      (cond
+                        ;; If a branch is already checked out, redirect to it:
+                        (branches/local-branch-exists? project-name branch-name)
+                        (-> projected-path
+                            (string/replace-first #"/tree/" "/branches/")
+                            (string/replace #"/$" ""))
+
+                        ;; If there is a remote branch with that name, check it out:
+                        (branches/remote-branch-exists? project-name branch-name)
+                        (str "/" project-name "?to-checkout=" branch-name)
+
+                        ;; Else suggest that the user create a new branch:
+                        :else
+                        (str "/" project-name "?create=1&suggested-name=" branch-name))))
+
+                (= redirect-key "issues")
+                (do (refresh-all)
+                    (let [branch-name (str "fix-" redirect-val)]
+                      (cond
+                        ;; If branch is already checked out, redirect to it:
+                        (branches/local-branch-exists? project-name branch-name)
+                        (str "/" project-name "/branches/" branch-name)
+
+                        ;; If there is a remote branch with that name, check it out:
+                        (branches/remote-branch-exists? project-name branch-name)
+                        (str "/" project-name "?to-checkout=" branch-name)
+
+                        ;; Else suggest that the user create a new branch:
+                        :else
+                        (str "/" project-name "?create=1&suggested-name="
+                             branch-name))))
+
+                (= redirect-key "pull")
+                (do (refresh-all)
+                    (let [branch-name (->> (keyword project-name)
+                                           (get @branches/remote-branches)
+                                           ;; Get the name of the branch whose pull request matches
+                                           ;; the incoming URL:
+                                           (filter #(= redirect-from (:pull-request %)))
+                                           (first)
+                                           :name)]
+                      (if branch-name
+                        (if (branches/local-branch-exists? project-name branch-name)
+                          ;; If the branch is already checked out, redirect to it:
+                          (str "/" project-name "/branches/" branch-name)
+                          ;; Otherwise, check it out:
+                          (str "/" project-name "?to-checkout=" branch-name))
+                        (->> (str "Cannot redirect from " redirect-from
+                                  ". No branch corresponding to pull request #"
+                                  redirect-val " exists.")
+                             (codec/url-encode)
+                             (str "/?url-redirect-err=")))))
+
+                ;; If there is nothing after the repo (i.e., https://github.com/ORG/REPO), just
+                ;; redirect to the corresponding project page:
+                (= [owner repo] [redirect-key redirect-val])
+                (let [redirect-to (-> projected-path (string/replace #"/$" ""))]
+                  (log/debug "In process-url-redirect. Redirecting from" redirect-from "to" redirect-to)
+                  redirect-to)
+
+                ;; Miscellaneous error case:
+                :else
+                (->> usage
+                     (str "Invalid redirection URL: " redirect-from ". ")
+                     (codec/url-encode)
+                     (str "/?url-redirect-err=")))))]
+    (log/debug "Processing request in index with params:" params)
+    (cond
+      ;; If the user is a site-admin and has confirmed a reset action, do it now and redirect back
+      ;; to this page:
+      (and (site-admin? request) (not (nil? really-reset)))
+      (do
+        (log/info "Site administrator" login "requested a global reset of branch data")
+        ;; We refresh the local branches before resetting to make sure that the metadata has been
+        ;; persisted to the database:
+        (log/debug "Refreshing local branches before reset")
+        (send-off branches/local-branches
+                  branches/refresh-local-branches (-> :projects (get-config) (keys)))
+        (send-off branches/local-branches branches/reset-all-local-branches)
+        (await branches/local-branches)
+        (redirect "/"))
+
+      (and (site-admin? request) (not (nil? really-rebuild-containers)))
+      (do
+        (doseq [project-name (->> :projects (get-config) (keys) (map name))]
+          ;; We send the rebuild jobs through container-serializer so that they will run in the
+          ;; background one after another:
+          (send-off branches/container-serializer
+                    branches/rebuild-images-and-containers project-name))
+        (redirect "/?rebuild-launched=1"))
+
+      (not (nil? url))
+      (-> (process-url-redirect url) (redirect))
+
+      ;; Otherwise just render the page:
+      :else
+      (html-response
+       request
+       {:title "DROID"
+        :heading [:div [:a {:href "/"} "DROID"]]
+        :content [:div
+                  [:p "DROID Reminds us that Ordinary Individuals can be Developers"]
+                  [:div
+                   (when-not (nil? just-logged-out)
+                     [:div {:class "alert alert-info"}
+                      "You have been logged out. If this is a shared computer you may also want to "
+                      [:a {:href "https://github.com/logout"} "sign out of GitHub"]
+                      [:div {:class "pt-2"}
+                       [:a {:class "btn btn-sm btn-primary" :href "/"} "Dismiss"]]])
+                   (when-not (nil? url-redirect-err)
+                     [:div {:class "alert alert-danger"}
+                      url-redirect-err])
+                   [:div
+                    [:h3 "Available Projects"]
+                    [:table
+                     {:class "table table-borderless table-sm"}
+                     (for [project (get-config :projects)]
+                       [:tr
+                        [:td
+                         [:a
+                          {:style "font-weight: bold"
+                           :href (->> project (key) (str "/"))}
+                          (->> project (val) :project-title)]]
+                        [:td (->> project (val) :project-description)]
+                        [:td
+                         [:a
+                          {:href (str "https://github.com/"
+                                      (-> project val :github-coordinates))}
+                          (-> project val :github-coordinates)]]])]
+                    [:div {:class "mb-3 mt-3"}
+                     [:h3 "GitHub Redirection"]
+                     [:form {:action "/" :method "get"}
+                      [:div {:class "form-group row"}
+                       [:div [:label {:for "url" :class "m-1 ml-3 mr-3"} "Enter a URL:"]]
+                       [:div [:input {:id "url" :name "url" :type "text" :maxlength "200"
+                                      :onClick "this.select();"}]]
+                       [:button {:type "submit" :class "btn btn-sm btn-primary ml-2 mr-2"}
+                        "Submit"]]]]
+
+                    (when (site-admin? request)
+                      [:div
+                       [:h3 "Administration"]
+                       [:div {:class "row pb-3 pt-2 pl-3"}
+                        [:a {:class "btn btn-sm btn-danger mr-2" :href "/?reset=1"
+                             :data-toggle "tooltip"
+                             :title "Clear branch data for all managed projects"}
+                         "Reset branch data"]
+                        [:a {:class "btn btn-sm btn-warning" :href "/?rebuild-containers=1"
+                             :data-toggle "tooltip"
+                             :title "(Re)build all containers for all managed projects"}
+                         "Rebuild all containers"]]
+                       (when (not (nil? reset))
+                         [:div {:class "alert alert-danger"}
+                          "Are you sure you want to reset branch data for all projects? Note that "
+                          "doing so will kill any running processes and clear all console data."
+                          [:div {:class "pt-2"}
+                           [:a {:class "btn btn-sm btn-primary" :href "/"} "No, cancel"]
+                           [:span "&nbsp;"]
+                           [:a {:class "btn btn-sm btn-danger" :href "/?really-reset=1"}
+                            "Yes, continue"]]])
+                       (when (not (nil? rebuild-containers))
+                         (render-rebuild-containers-dialog "/"))
+                       (when (not (nil? rebuild-launched))
+                         [:div {:class "alert alert-success"}
+                          "Container(s) are being rebuilt. This could take a few minutes "
+                          "to complete."
+                          [:div [:a {:class "btn btn-sm btn-primary mt-2" :href "/"}
+                                 "Dismiss"]]])])]]]}))))
 
 (defn render-project
   "Render the home page for a project"
   [{:keys [params session]
     {:keys [project-name refresh to-delete to-really-delete delete-remote make-clean
-            to-checkout create invalid-name-error to-create branch-from
+            to-checkout create suggested-name invalid-name-error to-create branch-from
             rebuild-single-container really-rebuild-single-container
             rebuild-containers really-rebuild-containers rebuild-launched]} :params,
     {{:keys [login]} :user} :session,
@@ -977,7 +1130,8 @@
                             "Branch name"]]
                           [:div
                            [:input {:id "to-create" :name "to-create" :type "text"
-                                    :value (suggest-next-branch) :onClick "this.select();"}]]
+                                    :value (or suggested-name (suggest-next-branch))
+                                    :onClick "this.select();"}]]
                           ;; If the user previously tried to create a branch with an invalid
                           ;; name, show an alert:
                           (when-not (nil? invalid-name-error)
