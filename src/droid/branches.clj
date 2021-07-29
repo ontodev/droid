@@ -496,7 +496,11 @@
                          ["sh" "-c" (str "git config credential.helper "
                                          "'store --file=.git-credentials'")
                           :dir cloned-branch-dir]
-                         ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]])
+                         ["git" "config" "--local" "color.ui" "always" :dir cloned-branch-dir]
+                         ["git" "config" "user.name" (get-config :github-user-name)
+                          :dir cloned-branch-dir]
+                         ["git" "config" "user.email" (get-config :github-user-email)
+                          :dir cloned-branch-dir]])
       (catch Exception e
         (log/error (.getMessage e))
         (delete-recursively cloned-branch-dir)
@@ -532,6 +536,10 @@
                                          "'store --file=.git-credentials'")
                           :dir new-branch-dir]
                          ["git" "config" "--local" "color.ui" "always" :dir new-branch-dir]
+                         ["git" "config" "user.name" (get-config :github-user-name)
+                          :dir new-branch-dir]
+                         ["git" "config" "user.email" (get-config :github-user-email)
+                          :dir new-branch-dir]
                          ["git" "checkout" "-b" branch-name :dir new-branch-dir]
                          ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]])
       (remove-creds all-branches project-name branch-name)

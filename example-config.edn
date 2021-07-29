@@ -120,6 +120,18 @@
  ;;        not running in local mode.
  :github-app-id 55555
  ;;
+ ;; Parameter name :github-user-name
+ ;; Location: main configuration block
+ ;; Required: yes
+ ;; Notes: The name of the GitHub user that commits will be attributed to on github.com.
+ :github-user-name "droid.ontodev.com"
+ ;;
+ ;; Parameter name :github-user-email
+ ;; Location: main configuration block
+ ;; Required: yes
+ ;; Notes: The email of the GitHub user that commits will be attributed to on github.com.
+ :github-user-email "droid@droid.ontodev.com"
+ ;;
  ;; Parameter name :pem-file
  ;; Location: main configuration block
  ;; Required: only when not running in local mode (see above)
