@@ -51,17 +51,20 @@
         (assoc (redirect "/?just-logged-out=1") :session {}))
       (handler request))))
 
-(def ua-token-store
-  "We use this atom to hold GitHub user access tokens. The reason we need it is that some branch
-  actions require multiple requests to the server to complete. In such cases, any changes made
-  to the user access token in the first request will not be reflected in the others (though they
-  will be reflected in requests made after the given batch of requests is processed). To handle such
-  cases, we store the last known valid token set for a session into this atom. Then, when we are
-  handling a given request, if there is a token in the token store corresponding to the given,
-  session, we use it in lieu of the token contained in the request."
+(def ^:private ua-token-store
+  "Atom used to hold GitHub user access tokens"
+  ;; The reason this is needed is that some branch actions end in redirects. Any changes to the
+  ;; user's session that are made during the handling of the request, although propagated
+  ;; forward to any future brand new requests, are not propagated to the redirect. To handle such
+  ;; cases, we store the last known valid token set for a session into this atom. Then, when we are
+  ;; handling a given request, if there is a token in the token store corresponding to the given,
+  ;; session, we use it in lieu of the token contained in the request. Note that we do not need
+  ;; to persist the token store to disk. Unless we are very unlucky and the server crashes in the
+  ;; middle of a redirect, there should always be a valid token in the user's session, and user
+  ;; sessions are already being stored in db/session-store, which is persisted to disk.
   (atom {}))
 
-(defn get-latest-ua-tokens
+(defn- get-latest-ua-tokens
   "Given a session identifier, information about the user associated with that session, and
   information about the token associated with that session, determine whether the token is still
   valid or if it is expired. If it is still valid, add it, and its associated refresh token and
@@ -77,36 +80,31 @@
          stored-refresh-token :refresh-token} stored-token-map
         expires (read-quarantined-serializable-object-unsafe! expires)
         stored-expires (read-quarantined-serializable-object-unsafe! stored-expires)
-        current-time (now)
-        session-key (keyword session-key)]
-
+        current-time (now)]
     (cond
-      ;; The user isn't logged in. In this case just send back the incoming tokens:
+      ;; The user isn't logged in. In this case just send back the incoming tokens unchanged:
       (not authenticated)
       incoming-token-map
 
-      ;; The token store contains an unexpired token for the given session, which we return:
       (and stored-expires (before? current-time stored-expires))
       stored-token-map
 
       ;; There is no stored token, but the incoming token hasn't expired. Store it in the token
-      ;; store and return it:
+      ;; store and return it to the caller unchanged:
       (and (not stored-token-map) (before? current-time expires))
-      (do (swap! ua-token-store assoc session-key incoming-token-map)
+      (do (swap! ua-token-store assoc (keyword session-key) incoming-token-map)
           incoming-token-map)
 
       ;; Otherwise, request a new token from GitHub using the refresh token from the token store if
-      ;; it exists. If it does not, then try to use the incoming token (this is an edge case, which
-      ;; could occur if the stored token is lost, e.g., because of server restart or crash; in this
-      ;; case the incoming token should be valid (unless we are very unlucky) because at the end of
-      ;; a given batch of requests, there should be a valid token in the session part of the
-      ;; request, and this is persisted in the session-store database (see the module `db.clj`).
+      ;; it exists. If it does not (which might happen after a server restart), then try to use the
+      ;; incoming token instead.
       :else
-      (let [rtoken (if-not stored-refresh-token
-                     (do (log/warn "No stored refresh token found. Using incoming refresh token")
-                         refresh-token)
-                     stored-refresh-token)]
-        (log/info "Refreshing user access token for" login)
+      (let [rtoken (do
+                     (log/info "Refreshing user access token for" login)
+                     (if-not stored-refresh-token
+                       (do (log/warn "No stored refresh token found. Using incoming refresh token")
+                           refresh-token)
+                       stored-refresh-token))]
         (let [{:keys [body status headers error] :as resp}
               @(http/post "https://github.com/login/oauth/access_token"
                           {:headers {"Content-Type" "application/x-www-form-urlencoded"}
@@ -123,20 +121,23 @@
                  new-token :access_token,
                  new-validity :expires_in,
                  new-rtoken :refresh_token} (-> body (slurp) (codec/form-decode) (keywordize-keys))
-                new-expires (->> new-validity (Integer/parseInt) (seconds) (plus current-time))]
+                new-expires (when-not error
+                              (->> new-validity (Integer/parseInt) (seconds) (plus current-time)))]
             (if error
               (do
                 (log/error (str "Refresh GitHub token request returned the error: "
                                 error ": " error_description " See " error_uri))
                 {:token "error" :expires new-expires :refresh-token "error"})
-              (let [new-token-info {:token new-token, :expires new-expires, :refresh-token new-rtoken}]
-                (swap! ua-token-store assoc session-key new-token-info)
+              (let [new-token-info {:token new-token
+                                    :expires new-expires
+                                    :refresh-token new-rtoken}]
+                (swap! ua-token-store assoc (keyword session-key) new-token-info)
                 new-token-info))))))))
 
 (defn- wrap-user
   "Add user and GitHub OAuth2 information to the request."
   [handler]
-  (fn [request]
+  (fn [{session-key :session/key, :as request}]
     (handler
      ;; If the local-mode parameter is set in the config, and there is a personal access token in
      ;; the secrets map, use it to authenticate. Otherwise look for the token info in the request.
@@ -148,17 +149,19 @@
            ua-token-expires (:expires ua-token-info)
            ua-refresh-token (:refresh-token ua-token-info)
            token (or pat-token (:token ua-token-info))
+           ;; Function to save token info to the user's session parameters in the given request:
            add-token-info-to-req
-           (fn [req]
-             (-> req
-                 (assoc-in [:oauth2/access-tokens :github :token] token)
-                 (assoc-in [:oauth2/access-tokens :github :expires] ua-token-expires)
-                 (assoc-in [:oauth2/access-tokens :github :refresh-token] ua-refresh-token)))]
+           #(-> %
+                (assoc-in [:session :ring.middleware.oauth2/access-tokens :github :token] token)
+                (assoc-in [:session :ring.middleware.oauth2/access-tokens :github :expires]
+                          ua-token-expires)
+                (assoc-in [:session :ring.middleware.oauth2/access-tokens :github :refresh-token]
+                          ua-refresh-token))]
        (cond
          (= token "error")
          (do
            (log/error "The token is invalid. This error is unrecoverable. Logging user out!")
-           (-> request (dissoc :oauth2/access-tokens) (dissoc :session)))
+           (-> request (dissoc :session)))
 
          ;; If the user is already authenticated, just send the request back, replacing any existing
          ;; token info in the session part of the request with the token info retrieved above:
@@ -174,7 +177,7 @@
              (do
                (log/error "Failed to get user information from GitHub. Received error:" error
                           (str " (Status: " status ")."))
-               (-> request (dissoc :oauth2/access-tokens)))
+               (-> request :session (dissoc :ring.middleware.oauth2/access-tokens)))
              (let [user (cheshire/parse-string body true)
                    project-permissions (-> user :login (gh/get-project-permissions token))]
                (log/info "Logging in" (:login user) "with permissions" project-permissions)
