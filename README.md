@@ -589,7 +589,7 @@ The name of the newly generated `.pem` file should now be added to `config.edn` 
 
 ### Inspecting the log
 
-It is often possible to identify and resolve issues by inspecting DROID's log file. The location of the file can be configured using the parameter `:log-file` in `config.edn`. If `:log-file` is not set (or set to `nil`), then DROID's log can be viewed using the command:
+It is often possible to identify and resolve issues by inspecting DROID's log file. The location of the file can be configured using the parameter `:log-file` in `config.edn`. If `:log-file` is not set (or set to `nil`), then the log will be written to STDERR. If DROID has been set up to run as a service, the log can be viewed using the command:
 
         $ sudo journalctl -f -u droid.service
 
