@@ -86,6 +86,7 @@
       (not authenticated)
       incoming-token-map
 
+      ;; The token store contains an unexpired token for the given session, which we return:
       (and stored-expires (before? current-time stored-expires))
       stored-token-map
 
