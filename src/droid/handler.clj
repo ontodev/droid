@@ -16,7 +16,6 @@
             [ring.util.codec :as codec]
             [ring.util.request :refer [body-string]]
             [ring.util.response :refer [redirect]]
-            [taoensso.nippy :refer [read-quarantined-serializable-object-unsafe!]]
             [droid.config :refer [get-config]]
             [droid.db :as db]
             [droid.github :as gh]
@@ -78,9 +77,8 @@
         {stored-token :token,
          stored-expires :expires,
          stored-refresh-token :refresh-token} stored-token-map
-        expires (read-quarantined-serializable-object-unsafe! expires)
-        stored-expires (read-quarantined-serializable-object-unsafe! stored-expires)
         current-time (now)]
+
     (cond
       ;; The user isn't logged in. In this case just send back the incoming tokens unchanged:
       (not authenticated)
