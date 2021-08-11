@@ -16,6 +16,7 @@
             [ring.util.codec :as codec]
             [ring.util.request :refer [body-string]]
             [ring.util.response :refer [redirect]]
+            [taoensso.nippy :refer [*thaw-serializable-allowlist*]]
             [droid.config :refer [get-config]]
             [droid.db :as db]
             [droid.github :as gh]
@@ -24,6 +25,13 @@
             [droid.secrets :refer [secrets]])
   (:import (java.io ByteArrayInputStream
                     ByteArrayOutputStream)))
+
+;; The class `org.joda.time.DateTime`, which is used by GitHub to store a user access token's
+;; expiration time, is not by default one of the classes that are permitted by `nippy` to use
+;; Java's Serializable interface; so we add it explicitly here.
+;; See: https://github.com/ptaoussanis/nippy/issues/130
+(alter-var-root #'*thaw-serializable-allowlist*
+                (fn [-] (-> *thaw-serializable-allowlist* (into #{"org.joda.time.DateTime"}))))
 
 (defn- wrap-body-bytes
   "Copy the bytes of the request body to :body-bytes."
