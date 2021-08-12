@@ -31,7 +31,7 @@
     ;; Begin with the default configuration, then override the root-level parameters, docker
     ;; configuration, and individual project configurations:
     (if-not actual-config
-      (do (notify "WARNING - config.edn not found. Using example-config.edn.")
+      (do (notify "WARN - config.edn not found. Using example-config.edn.")
           default-config)
       (-> default-config
           (merge actual-config)
@@ -77,3 +77,25 @@
   (let [config (or alt-config config)]
     (or (-> :projects (get-config config) (get project-name) :docker-config)
         (get-config :docker-config config))))
+
+(defn get-env
+  "Looks for the key :env within the given config map, then for each entry in the map, if it
+  points to a valid file, read the value of the environment variable from the file, otherwise leave
+  the value of the environment variable unchanged. Finally, return the possibly interpolated map."
+  [config-map]
+  (let [env-map (or (:env config-map) {})
+        extract-val #(if-not (string/starts-with? % "file://")
+                       %
+                       (try
+                         (-> % (string/replace-first #"^file://" "") (slurp))
+                         (catch Exception e
+                           (notify "WARN - Could not read environment variable from" % ";"
+                                   (.getMessage e))
+                           %)))]
+    (->> env-map
+         (seq)
+         (map #(let [key (first %)
+                     val (-> % (second) (extract-val))]
+                 (hash-map key val)))
+         (apply merge)
+         (#(or % {})))))

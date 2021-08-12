@@ -4,7 +4,7 @@
             [me.raynes.conch.low-level :as sh]
             [droid.agent :refer [default-agent-error-handler]]
             [droid.command :as cmd]
-            [droid.config :refer [get-config get-docker-config]]
+            [droid.config :refer [get-config get-docker-config get-env]]
             [droid.db :as db]
             [droid.fileutils :refer [delete-recursively recreate-dir-if-not-exists
                                      get-workspace-dir get-temp-dir get-make-dir]]
@@ -41,8 +41,7 @@
   an agent."
   [all-current-branches project-name branch-name
    {{{:keys [login]} :user} :session,
-    {{:keys [token]} :github} :oauth2/access-tokens
-    :as request}]
+    {{:keys [token]} :github} :oauth2/access-tokens}]
   (log/info "Deleting remote branch:" branch-name "of project:" project-name)
   (-> (gh/delete-branch project-name branch-name login token)
       ;; If the delete was successful, remove the deleted branch from the branch list:
@@ -93,7 +92,7 @@
         container-id (str project-name "-" branch-name)
         git-head (-> (get-workspace-dir project-name branch-name) (str "/.git/HEAD") (slurp)
                      (string/trim-newline))
-        project-env (-> :projects (get-config) (get project-name) :env)
+        project-env (-> :projects (get-config) (get project-name) (get-env))
         ;; Redefine the command by adding in the project-level environment. The docker-specific
         ;; environment variables will be taken care of by run-command:
         command (if-not (empty? project-env)
@@ -419,8 +418,6 @@
           (cmd/throw-process-exception process "Error removing container"))
         (log/info "Removed docker container for branch:" branch-name "in project:" project-name)))))
 
-;; TODO: This doesn't work well with docker unless the server is run with sudo. The problem has to
-;; do with filesystem permissions for shared folders.
 (defn delete-local-branch
   "Deletes the given branch of the given project from the given managed server branches, and deletes
   the workspace and temporary directories for the branch in the filesystem. If make-clean? is true,
@@ -500,7 +497,8 @@
                          ["git" "config" "user.name" (get-config :github-user-name)
                           :dir cloned-branch-dir]
                          ["git" "config" "user.email" (get-config :github-user-email)
-                          :dir cloned-branch-dir]])
+                          :dir cloned-branch-dir]
+                         ["git" "fetch" :dir cloned-branch-dir]])
       (catch Exception e
         (log/error (.getMessage e))
         (delete-recursively cloned-branch-dir)
@@ -511,10 +509,7 @@
 (defn create-local-branch
   "Creates a local branch with the given branch name in the workspace for the given project, with
   the branch point given by `base-branch-name`, and adds it to the collection of local branches."
-  [all-branches project-name branch-name base-branch-name
-   {{{:keys [login]} :user} :session,
-    {{:keys [token]} :github} :oauth2/access-tokens
-    :as request}]
+  [all-branches project-name branch-name base-branch-name request]
   (let [[org repo] (-> :projects (get-config) (get project-name) :github-coordinates
                        (string/split #"/"))
         new-branch-dir (-> project-name (get-workspace-dir) (str "/" branch-name))]
@@ -541,7 +536,8 @@
                          ["git" "config" "user.email" (get-config :github-user-email)
                           :dir new-branch-dir]
                          ["git" "checkout" "-b" branch-name :dir new-branch-dir]
-                         ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]])
+                         ["git" "push" "--set-upstream" "origin" branch-name :dir new-branch-dir]
+                         ["git" "fetch" :dir new-branch-dir]])
       (remove-creds all-branches project-name branch-name)
       (catch Exception e
         (log/error (.getMessage e))

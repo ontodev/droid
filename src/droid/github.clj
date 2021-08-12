@@ -124,7 +124,10 @@
 (defn create-pr
   "Calls the GitHub API to create a pull request with the given description on the given branch in
   the given project. Returns the URL of the PR if successful or an empty string otherwise."
-  [project-name from-branch to-branch login token draft-mode? pr-to-add]
+  [project-name from-branch to-branch
+   {{{:keys [login]} :user} :session
+    {{:keys [token]} :github} :oauth2/access-tokens}
+   draft-mode? pr-to-add]
   (log/info "Creating PR" (str "\"" pr-to-add "\"") "for user" (str login ":") "Merging"
             from-branch "to" to-branch "in project" project-name)
   (let [response (-> :projects
