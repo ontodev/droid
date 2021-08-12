@@ -148,6 +148,9 @@
      ;; Library for highlighting code:
      [:script {:src "//cdn.jsdelivr.net/gh/highlightjs/cdn-release@9.16.2/build/highlight.min.js"}]
      [:script (str
+               ;; If we are auto-refreshing, scroll to the bottom of the page immediately:
+               (when auto-refresh
+                 "window.scrollTo(0,document.body.scrollHeight);")
                ;; Highlight code at load time:
                "hljs.initHighlightingOnLoad();"
                ;; Replace GMT dates with local dates, and replace GMT dates with friendly time
