@@ -33,6 +33,19 @@
 (alter-var-root #'*thaw-serializable-allowlist*
                 (fn [-] (-> *thaw-serializable-allowlist* (into #{"org.joda.time.DateTime"}))))
 
+(def ^:private ua-token-store
+  "Atom used to hold GitHub user access tokens"
+  ;; The reason this is needed is that some branch actions end in redirects. Any changes to the
+  ;; user's session that are made during the handling of the request, although propagated
+  ;; forward to any future brand new requests, are not propagated to the redirect. To handle such
+  ;; cases, we store the last known valid token set for a session into this atom. Then, when we are
+  ;; handling a given request, if there is a token in the token store corresponding to the given,
+  ;; session, we use it in lieu of the token contained in the request. Note that we do not need
+  ;; to persist the token store to disk. Unless we are very unlucky and the server crashes in the
+  ;; middle of a redirect, there should always be a valid token in the user's session, and user
+  ;; sessions are already being stored in db/session-store, which is persisted to disk.
+  (atom {}))
+
 (defn- wrap-body-bytes
   "Copy the bytes of the request body to :body-bytes."
   [handler]
@@ -55,21 +68,9 @@
     (if (= "/logout" (:uri request))
       (do
         (log/info "Logging out" (-> request :session :user :login))
+        (->> request :session/key (keyword) (swap! ua-token-store dissoc))
         (assoc (redirect "/?just-logged-out=1") :session {}))
       (handler request))))
-
-(def ^:private ua-token-store
-  "Atom used to hold GitHub user access tokens"
-  ;; The reason this is needed is that some branch actions end in redirects. Any changes to the
-  ;; user's session that are made during the handling of the request, although propagated
-  ;; forward to any future brand new requests, are not propagated to the redirect. To handle such
-  ;; cases, we store the last known valid token set for a session into this atom. Then, when we are
-  ;; handling a given request, if there is a token in the token store corresponding to the given,
-  ;; session, we use it in lieu of the token contained in the request. Note that we do not need
-  ;; to persist the token store to disk. Unless we are very unlucky and the server crashes in the
-  ;; middle of a redirect, there should always be a valid token in the user's session, and user
-  ;; sessions are already being stored in db/session-store, which is persisted to disk.
-  (atom {}))
 
 (defn- get-latest-ua-tokens
   "Given a session identifier, information about the user associated with that session, and
@@ -86,7 +87,6 @@
          stored-expires :expires,
          stored-refresh-token :refresh-token} stored-token-map
         current-time (now)]
-
     (cond
       ;; The user isn't logged in. In this case just send back the incoming tokens unchanged:
       (not authenticated)
