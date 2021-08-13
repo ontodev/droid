@@ -16,6 +16,7 @@
             [ring.util.codec :as codec]
             [ring.util.request :refer [body-string]]
             [ring.util.response :refer [redirect]]
+            [taoensso.nippy :refer [*thaw-serializable-allowlist*]]
             [droid.config :refer [get-config]]
             [droid.db :as db]
             [droid.github :as gh]
@@ -24,6 +25,26 @@
             [droid.secrets :refer [secrets]])
   (:import (java.io ByteArrayInputStream
                     ByteArrayOutputStream)))
+
+;; The class `org.joda.time.DateTime`, which is used by GitHub to store a user access token's
+;; expiration time, is not by default one of the classes that are permitted by `nippy` to use
+;; Java's Serializable interface; so we add it explicitly here.
+;; See: https://github.com/ptaoussanis/nippy/issues/130
+(alter-var-root #'*thaw-serializable-allowlist*
+                (fn [-] (-> *thaw-serializable-allowlist* (into #{"org.joda.time.DateTime"}))))
+
+(def ^:private ua-token-store
+  "Atom used to hold GitHub user access tokens"
+  ;; The reason this is needed is that some branch actions end in redirects. Any changes to the
+  ;; user's session that are made during the handling of the request, although propagated
+  ;; forward to any future brand new requests, are not propagated to the redirect. To handle such
+  ;; cases, we store the last known valid token set for a session into this atom. Then, when we are
+  ;; handling a given request, if there is a token in the token store corresponding to the given,
+  ;; session, we use it in lieu of the token contained in the request. Note that we do not need
+  ;; to persist the token store to disk. Unless we are very unlucky and the server crashes in the
+  ;; middle of a redirect, there should always be a valid token in the user's session, and user
+  ;; sessions are already being stored in db/session-store, which is persisted to disk.
+  (atom {}))
 
 (defn- wrap-body-bytes
   "Copy the bytes of the request body to :body-bytes."
@@ -47,21 +68,9 @@
     (if (= "/logout" (:uri request))
       (do
         (log/info "Logging out" (-> request :session :user :login))
+        (->> request :session/key (keyword) (swap! ua-token-store dissoc))
         (assoc (redirect "/?just-logged-out=1") :session {}))
       (handler request))))
-
-(def ^:private ua-token-store
-  "Atom used to hold GitHub user access tokens"
-  ;; The reason this is needed is that some branch actions end in redirects. Any changes to the
-  ;; user's session that are made during the handling of the request, although propagated
-  ;; forward to any future brand new requests, are not propagated to the redirect. To handle such
-  ;; cases, we store the last known valid token set for a session into this atom. Then, when we are
-  ;; handling a given request, if there is a token in the token store corresponding to the given,
-  ;; session, we use it in lieu of the token contained in the request. Note that we do not need
-  ;; to persist the token store to disk. Unless we are very unlucky and the server crashes in the
-  ;; middle of a redirect, there should always be a valid token in the user's session, and user
-  ;; sessions are already being stored in db/session-store, which is persisted to disk.
-  (atom {}))
 
 (defn- get-latest-ua-tokens
   "Given a session identifier, information about the user associated with that session, and
@@ -78,7 +87,6 @@
          stored-expires :expires,
          stored-refresh-token :refresh-token} stored-token-map
         current-time (now)]
-
     (cond
       ;; The user isn't logged in. In this case just send back the incoming tokens unchanged:
       (not authenticated)
@@ -216,8 +224,8 @@
        {:github
         {:authorize-uri    "https://github.com/login/oauth/authorize"
          :access-token-uri "https://github.com/login/oauth/access_token"
-         :client-id        (:github-client-id secrets)
-         :client-secret    (:github-client-secret secrets)
+         :client-id        (or (:github-client-id secrets) "")
+         :client-secret    (or (:github-client-secret secrets) "")
          :basic-auth?      true
          :scopes           ["user:email public_repo"]
          :launch-uri       "/oauth2/github"
