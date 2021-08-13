@@ -224,8 +224,8 @@
        {:github
         {:authorize-uri    "https://github.com/login/oauth/authorize"
          :access-token-uri "https://github.com/login/oauth/access_token"
-         :client-id        (:github-client-id secrets)
-         :client-secret    (:github-client-secret secrets)
+         :client-id        (or (:github-client-id secrets) "")
+         :client-secret    (or (:github-client-secret secrets) "")
          :basic-auth?      true
          :scopes           ["user:email public_repo"]
          :launch-uri       "/oauth2/github"
