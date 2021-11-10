@@ -1198,6 +1198,11 @@
                             :data-toggle "tooltip"
                             :title "Rebuild all containers for this project"}
                         "Rebuild all containers"])]
+                    (when (-> @branches/remote-branches (get (keyword project-name)) (count)
+                              (>= gh/max-remotes))
+                      [:div {:class "alert alert-warning"}
+                       "Warning: Your GitHub repository includes " gh/max-remotes " or more "
+                       "branches, which is more than DROID can display."])
                     (render-project-branches project-name
                                              (read-only? request)
                                              (site-admin? request))]})))))

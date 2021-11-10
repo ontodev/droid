@@ -173,6 +173,10 @@
                                       nil)))))))
        (apply merge)))
 
+;; The maximum number of branches DROID is allowed to display. This cannot be greater than 100
+;; (see https://docs.github.com/en/rest/reference/repos#list-branches)
+(def max-remotes 100)
+
 (defn get-remote-branches
   "Call the GitHub API to get the list of remote branches for the given project, using the given
   login and token for authentication."
@@ -196,7 +200,8 @@
                                      "for list of remote branches of project" project-name
                                      (when login
                                        (str "using " login "'s credentials")))
-                          (branches org repo {:oauth-token token}))]
+                          (branches org repo {:oauth-token token
+                                              :per-page max-remotes}))]
     (if (= (type remote-branches) clojure.lang.PersistentHashMap)
       (do (log/error
            "Request to retrieve remote branches of project" project-name
