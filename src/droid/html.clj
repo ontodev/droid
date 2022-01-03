@@ -491,7 +491,7 @@
 
 (defn- run-cgi
   "Run the possibly CGI-aware script located at the given path and render its response"
-  [script-path
+  [script-path path-info
    {:keys [request-method headers params form-params remote-addr server-name server-port
            body-bytes]
     {:keys [project-name branch-name]} :params,
@@ -509,7 +509,7 @@
                              "CONTENT_LENGTH" ""
                              "CONTENT_TYPE" ""
                              "GATEWAY_INTERFACE" "CGI/1.1"
-                             "PATH_INFO" ""
+                             "PATH_INFO" path-info
                              "PATH_TRANSLATED" ""
                              "QUERY_STRING" ""
                              "REMOTE_ADDR" remote-addr
@@ -1214,13 +1214,17 @@
   (let [branch-url (str "/" project-name "/branches/" branch-name)
         follow-span [:span {:id "follow-span" :class "col-sm-2"}
                      [:a {:class "btn btn-success btn-sm"
-                          :href (str branch-url "?follow=1" (when updating-view
-                                                              "&updating-view=1"))}
+                          :href (str branch-url "?follow=1"
+                                     (when updating-view
+                                       (str "&" (params-to-query-str
+                                                 {:updating-view updating-view}))))}
                       "Follow console"]]
         unfollow-span [:span {:id "unfollow-span" :class "col-sm-2"}
                        [:a {:class "btn btn-success btn-sm"
-                            :href (str branch-url (when updating-view
-                                                    "?updating-view=1"))}
+                            :href (str branch-url
+                                       (when updating-view
+                                         (str "&" (params-to-query-str
+                                                   {:updating-view updating-view}))))}
                         "Unfollow console"]]]
     (cond
       ;; The last process was cancelled:
@@ -1242,8 +1246,10 @@
        (str "Processes still running after "
             (-> run-time (/ 1000) (float) (Math/ceil) (int)) " seconds.")
        [:span {:class "col-sm-2"} [:a {:class "btn btn-success btn-sm"
-                                       :href (str branch-url (when updating-view
-                                                               "?updating-view=1"))}
+                                       :href (str branch-url
+                                                  (when updating-view
+                                                    (str "&" (params-to-query-str
+                                                              {:updating-view updating-view}))))}
                                    "Refresh"]]
        [:span {:class "col-sm-2"} [:a {:class (str "btn btn-danger btn-sm"
                                                    ;; Disable the cancel button if the user has
@@ -1251,7 +1257,9 @@
                                                    (when (read-only? project-name branch-name)
                                                      " disabled"))
                                        :href (str branch-url "?new-action=cancel-DROID-process"
-                                                  (when updating-view "&updating-view=1"))}
+                                                  (when updating-view
+                                                    (str "&" (params-to-query-str
+                                                              {:updating-view updating-view}))))}
                                    "Cancel"]]
        (if follow unfollow-span follow-span)]
 
@@ -1331,10 +1339,16 @@
   "Given some branch data, and the path for a view that needs to be rebuilt, render an alert box
   asking the user to confirm that (s)he would really like to rebuild the view."
   [{:keys [branch-name project-name action] :as branch}
-   {:keys [view-path] :as params}]
+   {:keys [view-path path-info] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
         view-url (str "/" project-name "/branches/" branch-name "/views/" view-path)
-        decoded-view-path (when view-path (string/replace view-path #"PREV_DIR\/" "../"))]
+        decoded-view-path (when view-path
+                            (-> view-path
+                                (string/replace #"PREV_DIR\/" "../")
+                                ;; If the view is a call to a CGI script that has associated path
+                                ;; information, do not show this in the dialog that is presented to
+                                ;; the user:
+                                (#(subs % 0 (- (count %) (count path-info))))))]
     [:div
      [:div {:class "alert alert-warning"}
       [:p [:span {:class "font-weight-bold text-monospace"} decoded-view-path]
@@ -1744,7 +1758,10 @@
       ;; Note that we need to encode any instances of '../' into 'PREV_DIR/' to avoid the browser
       ;; interpolating these incorrectly:
       (->> branch :action (#(string/replace % #"\.\.\/" "PREV_DIR/"))
-           (str this-url "/views/") (redirect))
+           ;; The `updating-view` parameter may contain path information that will be needed if this
+           ;; view is a call to a CGI script, so we append it to the URL that is redirected to:
+           (#(str this-url "/views/" % updating-view))
+           (redirect))
 
       ;; Otherwise process the request as normal:
       :else
@@ -1845,7 +1862,18 @@
                                            (vec)
                                            (conj (:dir-views %))
                                            (conj (:exec-views %))))))
-
+        ;; If this is an executable view and the view-path includes a component that needs to be
+        ;; interpreted as path information (i.e., that should be passed via the PATH_INFO
+        ;; environment variable to a CGI script), then extract it and store it separately from the
+        ;; actual path to the view:
+        [decoded-view-path path-info] (let [exec-view (->> allowed-exec-views
+                                                           (filter #(string/starts-with?
+                                                                     decoded-view-path
+                                                                     (str % "/")))
+                                                           (first))]
+                                        (if-not exec-view
+                                          [decoded-view-path ""]
+                                          [exec-view (->> exec-view (count) (subs decoded-view-path))]))
         makefile-name (-> @branch-agent :Makefile :name)
         ;; Runs `make -q` to see if the view is up to date:
         up-to-date? #(let [[process exit-code] (branches/run-branch-command
@@ -1894,7 +1922,7 @@
                                      (render-4xx request 400 error-msg))
 
                                    :else
-                                   (run-cgi script-path request)))
+                                   (run-cgi script-path path-info request)))
 
         ;; Serves the view from the filesystem:
         deliver-file-view (fn []
@@ -2002,14 +2030,18 @@
 
       ;; If the 'force-update' parameter is present, immediately (re)build the view in the
       ;; background and then redirect to the branch's page where the user can view the build
-      ;; process's output in the console:
+      ;; process's output in the console. The `updating-view` parameter has a dual purpose. It
+      ;; functions logically as a flag (if it is set, then this indicates that a view is being
+      ;; updated), but the value we set it to is the path information (if any) associated with the
+      ;; call to the view. Path information is relevant in the case of CGI scripts and we will need
+      ;; it once the view is up to date.
       (not (nil? force-update))
       (do
         (send-off branch-agent update-view)
         ;; Here we aren't (await)ing for the process to finish, but for the branch to update,
         ;; which in this case means adding a reference to the currently running build process:
         (await branch-agent)
-        (redirect (str branch-url "?updating-view=1")))
+        (redirect (str branch-url "?" (params-to-query-str {:updating-view path-info}))))
 
       ;; If the 'confirm-update' parameter is present, simply render the page for the branch. The
       ;; confirm-update flag will be recognised during rendering and a prompt will be displayed
@@ -2018,11 +2050,14 @@
       (render-branch-page @branch-agent request)
 
       ;; Otherwise redirect back to this page, setting the confirm-update flag to ask the user if
-      ;; she would really like to rebuild the file. We pass any existing parameters through since
-      ;; they will be needed if this is an executable view:
+      ;; she would really like to rebuild the file. We also pass any existing parameters through,
+      ;; as well as any path information, since they will be needed if this is an executable view:
       :else
       (redirect
-       (-> this-url (str "?" (-> params (assoc :confirm-update 1) (params-to-query-str))))))))
+       (-> this-url (str "?" (-> params
+                                 (assoc :confirm-update 1)
+                                 (assoc :path-info path-info)
+                                 (params-to-query-str))))))))
 
 (defn hit-branch
   "Render a branch, possibly performing an action on it in the process. Note that this function will
