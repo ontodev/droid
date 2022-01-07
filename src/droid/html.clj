@@ -97,7 +97,7 @@
 
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
-  [{:keys [session] :as request}
+  [{:keys [session params] :as request}
    {:keys [status headers title heading script content auto-refresh]
     {:keys [project-name branch-name interval]} :auto-refresh,
     :as response
@@ -195,8 +195,10 @@
                "      } "
                "    } "
                "  }; "
-               (format
-                " request.open('GET', '/%s/%s/console', true); " project-name branch-name)
+               (format "  request.open('GET', '/%s/%s/console%s', true); "
+                       project-name
+                       branch-name
+                       (str "?" (params-to-query-str params)))
                "  request.send(); "
                "} ")]
      [:script
@@ -1210,21 +1212,17 @@
 (defn- render-status-bar-for-action
   "Given some branch data, render the status bar for the currently running process."
   [{:keys [branch-name project-name run-time exit-code process cancelled console] :as branch}
-   {:keys [follow updating-view] :as params}]
+   {:keys [follow] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
         follow-span [:span {:id "follow-span" :class "col-sm-2"}
                      [:a {:class "btn btn-success btn-sm"
-                          :href (str branch-url "?follow=1"
-                                     (when updating-view
-                                       (str "&" (params-to-query-str
-                                                 {:updating-view updating-view}))))}
+                          :href (str branch-url
+                                     "?" (-> params (assoc :follow 1) (params-to-query-str)))}
                       "Follow console"]]
         unfollow-span [:span {:id "unfollow-span" :class "col-sm-2"}
                        [:a {:class "btn btn-success btn-sm"
                             :href (str branch-url
-                                       (when updating-view
-                                         (str "&" (params-to-query-str
-                                                   {:updating-view updating-view}))))}
+                                       "?" (-> params (dissoc :follow) (params-to-query-str)))}
                         "Unfollow console"]]]
     (cond
       ;; The last process was cancelled:
@@ -1246,20 +1244,14 @@
        (str "Processes still running after "
             (-> run-time (/ 1000) (float) (Math/ceil) (int)) " seconds.")
        [:span {:class "col-sm-2"} [:a {:class "btn btn-success btn-sm"
-                                       :href (str branch-url
-                                                  (when updating-view
-                                                    (str "&" (params-to-query-str
-                                                              {:updating-view updating-view}))))}
+                                       :href (str branch-url "?" (params-to-query-str params))}
                                    "Refresh"]]
        [:span {:class "col-sm-2"} [:a {:class (str "btn btn-danger btn-sm"
                                                    ;; Disable the cancel button if the user has
                                                    ;; read-only access:
                                                    (when (read-only? project-name branch-name)
                                                      " disabled"))
-                                       :href (str branch-url "?new-action=cancel-DROID-process"
-                                                  (when updating-view
-                                                    (str "&" (params-to-query-str
-                                                              {:updating-view updating-view}))))}
+                                       :href (str branch-url "?new-action=cancel-DROID-process")}
                                    "Cancel"]]
        (if follow unfollow-span follow-span)]
 
@@ -1313,10 +1305,16 @@
   "Given some branch data, and the path for a view that needs to be rebuilt, render an alert box
   asking the user to confirm that (s)he would like to kill the currently running process."
   [{:keys [branch-name project-name action] :as branch}
-   {:keys [view-path] :as params}]
+   {:keys [view-path path-info] :as params}]
   (let [branch-url (str "/" project-name "/branches/" branch-name)
         view-url (str "/" project-name "/branches/" branch-name "/views/" view-path)
-        decoded-view-path (when view-path (string/replace view-path #"PREV_DIR\/" "../"))]
+        decoded-view-path (when view-path
+                            (-> view-path
+                                (string/replace #"PREV_DIR\/" "../")
+                                ;; If the view is a call to a CGI script that has associated path
+                                ;; information, do not show this in the dialog that is presented to
+                                ;; the user:
+                                (#(subs % 0 (- (count %) (count path-info))))))]
     [:div {:class "alert alert-warning"}
      [:p [:span {:class "text-monospace font-weight-bold"} action]
       " is still not complete. You must cancel it before updating or running "
@@ -1325,7 +1323,11 @@
      [:span [:a {:class "btn btn-secondary btn-sm" :href (str branch-url "?cancel-kill-for-view=1")}
              "No, do nothing"]]
      [:span {:class "col-sm-1"}]
-     [:span [:a {:class "btn btn-danger btn-sm" :href (str view-url "?force-kill=1")}
+     [:span [:a {:class "btn btn-danger btn-sm" :href (-> view-url
+                                                          (str "?" (-> params
+                                                                       (dissoc :confirm-kill)
+                                                                       (assoc :force-kill 1)
+                                                                       (params-to-query-str))))}
              "Yes, go ahead"]]
      ;; If the view exists and it is not executable, provide the option to view a stale version:
      (when (and (->> branch :Makefile :exec-views (not-any? #(= decoded-view-path %)))
@@ -1357,7 +1359,12 @@
       [:span [:a {:class "btn btn-secondary btn-sm" :href (str branch-url "?cancel-update-view=1")}
               "Do nothing"]]
       [:span {:class "col-sm-1"}]
-      [:span [:a {:class "btn btn-danger btn-sm" :href (str view-url "?force-update=1")}
+      [:span [:a {:class "btn btn-danger btn-sm"
+                  :href (-> view-url
+                            (str "?" (-> params
+                                         (dissoc :confirm-update)
+                                         (assoc :force-update 1)
+                                         (params-to-query-str))))}
               "Rebuild the view"]]
       (when (view-exists? branch decoded-view-path)
         [:span
@@ -1399,7 +1406,7 @@
   "Given some branch data, and a number of parameters related to an action or a view, render
   the console on the branch page."
   [{:keys [branch-name project-name action start-time command exit-code console] :as branch}
-   {:keys [new-action view-path confirm-update confirm-kill updating-view] :as params}]
+   {:keys [new-action view-path confirm-update confirm-kill] :as params}]
   (letfn [(render-status-bar []
             (cond
               (and (not (nil? view-path))
@@ -1499,8 +1506,8 @@
     (send-off branch-agent branches/refresh-local-branch)
     (await branch-agent)
     (if (-> @branch-agent :exit-code (realized?))
-      (html (render-console @branch-agent {}))
-      (html (render-console @branch-agent {:follow "1"})))))
+      (html (render-console @branch-agent (dissoc params :follow)))
+      (html (render-console @branch-agent (assoc params :follow "1"))))))
 
 (defn- render-version-control-section
   "Render the Version Control section on the page for a branch"
@@ -1702,8 +1709,8 @@
   page corresponding to a branch."
   [{:keys [branch-name project-name Makefile] :as branch}
    {:keys [params]
-    {:keys [view-path missing-view confirm-kill confirm-update updating-view process-killed
-            follow commit-msg commit-amend-msg pr-to-add draft-mode]} :params
+    {:keys [view-path missing-view confirm-kill confirm-update updating-view path-info
+            process-killed follow commit-msg commit-amend-msg pr-to-add draft-mode]} :params
     :as request}]
   (let [this-url (str "/" project-name "/branches/" branch-name)]
     (cond
@@ -1751,16 +1758,18 @@
       (and follow (-> branch :exit-code (realized?)))
       (-> this-url (str "?" (-> params (dissoc :follow :folval) (params-to-query-str))) (redirect))
 
-      ;; A view has successfully finished updating a view. In this case redirect to the view.
+      ;; A view has successfully finished updating. In this case redirect to the view.
       (and updating-view
            (-> branch :exit-code (realized?))
            (-> branch :exit-code (deref) (= 0)))
       ;; Note that we need to encode any instances of '../' into 'PREV_DIR/' to avoid the browser
       ;; interpolating these incorrectly:
       (->> branch :action (#(string/replace % #"\.\.\/" "PREV_DIR/"))
-           ;; The `updating-view` parameter may contain path information that will be needed if this
-           ;; view is a call to a CGI script, so we append it to the URL that is redirected to:
-           (#(str this-url "/views/" % updating-view))
+           ;; The `path-info` parameter may contain path information that will be needed if this
+           ;; view is a call to a CGI script, so we append it to the URL that is redirected to, and
+           ;; dissociate it, and the updating-view flag, from the parameter list:
+           (#(str this-url "/views/" % path-info))
+           (#(str % "?" (-> params (dissoc :path-info :updating-view) (params-to-query-str))))
            (redirect))
 
       ;; Otherwise process the request as normal:
@@ -1873,7 +1882,8 @@
                                                            (first))]
                                         (if-not exec-view
                                           [decoded-view-path ""]
-                                          [exec-view (->> exec-view (count) (subs decoded-view-path))]))
+                                          [exec-view (->> exec-view (count)
+                                                          (subs decoded-view-path))]))
         makefile-name (-> @branch-agent :Makefile :name)
         ;; Runs `make -q` to see if the view is up to date:
         up-to-date? #(let [[process exit-code] (branches/run-branch-command
@@ -2004,7 +2014,10 @@
         (not (nil? force-kill))
         (do
           (send-off branch-agent branches/kill-process (-> request :session :user))
-          (redirect (str this-url "?process-killed=1")))
+          (redirect (str this-url "?" (-> params
+                                          (dissoc :force-kill)
+                                          (assoc :process-killed 1)
+                                          (params-to-query-str)))))
 
         ;; If the confirm-kill parameter has been sent, then simply render the page for the
         ;; branch. The confirm-kill flag will be recognised during rendering and a prompt
@@ -2015,11 +2028,15 @@
         ;; If the action currently running is an update of the very view we are requesting,
         ;; then do nothing and redirect back to the branch page:
         (->> @branch-agent :action (= decoded-view-path))
-        (redirect branch-url)
+        (redirect (str branch-url "?" (params-to-query-str params)))
 
         ;; Otherwise redirect back to the page with the confirm-kill flag set:
         :else
-        (redirect (str this-url "?confirm-kill=1#console")))
+        (redirect (str this-url "?" (-> params
+                                        (assoc :confirm-kill 1)
+                                        (assoc :path-info path-info)
+                                        (params-to-query-str))
+                       "#console")))
 
       ;; If the view is an executable, then render the current version of the view if either the
       ;; 'force-old' parameter is present, or if the view is already up-to-date:
@@ -2030,18 +2047,17 @@
 
       ;; If the 'force-update' parameter is present, immediately (re)build the view in the
       ;; background and then redirect to the branch's page where the user can view the build
-      ;; process's output in the console. The `updating-view` parameter has a dual purpose. It
-      ;; functions logically as a flag (if it is set, then this indicates that a view is being
-      ;; updated), but the value we set it to is the path information (if any) associated with the
-      ;; call to the view. Path information is relevant in the case of CGI scripts and we will need
-      ;; it once the view is up to date.
+      ;; process's output in the console.
       (not (nil? force-update))
       (do
         (send-off branch-agent update-view)
         ;; Here we aren't (await)ing for the process to finish, but for the branch to update,
         ;; which in this case means adding a reference to the currently running build process:
         (await branch-agent)
-        (redirect (str branch-url "?" (params-to-query-str {:updating-view path-info}))))
+        (redirect (-> branch-url (str "?" (-> params
+                                              (dissoc :force-update)
+                                              (assoc :updating-view 1)
+                                              (params-to-query-str))))))
 
       ;; If the 'confirm-update' parameter is present, simply render the page for the branch. The
       ;; confirm-update flag will be recognised during rendering and a prompt will be displayed
