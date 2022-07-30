@@ -95,6 +95,20 @@
       [:nav navbar-attrs
        [:small [:a {:href "/oauth2/github"} "Login via GitHub"]]])))
 
+(defn- params-to-query-str
+  "Given a map of parameters, construct a string suitable for use in a GET request"
+  [params]
+  ;; This function is useful for passing parameters through in a redirect without having to know
+  ;; what they are. It is also used to prepare the query string when running a CGI program.
+  (->> params
+       (map #(-> %
+                 (key)
+                 (name)
+                 (codec/url-encode)
+                 ;; Interpolate PREV_DIR/ as ../ if a view-path is present:
+                 (str "=" (-> % (val) (string/replace #"PREV_DIR/" "../") (codec/url-encode)))))
+       (string/join "&")))
+
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session params] :as request}
@@ -251,20 +265,6 @@
     :heading [:div "DROID"]
     :script "window.close();"
     :content [:div {:class "alert alert-info"} "You may now close this tab"]}))
-
-(defn- params-to-query-str
-  "Given a map of parameters, construct a string suitable for use in a GET request"
-  [params]
-  ;; This function is useful for passing parameters through in a redirect without having to know
-  ;; what they are. It is also used to prepare the query string when running a CGI program.
-  (->> params
-       (map #(-> %
-                 (key)
-                 (name)
-                 (codec/url-encode)
-                 ;; Interpolate PREV_DIR/ as ../ if a view-path is present:
-                 (str "=" (-> % (val) (string/replace #"PREV_DIR/" "../") (codec/url-encode)))))
-       (string/join "&")))
 
 (defn render-github-webhook-response
   "Render a response to a GitHub event hitting this endpoint. Currently just a stub"
