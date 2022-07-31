@@ -113,20 +113,13 @@
                                         :container-id container-id}))))
 
 (defn path-executable?
-  "Determine whether the given path is executable. If docker has been activated for the given
-  project, then check whether the script is executable in the container for the branch,
-  otherwise check if it is executable from the server's point of view."
-  [script-path project-name branch-name]
-  (let [docker-config (get-docker-config project-name)
-        ;; Use the container name instead of the actual ID (it works just as well):
-        container-id (str project-name "-" branch-name)]
-    (if (:disabled? docker-config)
-      (-> script-path (io/file) (.canExecute))
-      (let [[process exit-code]
-            (cmd/run-command ["test" "-x" script-path] nil {:project-name project-name
-                                                            :branch-name branch-name
-                                                            :container-id container-id})]
-        (or (= @exit-code 0) false)))))
+  "Determine whether the given path is executable. Note that this is done from the server's point of
+  view even though, in principle, the answer to whether a given path is executable may be different
+  depending on whether it is viewed from the server or the docker container's point of view.
+  However in practice the answer should always be the same, since the server has set up the docker
+  containers in the first place."
+  [script-path]
+  (-> script-path (io/file) (.canExecute)))
 
 (defn refresh-local-branch
   "Given a map containing information on the contents of the directory corresponding to the given
