@@ -35,7 +35,7 @@
               :append true)
         (catch Exception e
           (binding [*out* *err*]
-            (println now "-" "ERROR Unable to write to log file:" (get-config :log-file)
+            (println now "-" "WARN Unable to write to log file:" (get-config :log-file)
                      "- writing log to STDOUT instead")
             (println now "-" message))))
       (binding [*out* *err*]
