@@ -54,8 +54,7 @@
                      (string/starts-with? next-line "#")
                      (update-in makefile [:markdown] conj (subs next-line 1))
 
-                     ;; If we are here then we have finished reading the workflow lines. Add a
-                     ;; double newline to the end of the markdown to indicate that we're done:
+                     ;; If we are here then we have finished reading the workflow lines.
                      :else
                      (assoc makefile :workflow false)))
                  ;; The call to reduce begins with an uninitialized makefile map:

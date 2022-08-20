@@ -16,10 +16,10 @@
                  ;; Otherwise handle each possible case according to the logic below:
                  (cond (or (= % :github-client-id) (= % :github-client-secret))
                        (when-not (get-config :local-mode)
-                         (log/error (str % " must be set for non-local-mode")))
+                         (log/warn (str % " must be set for non-local-mode")))
 
                        (= % :personal-access-token)
                        (when (get-config :local-mode)
-                         (log/error (str % " must be set for local-mode")))))))
+                         (log/warn (str % " must be set for local-mode")))))))
        ;; Merge the hashmaps corresponding to each environment variable into one hashmap:
        (apply merge)))

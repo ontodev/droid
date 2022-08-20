@@ -95,6 +95,20 @@
       [:nav navbar-attrs
        [:small [:a {:href "/oauth2/github"} "Login via GitHub"]]])))
 
+(defn- params-to-query-str
+  "Given a map of parameters, construct a string suitable for use in a GET request"
+  [params]
+  ;; This function is useful for passing parameters through in a redirect without having to know
+  ;; what they are. It is also used to prepare the query string when running a CGI program.
+  (->> params
+       (map #(-> %
+                 (key)
+                 (name)
+                 (codec/url-encode)
+                 ;; Interpolate PREV_DIR/ as ../ if a view-path is present:
+                 (str "=" (-> % (val) (string/replace #"PREV_DIR/" "../") (codec/url-encode)))))
+       (string/join "&")))
+
 (defn- html-response
   "Given a request map and a response map, return the response as an HTML page."
   [{:keys [session params] :as request}
@@ -251,20 +265,6 @@
     :heading [:div "DROID"]
     :script "window.close();"
     :content [:div {:class "alert alert-info"} "You may now close this tab"]}))
-
-(defn- params-to-query-str
-  "Given a map of parameters, construct a string suitable for use in a GET request"
-  [params]
-  ;; This function is useful for passing parameters through in a redirect without having to know
-  ;; what they are. It is also used to prepare the query string when running a CGI program.
-  (->> params
-       (map #(-> %
-                 (key)
-                 (name)
-                 (codec/url-encode)
-                 ;; Interpolate PREV_DIR/ as ../ if a view-path is present:
-                 (str "=" (-> % (val) (string/replace #"PREV_DIR/" "../") (codec/url-encode)))))
-       (string/join "&")))
 
 (defn render-github-webhook-response
   "Render a response to a GitHub event hitting this endpoint. Currently just a stub"
@@ -1517,10 +1517,9 @@
             pr-added]} :params
     :as request}]
   (let [get-last-commit-msg #(let [[process exit-code]
-                                   (branches/run-branch-command
+                                   (cmd/run-command
                                     ["git" "show" "-s" "--format=%s"
-                                     :dir (get-workspace-dir project-name branch-name)]
-                                    project-name branch-name)]
+                                     :dir (get-workspace-dir project-name branch-name)])]
                                (if-not (= 0 @exit-code)
                                  (do (log/error "Unable to retrieve previous commit message:"
                                                 (sh/stream-to-string process :err))
@@ -1528,11 +1527,10 @@
                                  (sh/stream-to-string process :out)))
 
         get-commits-to-push #(let [[process exit-code]
-                                   (branches/run-branch-command
+                                   (cmd/run-command
                                     ["git" "log" "--branches" "--not" "--remotes"
                                      "--reverse" "--format=%s"
-                                     :dir (get-workspace-dir project-name branch-name)]
-                                    project-name branch-name)]
+                                     :dir (get-workspace-dir project-name branch-name)])]
                                (if-not (= 0 @exit-code)
                                  (do (log/error "Unable to retrieve commit list:"
                                                 (sh/stream-to-string process :err))
@@ -1886,10 +1884,9 @@
                                                           (subs decoded-view-path))]))
         makefile-name (-> @branch-agent :Makefile :name)
         ;; Runs `make -q` to see if the view is up to date:
-        up-to-date? #(let [[process exit-code] (branches/run-branch-command
+        up-to-date? #(let [[process exit-code] (cmd/run-command
                                                 ["make" "-f" makefile-name "-q" decoded-view-path
-                                                 :dir (get-make-dir project-name branch-name)]
-                                                project-name branch-name)]
+                                                 :dir (get-make-dir project-name branch-name)])]
                        (or (= @exit-code 0) false))
 
         ;; Runs `make` (in the background) to rebuild the view, with output directed to the branch's
@@ -1920,8 +1917,7 @@
         ;; Delivers an executable, possibly CGI-aware, script:
         deliver-exec-view #(let [script-path (-> (get-make-dir project-name branch-name)
                                                  (str "/" decoded-view-path))]
-                             (cond (not (branches/path-executable?
-                                         script-path project-name branch-name))
+                             (cond (not (branches/path-executable? script-path))
                                    (let [error-msg (str script-path " is not executable")]
                                      (log/error error-msg)
                                      (render-4xx request 400 error-msg))
