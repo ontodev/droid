@@ -493,8 +493,8 @@
 
 (defn- run-cgi
   "Run the possibly CGI-aware script located at the given path and render its response"
-  [script-path path-info
-   {:keys [request-method headers params form-params remote-addr server-name server-port
+  [script-url script-path path-info
+   {:keys [request-method headers params form-params remote-addr scheme server-name server-port
            body-bytes]
     {:keys [project-name branch-name]} :params,
     {{:keys [login]} :user} :session,
@@ -518,7 +518,11 @@
                              "REMOTE_HOST" remote-addr
                              "REMOTE_IDENT" ""
                              "REMOTE_USER" login
-                             "SCRIPT_NAME" (str "/" script-path)
+                             "SCRIPT_NAME" (-> scheme
+                                               (name)
+                                               (str "://" server-name)
+                                               (str (when server-port (str ":" server-port)))
+                                               (str script-url))
                              "SERVER_NAME" server-name
                              "SERVER_PORT" (str server-port)
                              "SERVER_PROTOCOL" "HTTP/1.1"
@@ -1929,7 +1933,7 @@
                                      (render-4xx request 400 error-msg))
 
                                    :else
-                                   (run-cgi script-path path-info request)))
+                                   (run-cgi this-url script-path path-info request)))
 
         ;; Serves the view from the filesystem:
         deliver-file-view (fn []
