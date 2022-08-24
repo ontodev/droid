@@ -511,7 +511,7 @@
                              "CONTENT_LENGTH" ""
                              "CONTENT_TYPE" ""
                              "GATEWAY_INTERFACE" "CGI/1.1"
-                             "PATH_INFO" path-info
+                             "PATH_INFO" (or (not-empty path-info) "/")
                              "PATH_TRANSLATED" ""
                              "QUERY_STRING" ""
                              "REMOTE_ADDR" remote-addr
