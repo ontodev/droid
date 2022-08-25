@@ -79,11 +79,11 @@ The following installation and configuration instructions have been written for 
 
         $ ./install.sh
 
-    You will see warnings and errors like:
+    You will see warnings like:
     
-        WARNING - config.edn not found. Using example-config.edn. 
-        2021-02-14 09:56:55.802-0500 - ERROR :github-client-id must be set for non-local-mode
-        2021-02-14 09:56:55.805-0500 - ERROR :github-client-secret must be set for non-local-mode
+        WARN - config.edn not found. Using example-config.edn. 
+        2021-02-14 09:56:55.802-0500 - WARN :github-client-id must be set for non-local-mode
+        2021-02-14 09:56:55.805-0500 - WARN :github-client-secret must be set for non-local-mode
         
     These can be safely ignored at this time. Section [Configuration](#configuration) contains instructions for configuring DROID.
     
@@ -122,8 +122,8 @@ Then edit the newly created `config.edn` file as necessary. The file includes ex
 
         $ droid --init-config
         WARNING - config.edn not found. Using example-config.edn. 
-        2021-02-14 11:14:37.486-0500 - ERROR :github-client-id must be set for non-local-mode
-        2021-02-14 11:14:37.493-0500 - ERROR :github-client-secret must be set for non-local-mode
+        2021-02-14 11:14:37.486-0500 - WARN :github-client-id must be set for non-local-mode
+        2021-02-14 11:14:37.493-0500 - WARN :github-client-secret must be set for non-local-mode
         2021-02-14 11:14:37.905-0500 - INFO Checking root-level configuration ...
         2021-02-14 11:14:37.911-0500 - INFO Checking root-level docker configuration ...
         2021-02-14 11:14:37.912-0500 - INFO Checking configuration for project project1 ...
@@ -131,7 +131,7 @@ Then edit the newly created `config.edn` file as necessary. The file includes ex
         2021-02-14 11:14:37.917-0500 - INFO Checking configuration for project project2 ...
         2021-02-14 11:14:37.918-0500 - INFO Checking docker configuration for project project2 ...
 
-    Since we haven't yet created our `config.edn` file, you can ignore the errors and warnings above. Once these initial checks have completed, the setup wizard will ask if you would like to configure DROID to run in local mode (or in server mode). Pressing Enter implies the default answer of 'N', which means that DROID will be configured for server mode.
+    Since we haven't yet created our `config.edn` file, you can ignore the warnings above. Once these initial checks have completed, the setup wizard will ask if you would like to configure DROID to run in local mode (or in server mode). Pressing Enter implies the default answer of 'N', which means that DROID will be configured for server mode.
 
         DROID can run in local mode, in which case you will need to set the environment
         variable PERSONAL_ACCESS_TOKEN to the value of the GitHub personal access token
@@ -215,8 +215,8 @@ You now have the minimal configuration required to work with whatever projects y
 Whenever you make manual changes to `config.edn`, you should then run `droid` with the `--check-config` option:
 
         $ droid --check-config
-        2021-02-16 11:07:03.424-0500 - ERROR :github-client-id must be set for non-local-mode
-        2021-02-16 11:07:03.427-0500 - ERROR :github-client-secret must be set for non-local-mode
+        2021-02-16 11:07:03.424-0500 - WARN :github-client-id must be set for non-local-mode
+        2021-02-16 11:07:03.427-0500 - WARN :github-client-secret must be set for non-local-mode
         2021-02-16 11:07:03.876-0500 - INFO Checking root-level configuration ...
         2021-02-16 11:07:03.879-0500 - INFO Checking root-level docker configuration ...
         2021-02-16 11:07:03.879-0500 - INFO Checking configuration for project lmcmicu-my-project ...

@@ -84,6 +84,13 @@
                  ;;        within the container, if not otherwise specified.
                  :default-working-dir "/workspace/"
                  ;;
+                 ;; Parameter name :extra-volumes
+                 ;; Location: fallback docker configuration block
+                 ;; Required: only when fallback docker configuration is enabled (see above)
+                 ;; Notes: Other volumes that should be mounting when running the container (e.g., the postgresql
+                 ;;        socket connection location).
+                 :extra-volumes []
+                 ;;
                  ;; Parameter name :shell-command
                  ;; Location: fallback docker configuration block
                  ;; Required: only when fallback docker configuration is enabled (see above)
@@ -255,6 +262,14 @@
                                         ;;        container.
                                         :default-working-dir "/workspace/"
                                         ;;
+                                        ;; Parameter name :extra-volumes
+                                        ;; Location: project-specific docker configuration block
+                                        ;; Required: only when project-specific docker configuration
+                                        ;;           is enabled (see above)
+                                        ;; Notes: Other volumes that should be mounting when running the container
+                                        ;;        (e.g., the postgresql socket connection location).
+                                        :extra-volumes []
+                                        ;;
                                         ;; Parameter name :shell-command
                                         ;; Location: project-specific docker configuration block
                                         ;; Required: only when project-specific docker configuration
@@ -281,5 +296,6 @@
                                         :workspace-dir "/workspace/"
                                         :temp-dir "/tmp/droid/"
                                         :default-working-dir "/workspace/"
+                                        :extra-volumes []
                                         :shell-command "sh"
                                         :env {}}}}}

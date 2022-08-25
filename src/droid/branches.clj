@@ -200,6 +200,9 @@
                           " --name " container-name
                           " --volume " (str ws-dir ":" (:workspace-dir docker-config))
                           " --volume " (str tmp-dir ":" (:temp-dir docker-config))
+                          (->> (:extra-volumes docker-config)
+                               (map #(str " --volume " % ":" %))
+                               (apply str))
                           " " image-ref " "
                           (:shell-command docker-config) " >" output-redirect
                           " &&"

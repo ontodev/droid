@@ -44,6 +44,7 @@
          :workspace-dir {:required-when {:disabled? false}, :allowed-types [String]}
          :temp-dir {:required-when {:disabled? false}, :allowed-types [String]}
          :default-working-dir {:required-when {:disabled? false}, :allowed-types [String]}
+         :extra-volumes {:required-always? true, :allowed-types [clojure.lang.PersistentVector]}
          :shell-command {:required-when {:disabled? false}, :allowed-types [String]}
          :env {:allowed-types [clojure.lang.PersistentArrayMap,
                                clojure.lang.PersistentHashMap]}}
@@ -326,6 +327,7 @@
                                                :workspace-dir "/workspace/"
                                                :temp-dir "/tmp/droid/"
                                                :default-working-dir "/workspace/"
+                                               :extra-volumes []
                                                :shell-command "sh"
                                                :env {}}}})
               ;; Otherwise if no project parameters have been specified, allow the user to configure
