@@ -493,8 +493,8 @@
 
 (defn- run-cgi
   "Run the possibly CGI-aware script located at the given path and render its response"
-  [script-path path-info
-   {:keys [request-method headers params form-params remote-addr server-name server-port
+  [script-url script-path path-info
+   {:keys [request-method headers params form-params remote-addr scheme server-name server-port
            body-bytes]
     {:keys [project-name branch-name]} :params,
     {{:keys [login]} :user} :session,
@@ -511,14 +511,18 @@
                              "CONTENT_LENGTH" ""
                              "CONTENT_TYPE" ""
                              "GATEWAY_INTERFACE" "CGI/1.1"
-                             "PATH_INFO" path-info
+                             "PATH_INFO" (or (not-empty path-info) "/")
                              "PATH_TRANSLATED" ""
                              "QUERY_STRING" ""
                              "REMOTE_ADDR" remote-addr
                              "REMOTE_HOST" remote-addr
                              "REMOTE_IDENT" ""
                              "REMOTE_USER" login
-                             "SCRIPT_NAME" (str "/" script-path)
+                             "SCRIPT_NAME" (-> scheme
+                                               (name)
+                                               (str "://" server-name)
+                                               (str (when server-port (str ":" server-port)))
+                                               (str script-url))
                              "SERVER_NAME" server-name
                              "SERVER_PORT" (str server-port)
                              "SERVER_PROTOCOL" "HTTP/1.1"
@@ -1859,16 +1863,17 @@
         ;; one of these allowed views will be honoured:
         [allowed-file-views
          allowed-dir-views
-         allowed-exec-views] (do (send-off branch-agent branches/refresh-local-branch)
-                                 (await branch-agent)
-                                 (-> @branch-agent
-                                     :Makefile
+         allowed-exec-views] (when-not (nil? branch-agent)
+                               (send-off branch-agent branches/refresh-local-branch)
+                               (await branch-agent)
+                               (-> @branch-agent
+                                   :Makefile
                                      ;; Generate a vector of hash sets for each type of view:
-                                     (#(-> (:file-views %)
-                                           (hash-set)
-                                           (vec)
-                                           (conj (:dir-views %))
-                                           (conj (:exec-views %))))))
+                                   (#(-> (:file-views %)
+                                         (hash-set)
+                                         (vec)
+                                         (conj (:dir-views %))
+                                         (conj (:exec-views %))))))
         ;; If this is an executable view and the view-path includes a component that needs to be
         ;; interpreted as path information (i.e., that should be passed via the PATH_INFO
         ;; environment variable to a CGI script), then extract it and store it separately from the
@@ -1882,7 +1887,7 @@
                                           [decoded-view-path ""]
                                           [exec-view (->> exec-view (count)
                                                           (subs decoded-view-path))]))
-        makefile-name (-> @branch-agent :Makefile :name)
+        makefile-name (when-not (nil? branch-agent) (-> @branch-agent :Makefile :name))
         ;; Runs `make -q` to see if the view is up to date:
         up-to-date? #(let [[process exit-code] (cmd/run-command
                                                 ["make" "-f" makefile-name "-q" decoded-view-path
@@ -1928,7 +1933,7 @@
                                      (render-4xx request 400 error-msg))
 
                                    :else
-                                   (run-cgi script-path path-info request)))
+                                   (run-cgi this-url script-path path-info request)))
 
         ;; Serves the view from the filesystem:
         deliver-file-view (fn []
@@ -1950,6 +1955,10 @@
     ;; always then redirect back to the view page, which results in another call to this function,
     ;; which always calls await when it starts (see above).
     (cond
+      ;; The given branch does not exist:
+      (nil? branch-agent)
+      (render-404 request)
+
       ;; If the view-path is not in the workspace directory, render a 403 forbidden
       (-> (str canonical-view-path "/") (string/starts-with? canonical-ws-dir) (not))
       (do
