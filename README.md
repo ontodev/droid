@@ -411,7 +411,7 @@ To create your own GitHub App to use with DROID, follow the step-by-step instruc
 
 * The **Homepage URL** should be set to `https://github.com/ontodev/droid`
 * The **Callback URL** should be set to `<protocol>://<server-address:server-port>/oauth2/github/callback` where `<protocol>` is either `http` or `https`.
-* **Expire user authorization tokens** should be unchecked.
+* **Expire user authorization tokens** should be selected.
 * **Webhooks** should be disabled.
 * Make sure that the DROID App has, at a minimum, the **following permissions:**
   - Contents: read & write
