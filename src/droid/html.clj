@@ -1089,11 +1089,12 @@
                          [:button {:class "btn btn-sm btn-danger" :type "submit"}
                           "Yes, continue"]]
                         [:div {:class "row ml-1"}
-                         [:div {:class "form-check pt-2 mr-3"}
-                          [:input {:class "form-check-input" :type "checkbox" :value "1"
-                                   :id "delete-remote" :name "delete-remote"}]
-                          [:label {:class "form-check-label" :for "delete-remote"}
-                           "Also delete remote branch"]]
+                         (when-not (or (= to-delete "master") (= to-delete "main"))
+                           [:div {:class "form-check pt-2 mr-3"}
+                            [:input {:class "form-check-input" :type "checkbox" :value "1"
+                                     :id "delete-remote" :name "delete-remote"}]
+                            [:label {:class "form-check-label" :for "delete-remote"}
+                             "Also delete remote branch"]])
                          ;; If the Makefile has a 'clean' target, give the user the option to run
                          ;; `make clean` after deleting the branch:
                          (when (->> (keyword project-name) (get @branches/local-branches)
