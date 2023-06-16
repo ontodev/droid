@@ -20,9 +20,14 @@
   "Initialize the remote GitHub branches corresponding to the given project, using the given
   login and token for the call to GitHub."
   [project-name login token]
-  (-> project-name
-      (keyword)
-      (hash-map (gh/get-remote-branches project-name login token))))
+  (let [default-branch (gh/get-default-branch project-name login token)
+        remote-branches (->> (gh/get-remote-branches project-name login token)
+                             (map #(if (= (:name %) default-branch)
+                                     (assoc % :default-branch true)
+                                     %)))]
+    (-> project-name
+        (keyword)
+        (hash-map remote-branches))))
 
 (defn refresh-remote-branches-for-project
   "Refresh the remote GitHub branches associated with the given project, using the given login and
@@ -69,14 +74,14 @@
        (some #(= branch-name %))))
 
 (defn get-remote-main
-  "Gets the main branch for the given project, which could be either 'main' or 'master'. If neither
-  exists log an error and return nothing."
+  "Gets the main branch name (a.k.a. the default branch name) for the given project."
   [project-name]
-  (cond
-    (remote-branch-exists? project-name "main") "main"
-    (remote-branch-exists? project-name "master") "master"
-    :else (throw (Exception. (str "Error while attempting to create a pr: " project-name
-                                  " has neither a main nor a master branch")))))
+  (->> project-name
+       (keyword)
+       (get @remote-branches)
+       (filter #(= (:default-branch %) true))
+       (first)
+       :name))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Code related to local branches (i.e., branches managed by the server in its workspace)
@@ -200,6 +205,9 @@
                           " --name " container-name
                           " --volume " (str ws-dir ":" (:workspace-dir docker-config))
                           " --volume " (str tmp-dir ":" (:temp-dir docker-config))
+                          (->> (:extra-volumes docker-config)
+                               (map #(str " --volume " % ":" %))
+                               (apply str))
                           " " image-ref " "
                           (:shell-command docker-config) " >" output-redirect
                           " &&"

@@ -349,6 +349,8 @@
                                            -1
                                            1))))
 
+        main-branch-name (branches/get-remote-main project-name)
+
         container-list (if-not site-admin-access?
                          ;; If the user is not a site admin return an empty map:
                          {}
@@ -449,14 +451,14 @@
        (when site-admin-access?
          [:th (str "Containers " (when (-> project-name (get-docker-config) :disabled?)
                                    " (disabled)"))])]]
-     ;; Render the local main (or master) branch first if it is present:
+     ;; Render the local main branch first if it is present:
      (->> local-branch-names
-          (filter #(or (= % "master") (= % "main")))
+          (filter #(= % main-branch-name))
           (first)
           (render-local-branch-row))
      ;; Render all of the other local branches:
      (for [local-branch-name (->> local-branch-names
-                                  (filter #(and (not= % "master") (not= % "main")))
+                                  (filter #(not= % main-branch-name))
                                   ;; Branches with pull requests get displayed first, otherwise sort
                                   ;; by name.
                                   (sort (fn [one two]
@@ -478,16 +480,15 @@
 
        (render-local-branch-row local-branch-name))
 
-     ;; Render the remote master/main branch if it is present and there is no local copy:
-     (when (not-any? #(or (= % "master") (= % "main")) local-branch-names)
+     ;; Render the remote main branch if it is present and there is no local copy:
+     (when (not-any? #(= % main-branch-name) local-branch-names)
        (->> remote-branches
-            (filter #(or (= (:name %) "master") (= (:name %) "main")))
+            (filter #(or (= (:name %) main-branch-name)))
             (first)
             (render-remote-branch-row)))
      ;; Render all of the other remote branches that don't have local copies:
      (for [remote-branch remote-branches]
-       (when (and (not= (:name remote-branch) "master")
-                  (not= (:name remote-branch) "main")
+       (when (and (not= (:name remote-branch) main-branch-name)
                   (not-any? #(= (:name remote-branch) %) local-branch-names))
          (render-remote-branch-row remote-branch)))]))
 
@@ -1127,11 +1128,11 @@
                                                   (get @branches/remote-branches)
                                                   (map #(get % :name))
                                                   (sort))]
-                             ;; The master branch is selected by default:
+                             ;; The main branch is selected by default:
                              [:option
-                              (merge {:value branch-name} (when (or (= branch-name "master")
-                                                                    (= branch-name "main"))
-                                                            {:selected "selected"}))
+                              (merge {:value branch-name}
+                                     (when (= branch-name (branches/get-remote-main project-name))
+                                       {:selected "selected"}))
                               branch-name])]]
                          ;; Input box for inputting the desired new branch name:
                          [:div {:class "col-sm-3"}
@@ -1618,8 +1619,8 @@
                     (first)
                     :pull-request))]
          (cond
-           ;; If this is the master/main branch, then PRs aren't relevant:
-           (or (= branch-name "master") (= branch-name "main"))
+           ;; If this is the main branch, then PRs aren't relevant:
+           (= branch-name (branches/get-remote-main project-name))
            [:div]
 
            ;; If the current branch doesn't already have a PR associated, provide the user with

@@ -213,6 +213,26 @@
            (map #(assoc % :pull-request (-> % :name (get-branch-pr))))
            (vec)))))
 
+(defn get-default-branch
+  "Call the GitHub API to get the default branch for the given project, using the given login and
+  token for authentication"
+  [project-name login token]
+  (let [[org repo] (-> :projects
+                       (get-config)
+                       (get project-name)
+                       :github-coordinates
+                       (string/split #"/"))]
+    (do
+      (log/debug "Querying GitHub repository" (str org "/" repo)
+                 "for the default branch for project" project-name
+                 (when login
+                   (str "using " login "'s credentials")))
+      (-> (api-call :get "repos/%s/%s" [org repo] {:oauth-token token})
+          (#(or (:default_branch %)
+                (log/error "Unable to retrieve default branch for project" project-name
+                           "with reason:" (-> % :body :message)
+                           (str "(see: " (-> % :body :documentation_url) ")"))))))))
+
 (defn delete-branch
   "Calls the GitHub API to delete the given branch of the given project. Returns true if the delete
   was successful and false otherwise."
