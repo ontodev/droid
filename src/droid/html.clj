@@ -554,6 +554,7 @@
                           "/" basename ".in." (System/currentTimeMillis))
           tmp-outfile (str (get-temp-dir project-name branch-name)
                            "/" basename ".out." (System/currentTimeMillis))
+          console-file (-> (get-temp-dir project-name branch-name) (str "/console.txt"))
           ;; Note: To test a script on the command line, do:
           ;; export REQUEST_METHOD="POST"; \
           ;;   export CONTENT_TYPE="application/x-www-form-urlencoded"; \
@@ -565,12 +566,13 @@
                               (.write w body-bytes))
                             (branches/run-branch-command
                              ["sh" "-c"
-                              (str "./" basename " < " tmp-infile " > " tmp-outfile)
+                              (str "./" basename " < " tmp-infile " > " tmp-outfile
+                                   " 2> " console-file)
                               :dir dirname :env cgi-input-env]
                              project-name branch-name timeout))
                         (do
                           (branches/run-branch-command
-                           ["sh" "-c" (str "./" basename " > " tmp-outfile)
+                           ["sh" "-c" (str "./" basename " > " tmp-outfile " 2> " console-file)
                             :dir dirname :env cgi-input-env]
                            project-name branch-name timeout)))
           ;; We expect a blank line separating the response's header and body:
@@ -619,6 +621,11 @@
             ;; output proper, contained in the remaining sections of the response. In this case the
             ;; output is parsed into hiccup and embedded into a div:
             (let [body (->> response-sections (drop 2) (apply concat) (vec) (string/join "\n"))]
+              ;; Push the cgi script name to the branch as the last command and action run:
+              (-> @branches/local-branches
+                  (get (keyword project-name))
+                  (get (keyword branch-name))
+                  (send #(assoc % :command (str basename " (CGI script)") :action basename)))
               (if (= "text/html-fragment" (headers "Content-Type"))
                 ;; If this is a HTML fragment, wrap it in DROID's fancy headers:
                 (->> body (hickory/parse-fragment) (map hickory/as-hiccup) (into [:div])
@@ -642,12 +649,12 @@
             ;; If the response does not have a valid header, then all of it is treated as valid
             ;; output. In this case we write this output to the console, modify the values for
             ;; `command` and `action` in the branch, and then redirect back to the branch page:
-            (let [console-path (-> (get-temp-dir project-name branch-name) (str "/console.txt"))]
+            (do
               (->> response-sections
                    (apply concat)
                    (vec)
                    (string/join "\n")
-                   (spit console-path))
+                   (spit console-file))
               (-> @branches/local-branches
                   (get (keyword project-name))
                   (get (keyword branch-name))
