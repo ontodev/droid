@@ -1929,11 +1929,6 @@
                                      (log/error error-msg)
                                      (render-4xx request 400 error-msg))
 
-                                   (-> script-path (slurp) (string/starts-with? "#!") (not))
-                                   (let [error-msg (str script-path " does not start with '#!'")]
-                                     (log/error error-msg)
-                                     (render-4xx request 400 error-msg))
-
                                    :else
                                    (run-cgi this-url script-path path-info request)))
 
