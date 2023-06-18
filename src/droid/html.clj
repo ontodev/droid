@@ -598,10 +598,16 @@
         :else
         (let [response-sections (-> (slurp tmp-outfile) (split-response))
               ;; Every line in the header must be of the form: <something>: <something else>
-              ;; and one of the headers must be for content-type
+              ;; and the headers must include one for either content-type, location, or status.
               valid-header? (and (->> (first response-sections)
                                       (map string/lower-case)
-                                      (some #(re-matches #"^\s*content-type:(\s+\S+)+\s*$" %)))
+                                      ((fn [line]
+                                         (or (some #(re-matches #"^\s*content-type:(\s+\S+)+\s*$" %)
+                                                   line)
+                                             (some #(re-matches #"^\s*location:(\s+\S+)+\s*$" %)
+                                                   line)
+                                             (some #(re-matches #"^\s*status:(\s+\S+)+\s*$" %)
+                                                   line)))))
                                  (->> (first response-sections)
                                       (every? #(re-matches #"^\s*\S+:(\s+\S+)+\s*$" %))))
               headers (if-not valid-header?
