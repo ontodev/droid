@@ -495,9 +495,9 @@
 (defn- run-cgi
   "Run the possibly CGI-aware script located at the given path and render its response"
   [script-url script-path path-info
-   {:keys [request-method headers params form-params remote-addr scheme server-name server-port
+   {:keys [request-method headers query-params remote-addr scheme server-name server-port
            body-bytes]
-    {:keys [project-name branch-name]} :params,
+    {:keys [project-name branch-name view-path]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
   (if (read-only? request)
@@ -507,10 +507,13 @@
           branch-url (str "/" project-name "/branches/" branch-name)
           dirname (-> script-path (io/file) (.getParent))
           basename (-> script-path (io/file) (.getName))
-          query-string (-> params (params-to-query-str))
+          query-string (-> query-params (params-to-query-str))
           cgi-input-env (-> {"AUTH_TYPE" ""
                              "CONTENT_LENGTH" ""
                              "CONTENT_TYPE" ""
+                             "DROID_BRANCH_NAME" branch-name
+                             "DROID_PROJECT_NAME" project-name
+                             "DROID_VIEW_PATH" view-path
                              "GATEWAY_INTERFACE" "CGI/1.1"
                              "PATH_INFO" (or (not-empty path-info) "/")
                              "PATH_TRANSLATED" ""
