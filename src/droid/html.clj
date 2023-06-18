@@ -21,7 +21,7 @@
             [droid.secrets :refer [secrets]]))
 
 (def default-html-headers
-  {"Content-Type" "text/html"})
+  {"content-type" "text/html"})
 
 (defn- container-rebuilding?
   "Returns true if the given branch is rebuilding a docker container"
@@ -598,9 +598,10 @@
         :else
         (let [response-sections (-> (slurp tmp-outfile) (split-response))
               ;; Every line in the header must be of the form: <something>: <something else>
-              ;; and one of the headers must be for Content-Type
+              ;; and one of the headers must be for content-type
               valid-header? (and (->> (first response-sections)
-                                      (some #(re-matches #"^\s*Content-Type:(\s+\S+)+\s*$" %)))
+                                      (map string/lower-case)
+                                      (some #(re-matches #"^\s*content-type:(\s+\S+)+\s*$" %)))
                                  (->> (first response-sections)
                                       (every? #(re-matches #"^\s*\S+:(\s+\S+)+\s*$" %))))
               headers (if-not valid-header?
@@ -609,6 +610,7 @@
                         ;; Otherwise, construct a map out of the header lines that looks like:
                         ;; {"header1" "header1-value", "header2", "header2-value", ...}
                         (->> (first response-sections)
+                             (map string/lower-case)
                              (map string/trim)
                              (map #(string/split % #":\s+"))
                              (map #(apply hash-map %))
@@ -629,14 +631,14 @@
                   (get (keyword project-name))
                   (get (keyword branch-name))
                   (send #(assoc % :command (str basename " (CGI script)") :action basename)))
-              (if (= "text/html-fragment" (headers "Content-Type"))
+              (if (= "text/html-fragment" (headers "content-type"))
                 ;; If this is a HTML fragment, wrap it in DROID's fancy headers:
                 (->> body (hickory/parse-fragment) (map hickory/as-hiccup) (into [:div])
-                     (hash-map :headers (assoc headers "Content-Type" "text/html")
+                     (hash-map :headers (assoc headers "content-type" "text/html")
                                :content)
                      (html-response request))
                 ;; Otherwise return it as is:
-                {:status (let [status (headers "Status")]
+                {:status (let [status (headers "status")]
                            (if-not status
                              (log/info "CGI script returned no status. Assuming 200.")
                              (log/info "CGI script returned status:" status))
