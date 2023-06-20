@@ -118,7 +118,7 @@
                     (let [text (-> target
                                    ;; Executable views should only show the basename of the script
                                    ;; (without the extension):
-                                   (string/replace #"^\.\/(\.\.\/)*([\w\-_]+\/)*([\w\-_]+)(\.\w+)"
+                                   (string/replace #"^\.\/(\.\.\/)*([\w\-_]+\/)*([\w\-_]+)(\.\w+)?"
                                                    "$3")
                                    ;; Replace '../' and trailing '/' in file and directory views:
                                    (string/replace #"\/$" "")
@@ -126,7 +126,7 @@
                       (cond
                         ;; Executable views:
                         (string/starts-with? target "./")
-                        (let [href-base (-> target (string/trim) (string/split #"\s+") (first))
+                        (let [href-base (-> target (string/trim) (string/split #"\s+") (first) (str "/"))
                               options (let [options (-> text (string/split #"\s+" 2))]
                                         (when (> (count options) 1)
                                           (->> options (last) (#(string/split % #"(=|\s*\-\-)"))
@@ -179,7 +179,7 @@
                 ;; removing any such prefix and/or suffix. At the same time we want to preserve
                 ;; these in the actual HTML that gets rendered on the branch page. This function
                 ;; translates a non-normalized view into a normalized version.
-                (-> href (string/replace #"^\./" "") (string/replace #"\?.+$" "")))
+                (-> href (string/replace #"^\./" "") (string/replace #"\?.+$" "") (string/replace #"/$" "")))
 
               (process-makefile-html [{:keys [html file-views dir-views exec-views general-actions
                                               git-actions branch-name]
@@ -263,11 +263,11 @@
                          (string/starts-with? href "git")
                          {:git-actions #{href}}
 
-                         (string/ends-with? href "/")
-                         {:dir-views #{href}}
-
                          (string/starts-with? href "./")
                          {:exec-views #{(normalize-exec-view href)}}
+
+                         (string/ends-with? href "/")
+                         {:dir-views #{href}}
 
                          :else
                          {:file-views #{href}})))))
