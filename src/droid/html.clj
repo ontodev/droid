@@ -616,9 +616,9 @@
                         ;; Otherwise, construct a map out of the header lines that looks like:
                         ;; {"header1" "header1-value", "header2", "header2-value", ...}
                         (->> (first response-sections)
-                             (map string/lower-case)
                              (map string/trim)
-                             (map #(string/split % #":\s+"))
+                             (map #(string/split % #":\s+" 2))
+                             (map (fn [[k v]] [(string/lower-case k) v]))
                              (map #(apply hash-map %))
                              (apply merge)))]
 
