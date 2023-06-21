@@ -21,7 +21,7 @@
             [droid.secrets :refer [secrets]]))
 
 (def default-html-headers
-  {"Content-Type" "text/html"})
+  {"content-type" "text/html"})
 
 (defn- container-rebuilding?
   "Returns true if the given branch is rebuilding a docker container"
@@ -495,9 +495,9 @@
 (defn- run-cgi
   "Run the possibly CGI-aware script located at the given path and render its response"
   [script-url script-path path-info
-   {:keys [request-method headers params form-params remote-addr scheme server-name server-port
+   {:keys [request-method headers query-params remote-addr scheme server-name server-port
            body-bytes]
-    {:keys [project-name branch-name]} :params,
+    {:keys [project-name branch-name view-path]} :params,
     {{:keys [login]} :user} :session,
     :as request}]
   (if (read-only? request)
@@ -507,10 +507,13 @@
           branch-url (str "/" project-name "/branches/" branch-name)
           dirname (-> script-path (io/file) (.getParent))
           basename (-> script-path (io/file) (.getName))
-          query-string (-> params (params-to-query-str))
+          query-string (-> query-params (params-to-query-str))
           cgi-input-env (-> {"AUTH_TYPE" ""
                              "CONTENT_LENGTH" ""
                              "CONTENT_TYPE" ""
+                             "DROID_BRANCH_NAME" branch-name
+                             "DROID_PROJECT_NAME" project-name
+                             "DROID_VIEW_PATH" view-path
                              "GATEWAY_INTERFACE" "CGI/1.1"
                              "PATH_INFO" (or (not-empty path-info) "/")
                              "PATH_TRANSLATED" ""
@@ -554,6 +557,7 @@
                           "/" basename ".in." (System/currentTimeMillis))
           tmp-outfile (str (get-temp-dir project-name branch-name)
                            "/" basename ".out." (System/currentTimeMillis))
+          console-file (-> (get-temp-dir project-name branch-name) (str "/console.txt"))
           ;; Note: To test a script on the command line, do:
           ;; export REQUEST_METHOD="POST"; \
           ;;   export CONTENT_TYPE="application/x-www-form-urlencoded"; \
@@ -565,12 +569,13 @@
                               (.write w body-bytes))
                             (branches/run-branch-command
                              ["sh" "-c"
-                              (str "./" basename " < " tmp-infile " > " tmp-outfile)
+                              (str "./" basename " < " tmp-infile " > " tmp-outfile
+                                   " 2> " console-file)
                               :dir dirname :env cgi-input-env]
                              project-name branch-name timeout))
                         (do
                           (branches/run-branch-command
-                           ["sh" "-c" (str "./" basename " > " tmp-outfile)
+                           ["sh" "-c" (str "./" basename " > " tmp-outfile " 2> " console-file)
                             :dir dirname :env cgi-input-env]
                            project-name branch-name timeout)))
           ;; We expect a blank line separating the response's header and body:
@@ -593,9 +598,16 @@
         :else
         (let [response-sections (-> (slurp tmp-outfile) (split-response))
               ;; Every line in the header must be of the form: <something>: <something else>
-              ;; and one of the headers must be for Content-Type
+              ;; and the headers must include one for either content-type, location, or status.
               valid-header? (and (->> (first response-sections)
-                                      (some #(re-matches #"^\s*Content-Type:(\s+\S+)+\s*$" %)))
+                                      (map string/lower-case)
+                                      ((fn [line]
+                                         (or (some #(re-matches #"^\s*content-type:(\s+\S+)+\s*$" %)
+                                                   line)
+                                             (some #(re-matches #"^\s*location:(\s+\S+)+\s*$" %)
+                                                   line)
+                                             (some #(re-matches #"^\s*status:(\s+\S+)+\s*$" %)
+                                                   line)))))
                                  (->> (first response-sections)
                                       (every? #(re-matches #"^\s*\S+:(\s+\S+)+\s*$" %))))
               headers (if-not valid-header?
@@ -605,7 +617,8 @@
                         ;; {"header1" "header1-value", "header2", "header2-value", ...}
                         (->> (first response-sections)
                              (map string/trim)
-                             (map #(string/split % #":\s+"))
+                             (map #(string/split % #":\s+" 2))
+                             (map (fn [[k v]] [(string/lower-case k) v]))
                              (map #(apply hash-map %))
                              (apply merge)))]
 
@@ -619,14 +632,19 @@
             ;; output proper, contained in the remaining sections of the response. In this case the
             ;; output is parsed into hiccup and embedded into a div:
             (let [body (->> response-sections (drop 2) (apply concat) (vec) (string/join "\n"))]
-              (if (= "text/html-fragment" (headers "Content-Type"))
+              ;; Push the cgi script name to the branch as the last command and action run:
+              (-> @branches/local-branches
+                  (get (keyword project-name))
+                  (get (keyword branch-name))
+                  (send #(assoc % :command (str basename " (CGI script)") :action basename)))
+              (if (= "text/html-fragment" (headers "content-type"))
                 ;; If this is a HTML fragment, wrap it in DROID's fancy headers:
                 (->> body (hickory/parse-fragment) (map hickory/as-hiccup) (into [:div])
-                     (hash-map :headers (assoc headers "Content-Type" "text/html")
+                     (hash-map :headers (assoc headers "content-type" "text/html")
                                :content)
                      (html-response request))
                 ;; Otherwise return it as is:
-                {:status (let [status (headers "Status")]
+                {:status (let [status (headers "status")]
                            (if-not status
                              (log/info "CGI script returned no status. Assuming 200.")
                              (log/info "CGI script returned status:" status))
@@ -642,12 +660,12 @@
             ;; If the response does not have a valid header, then all of it is treated as valid
             ;; output. In this case we write this output to the console, modify the values for
             ;; `command` and `action` in the branch, and then redirect back to the branch page:
-            (let [console-path (-> (get-temp-dir project-name branch-name) (str "/console.txt"))]
+            (do
               (->> response-sections
                    (apply concat)
                    (vec)
                    (string/join "\n")
-                   (spit console-path))
+                   (spit console-file))
               (-> @branches/local-branches
                   (get (keyword project-name))
                   (get (keyword branch-name))
@@ -1926,11 +1944,6 @@
                                                  (str "/" decoded-view-path))]
                              (cond (not (branches/path-executable? script-path))
                                    (let [error-msg (str script-path " is not executable")]
-                                     (log/error error-msg)
-                                     (render-4xx request 400 error-msg))
-
-                                   (-> script-path (slurp) (string/starts-with? "#!") (not))
-                                   (let [error-msg (str script-path " does not start with '#!'")]
                                      (log/error error-msg)
                                      (render-4xx request 400 error-msg))
 
